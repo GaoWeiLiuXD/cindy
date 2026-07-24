@@ -51,6 +51,8 @@ export interface ScheduleCostSummary {
   scheduleId: string;
   totalCostUsd: number;
   totalEstimatedValueUsd: number;
+  /** 至少一轮 agent run 无法得到可靠费用。 */
+  hasUnavailableCost?: boolean;
   sessionCount: number;
   sessions: ScheduleSessionCostSummary[];
 }
@@ -64,6 +66,7 @@ export interface ScheduleSessionCostSummary {
 interface ScheduleTurnCostState {
   totalCostUsd: number;
   totalEstimatedValueUsd: number;
+  hasUnavailableCost: boolean;
   sessionIds: Set<string>;
   sessionCosts: Map<string, { totalCostUsd: number; totalEstimatedValueUsd: number }>;
 }
@@ -177,6 +180,10 @@ function turnCostFromAgentMeta(agentMeta: string | null): {
   } catch {
     return { costUsd: 0, estimatedValueUsd: 0 };
   }
+}
+
+function finitePositiveNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function chunkArray<T>(items: readonly T[], size: number): T[][] {
@@ -388,16 +395,16 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     db: SchedulerDrizzleDb,
     runs: ScheduleRun[],
   ): Promise<ScheduleRun[]> {
-    const exactRunIds = new Set(
-      runs.filter((run) => run.costAttribution === 'exact').map((run) => run.id),
+    const attributableRunIds = new Set(
+      runs.filter((run) => run.costAttribution !== 'legacy').map((run) => run.id),
     );
     const sessionIds = new Set(
       runs
-        .filter((run) => exactRunIds.has(run.id))
+        .filter((run) => attributableRunIds.has(run.id))
         .map((run) => run.sessionId)
         .filter((id): id is string => Boolean(id)),
     );
-    if (exactRunIds.size === 0 || sessionIds.size === 0) return runs;
+    if (attributableRunIds.size === 0 || sessionIds.size === 0) return runs;
 
     const rows = (
       await Promise.all(
@@ -417,7 +424,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     const ledger = new Map<string, { costUsd: number; estimatedValueUsd: number }>();
     for (const row of rows) {
       const origin = scheduleOriginFromAgentMeta(row.agentMeta);
-      if (!origin?.runId || !exactRunIds.has(origin.runId)) continue;
+      if (!origin?.runId || !attributableRunIds.has(origin.runId)) continue;
       const cost = turnCostFromAgentMeta(row.agentMeta);
       const current = ledger.get(origin.runId) ?? { costUsd: 0, estimatedValueUsd: 0 };
       current.costUsd += cost.costUsd;
@@ -427,7 +434,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
     return runs.map((run) => {
       const persisted = ledger.get(run.id);
-      return persisted ? { ...run, ...persisted } : run;
+      return persisted ? { ...run, ...persisted, costAttribution: 'exact' } : run;
     });
   }
 
@@ -534,21 +541,24 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
    */
   async listCostSummaries(): Promise<ScheduleCostSummary[]> {
     const db = this.getDb();
-    const linkedRows = await db
+    const runCostRows = await db
       .select({
+        runId: scheduleRuns.id,
         scheduleId: scheduleRuns.scheduleId,
         sessionId: scheduleRuns.sessionId,
+        status: scheduleRuns.status,
+        costUsd: scheduleRuns.costUsd,
+        estimatedValueUsd: scheduleRuns.estimatedValueUsd,
+        costAttribution: scheduleRuns.costAttribution,
       })
-      .from(scheduleRuns)
-      .where(isNotNull(scheduleRuns.sessionId));
+      .from(scheduleRuns);
 
     const bySchedule = new Map<string, ScheduleTurnCostState>();
     const linkedSessionIds = new Set<string>();
     const linkedScheduleIds = new Set<string>();
-    for (const row of linkedRows) {
-      if (!row.sessionId) continue;
-      linkedSessionIds.add(row.sessionId);
+    for (const row of runCostRows) {
       linkedScheduleIds.add(row.scheduleId);
+      if (row.sessionId) linkedSessionIds.add(row.sessionId);
     }
 
     const scheduleByLegacyKey = await this.listSchedulesByLegacyKey(db);
@@ -618,6 +628,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     let activeSessionId: string | null = null;
     let activeScheduleId: string | null = null;
     const billableMessageCostBySessionId = new Map<string, number>();
+    const messageCostRunIds = new Set<string>();
     for (const row of messageRows) {
       if (row.sessionId !== activeSessionId) {
         activeSessionId = row.sessionId;
@@ -637,7 +648,9 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
           (billableMessageCostBySessionId.get(row.sessionId) ?? 0) + cost,
         );
       }
-      const assistantScheduleId = scheduleOriginFromAgentMeta(row.agentMeta)?.scheduleId;
+      const assistantOrigin = scheduleOriginFromAgentMeta(row.agentMeta);
+      const assistantScheduleId = assistantOrigin?.scheduleId;
+      const assistantRunId = assistantOrigin?.runId;
       const attributedScheduleId = assistantScheduleId ?? activeScheduleId;
       if (!attributedScheduleId || !linkedScheduleIds.has(attributedScheduleId)) {
         continue;
@@ -645,9 +658,11 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       const entry = bySchedule.get(attributedScheduleId) ?? {
         totalCostUsd: 0,
         totalEstimatedValueUsd: 0,
+        hasUnavailableCost: false,
         sessionIds: new Set<string>(),
         sessionCosts: new Map(),
       };
+      if (assistantRunId) messageCostRunIds.add(assistantRunId);
       entry.sessionIds.add(row.sessionId);
       entry.totalCostUsd += cost;
       entry.totalEstimatedValueUsd += turnCost.estimatedValueUsd;
@@ -661,6 +676,89 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       bySchedule.set(attributedScheduleId, entry);
     }
 
+    // 纯 tool turn 没有 assistant message 可挂账，费用会直接写在 schedule_runs。
+    // 这里只补消息账本未覆盖的 run，避免正常路径双计；unavailable 同时进入任务摘要。
+    for (const run of runCostRows) {
+      if (run.costAttribution === 'unavailable' && run.status !== 'running') {
+        // 消息账本已经给出该 run 的费用时，以账本为准；schedule_runs 快照可由
+        // listRuns 的 hydrate 路径自愈，不应把任务误标成“部分费用不可用”。
+        if (messageCostRunIds.has(run.runId)) continue;
+        const entry = bySchedule.get(run.scheduleId) ?? {
+          totalCostUsd: 0,
+          totalEstimatedValueUsd: 0,
+          hasUnavailableCost: false,
+          sessionIds: new Set<string>(),
+          sessionCosts: new Map(),
+        };
+        entry.hasUnavailableCost = true;
+        if (run.sessionId) {
+          entry.sessionIds.add(run.sessionId);
+          if (!entry.sessionCosts.has(run.sessionId)) {
+            entry.sessionCosts.set(run.sessionId, {
+              totalCostUsd: 0,
+              totalEstimatedValueUsd: 0,
+            });
+          }
+        }
+        bySchedule.set(run.scheduleId, entry);
+        continue;
+      }
+      if (
+        run.costAttribution === 'zero' &&
+        run.status !== 'running' &&
+        !messageCostRunIds.has(run.runId)
+      ) {
+        const entry = bySchedule.get(run.scheduleId) ?? {
+          totalCostUsd: 0,
+          totalEstimatedValueUsd: 0,
+          hasUnavailableCost: false,
+          sessionIds: new Set<string>(),
+          sessionCosts: new Map(),
+        };
+        if (run.sessionId) {
+          entry.sessionIds.add(run.sessionId);
+          if (!entry.sessionCosts.has(run.sessionId)) {
+            entry.sessionCosts.set(run.sessionId, {
+              totalCostUsd: 0,
+              totalEstimatedValueUsd: 0,
+            });
+          }
+        }
+        bySchedule.set(run.scheduleId, entry);
+        continue;
+      }
+      if (run.costAttribution !== 'exact' || messageCostRunIds.has(run.runId)) continue;
+      const costUsd = finitePositiveNumber(run.costUsd);
+      const estimatedValueUsd = finitePositiveNumber(run.estimatedValueUsd);
+      if (costUsd === 0 && estimatedValueUsd === 0) continue;
+      const entry = bySchedule.get(run.scheduleId) ?? {
+        totalCostUsd: 0,
+        totalEstimatedValueUsd: 0,
+        hasUnavailableCost: false,
+        sessionIds: new Set<string>(),
+        sessionCosts: new Map(),
+      };
+      entry.totalCostUsd += costUsd;
+      entry.totalEstimatedValueUsd += estimatedValueUsd;
+      if (run.sessionId) {
+        entry.sessionIds.add(run.sessionId);
+        const sessionCost = entry.sessionCosts.get(run.sessionId) ?? {
+          totalCostUsd: 0,
+          totalEstimatedValueUsd: 0,
+        };
+        sessionCost.totalCostUsd += costUsd;
+        sessionCost.totalEstimatedValueUsd += estimatedValueUsd;
+        entry.sessionCosts.set(run.sessionId, sessionCost);
+        if (costUsd > 0) {
+          billableMessageCostBySessionId.set(
+            run.sessionId,
+            (billableMessageCostBySessionId.get(run.sessionId) ?? 0) + costUsd,
+          );
+        }
+      }
+      bySchedule.set(run.scheduleId, entry);
+    }
+
     for (const session of legacySessions) {
       const scheduleId = legacySessionScheduleIds.get(session.id);
       if (!scheduleId) continue;
@@ -668,6 +766,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       const entry = bySchedule.get(scheduleId) ?? {
         totalCostUsd: 0,
         totalEstimatedValueUsd: 0,
+        hasUnavailableCost: false,
         sessionIds: new Set<string>(),
         sessionCosts: new Map(),
       };
@@ -691,6 +790,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       scheduleId,
       totalCostUsd: summary.totalCostUsd,
       totalEstimatedValueUsd: summary.totalEstimatedValueUsd,
+      ...(summary.hasUnavailableCost ? { hasUnavailableCost: true } : {}),
       sessionCount: summary.sessionIds.size,
       sessions: [...summary.sessionCosts.entries()].map(([sessionId, costs]) => ({
         sessionId,

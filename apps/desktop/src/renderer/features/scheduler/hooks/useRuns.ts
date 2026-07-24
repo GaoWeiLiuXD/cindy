@@ -102,9 +102,15 @@ export function useRuns(scheduleId: string | null, limit = 50): UseRunsResult {
     // 广播,跨实例过期的未读快照等不到上面的事件,必须靠这条本地通道自愈
     // (见 scheduleRunReadSync 模块注释)。
     const offReadSync = subscribeScheduleRunReadSync(() => void refresh());
+    // Codex 费用在 done 后异步查价并落 message/run 账本，可能晚于 completed 事件。
+    // 监听费用广播，避免历史卡永久保留 completed 时读到的旧快照。
+    const offTurnCost = window.electronAPI.onUsageMessageTurnCost?.(() => {
+      void refresh();
+    });
     return () => {
       off();
       offReadSync();
+      offTurnCost?.();
     };
   }, [scheduleId, refresh]);
 

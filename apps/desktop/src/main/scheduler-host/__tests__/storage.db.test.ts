@@ -747,6 +747,114 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
     }
   });
 
+  it('includes direct run ledger costs when no assistant message can carry origin', async () => {
+    const harness = createStorageHarness();
+    const schedule = baseSchedule({ id: 'sch-direct', targetSessionId: 'sess-direct' });
+    try {
+      harness.db.run(sql`
+        INSERT INTO sessions (id, title, source, workspace_kind, created_at, updated_at, total_cost_usd)
+        VALUES ('sess-direct', 'Direct cost session', 'desktop', 'dialogue', 1, 1, 0.42)
+      `);
+      await harness.storage.insert(schedule);
+      await harness.storage.insertRun({
+        id: 'run-direct',
+        scheduleId: schedule.id,
+        sessionId: 'sess-direct',
+        firedAt: 10,
+        finishedAt: 20,
+        status: 'success',
+        costUsd: 0.42,
+        costAttribution: 'exact',
+      });
+
+      await expect(harness.storage.listCostSummaries()).resolves.toEqual([
+        {
+          scheduleId: schedule.id,
+          totalCostUsd: 0.42,
+          totalEstimatedValueUsd: 0,
+          sessionCount: 1,
+          sessions: [
+            {
+              sessionId: 'sess-direct',
+              totalCostUsd: 0.42,
+              totalEstimatedValueUsd: 0,
+            },
+          ],
+        },
+      ]);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('marks runs with no reliable pricing as unavailable instead of zero', async () => {
+    const harness = createStorageHarness();
+    const schedule = baseSchedule({ id: 'sch-unavailable', targetSessionId: 'sess-unavailable' });
+    try {
+      harness.db.run(sql`
+        INSERT INTO sessions (id, title, source, workspace_kind, created_at, updated_at, total_cost_usd)
+        VALUES ('sess-unavailable', 'Unavailable cost session', 'desktop', 'dialogue', 1, 1, 0)
+      `);
+      await harness.storage.insert(schedule);
+      await harness.storage.insertRun({
+        id: 'run-unavailable',
+        scheduleId: schedule.id,
+        sessionId: 'sess-unavailable',
+        firedAt: 10,
+        finishedAt: 20,
+        status: 'success',
+        costAttribution: 'unavailable',
+      });
+
+      await expect(harness.storage.listCostSummaries()).resolves.toEqual([
+        {
+          scheduleId: schedule.id,
+          totalCostUsd: 0,
+          totalEstimatedValueUsd: 0,
+          hasUnavailableCost: true,
+          sessionCount: 1,
+          sessions: [
+            {
+              sessionId: 'sess-unavailable',
+              totalCostUsd: 0,
+              totalEstimatedValueUsd: 0,
+            },
+          ],
+        },
+      ]);
+    } finally {
+      harness.close();
+    }
+  });
+
+  it('keeps a confirmed zero-cost run distinct from unavailable pricing', async () => {
+    const harness = createStorageHarness();
+    const schedule = baseSchedule({ id: 'sch-zero', executionMode: 'script' });
+    try {
+      await harness.storage.insert(schedule);
+      await harness.storage.insertRun({
+        id: 'run-zero',
+        scheduleId: schedule.id,
+        firedAt: 10,
+        finishedAt: 20,
+        status: 'success',
+        costAttribution: 'zero',
+      });
+
+      await expect(harness.storage.listCostSummaries()).resolves.toEqual([
+        {
+          scheduleId: schedule.id,
+          totalCostUsd: 0,
+          totalEstimatedValueUsd: 0,
+          sessionCount: 0,
+          sessions: [],
+        },
+      ]);
+    } finally {
+      harness.close();
+    }
+  });
+
   it('preserves legacy baseline when a scheduler session later gains turn costs', async () => {
     const harness = createStorageHarness();
     const schedule = baseSchedule({

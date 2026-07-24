@@ -83,3 +83,40 @@ export async function applyScheduleRunCostMetaChange(
       .where(eq(scheduleRuns.id, change.runId));
   }
 }
+
+/**
+ * 没有可挂费用的 assistant message 时，按 scheduler runId 直接写聚合快照。
+ *
+ * 这是 Codex 纯 tool turn 等场景的兜底；正常有消息时仍以 agent_meta 账本为主。
+ * 直接路径覆盖单 run 快照而非累加，使 done 重放保持幂等。
+ * 返回 scheduleId 供调用方广播 changed，run 已被删除时返回 null。
+ */
+export async function recordScheduleRunCostDirect(args: {
+  runId: string;
+  costUsd: number;
+  isEstimate: boolean;
+}): Promise<string | null> {
+  const { runId, costUsd, isEstimate } = args;
+  if (!runId || typeof costUsd !== 'number' || !Number.isFinite(costUsd) || costUsd < 0) {
+    return null;
+  }
+  const amount = finitePositive(costUsd);
+
+  const db = getDbClient().drizzle;
+  const [run] = await db
+    .select({ scheduleId: scheduleRuns.scheduleId })
+    .from(scheduleRuns)
+    .where(eq(scheduleRuns.id, runId))
+    .limit(1);
+  if (!run) return null;
+
+  await db
+    .update(scheduleRuns)
+    .set({
+      costUsd: isEstimate ? 0 : amount,
+      estimatedValueUsd: isEstimate ? amount : 0,
+      costAttribution: amount > 0 ? 'exact' : 'zero',
+    })
+    .where(eq(scheduleRuns.id, runId));
+  return run.scheduleId;
+}
