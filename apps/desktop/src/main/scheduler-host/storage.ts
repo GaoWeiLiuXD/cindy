@@ -186,6 +186,26 @@ function finitePositiveNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function mergeRunCostTotals(
+  persisted: { costUsd: number; estimatedValueUsd: number },
+  message: { costUsd: number; estimatedValueUsd: number },
+): { costUsd: number; estimatedValueUsd: number } {
+  const mergeDimension = (persistedValue: number, messageValue: number): number =>
+    // A snapshot at least as large as the message ledger normally already
+    // includes that message cost; a smaller snapshot is the direct-only
+    // fallback left behind when the message snapshot update failed.
+    persistedValue >= messageValue
+      ? persistedValue
+      : persistedValue + messageValue;
+  return {
+    costUsd: mergeDimension(persisted.costUsd, message.costUsd),
+    estimatedValueUsd: mergeDimension(
+      persisted.estimatedValueUsd,
+      message.estimatedValueUsd,
+    ),
+  };
+}
+
 function chunkArray<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -435,7 +455,18 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
     return runs.map((run) => {
       const persisted = ledger.get(run.id);
-      return persisted ? { ...run, ...persisted, costAttribution: 'exact' } : run;
+      if (!persisted) return run;
+      return {
+        ...run,
+        ...mergeRunCostTotals(
+          {
+            costUsd: finitePositiveNumber(run.costUsd),
+            estimatedValueUsd: finitePositiveNumber(run.estimatedValueUsd),
+          },
+          persisted,
+        ),
+        costAttribution: 'exact',
+      };
     });
   }
 
@@ -744,12 +775,17 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       }
       if (run.costAttribution !== 'exact') continue;
       const messageCost = messageCostByRunId.get(run.runId);
-      const persistedCostUsd = finitePositiveNumber(run.costUsd);
-      const persistedEstimatedValueUsd = finitePositiveNumber(run.estimatedValueUsd);
-      const costUsd = Math.max(0, persistedCostUsd - (messageCost?.costUsd ?? 0));
+      const merged = mergeRunCostTotals(
+        {
+          costUsd: finitePositiveNumber(run.costUsd),
+          estimatedValueUsd: finitePositiveNumber(run.estimatedValueUsd),
+        },
+        messageCost ?? { costUsd: 0, estimatedValueUsd: 0 },
+      );
+      const costUsd = Math.max(0, merged.costUsd - (messageCost?.costUsd ?? 0));
       const estimatedValueUsd = Math.max(
         0,
-        persistedEstimatedValueUsd - (messageCost?.estimatedValueUsd ?? 0),
+        merged.estimatedValueUsd - (messageCost?.estimatedValueUsd ?? 0),
       );
       if (costUsd === 0 && estimatedValueUsd === 0) continue;
       const entry = bySchedule.get(run.scheduleId) ?? {
