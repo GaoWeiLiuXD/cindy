@@ -16,6 +16,8 @@ interface RunCostEntry {
   estimatedValueUsd: number;
 }
 
+const MIN_RECORDED_COST_USD = 1e-10;
+
 export interface ScheduleRunCostDelta {
   runId: string;
   costUsdDelta: number;
@@ -23,7 +25,9 @@ export interface ScheduleRunCostDelta {
 }
 
 function finitePositive(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+  return typeof value === 'number' && Number.isFinite(value) && value >= MIN_RECORDED_COST_USD
+    ? value
+    : 0;
 }
 
 function runCostEntry(meta: Record<string, unknown>): RunCostEntry | null {
@@ -60,7 +64,9 @@ export function computeScheduleRunCostDeltas(
   apply(runCostEntry(previous), -1);
   apply(runCostEntry(next), 1);
   return [...changes.values()].filter(
-    (change) => Math.abs(change.costUsdDelta) >= 1e-10 || Math.abs(change.estimatedValueUsdDelta) >= 1e-10,
+    (change) =>
+      Math.abs(change.costUsdDelta) >= MIN_RECORDED_COST_USD ||
+      Math.abs(change.estimatedValueUsdDelta) >= MIN_RECORDED_COST_USD,
   );
 }
 
@@ -101,6 +107,9 @@ export async function recordScheduleRunCostDirect(args: {
     return null;
   }
   const amount = finitePositive(costUsd);
+  // Match the message ledger's delta threshold; a tiny positive residue must
+  // not create a direct-only run segment or a misleading changed broadcast.
+  if (costUsd > 0 && amount === 0) return null;
 
   const db = getDbClient().drizzle;
   const [run] = await db

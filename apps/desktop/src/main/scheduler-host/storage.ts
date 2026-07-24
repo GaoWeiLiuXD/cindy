@@ -630,6 +630,10 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     let activeScheduleId: string | null = null;
     const billableMessageCostBySessionId = new Map<string, number>();
     const messageCostRunIds = new Set<string>();
+    const messageCostByRunId = new Map<
+      string,
+      { costUsd: number; estimatedValueUsd: number }
+    >();
     for (const row of messageRows) {
       if (row.sessionId !== activeSessionId) {
         activeSessionId = row.sessionId;
@@ -663,7 +667,16 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         sessionIds: new Set<string>(),
         sessionCosts: new Map(),
       };
-      if (assistantRunId) messageCostRunIds.add(assistantRunId);
+      if (assistantRunId) {
+        messageCostRunIds.add(assistantRunId);
+        const runCost = messageCostByRunId.get(assistantRunId) ?? {
+          costUsd: 0,
+          estimatedValueUsd: 0,
+        };
+        runCost.costUsd += cost;
+        runCost.estimatedValueUsd += turnCost.estimatedValueUsd;
+        messageCostByRunId.set(assistantRunId, runCost);
+      }
       entry.sessionIds.add(row.sessionId);
       entry.totalCostUsd += cost;
       entry.totalEstimatedValueUsd += turnCost.estimatedValueUsd;
@@ -678,7 +691,8 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     }
 
     // 纯 tool turn 没有 assistant message 可挂账，费用会直接写在 schedule_runs。
-    // 这里只补消息账本未覆盖的 run，避免正常路径双计；unavailable 同时进入任务摘要。
+    // 正常消息费用已经进入 message ledger；混合 run 则只补 schedule_runs 快照中
+    // 尚未被消息账本覆盖的余量，避免漏记 direct segment 或双计。
     for (const run of runCostRows) {
       if (run.costAttribution === 'unavailable' && run.status !== 'running') {
         // 消息账本已经给出该 run 的费用时，以账本为准；schedule_runs 快照可由
@@ -728,9 +742,15 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         bySchedule.set(run.scheduleId, entry);
         continue;
       }
-      if (run.costAttribution !== 'exact' || messageCostRunIds.has(run.runId)) continue;
-      const costUsd = finitePositiveNumber(run.costUsd);
-      const estimatedValueUsd = finitePositiveNumber(run.estimatedValueUsd);
+      if (run.costAttribution !== 'exact') continue;
+      const messageCost = messageCostByRunId.get(run.runId);
+      const persistedCostUsd = finitePositiveNumber(run.costUsd);
+      const persistedEstimatedValueUsd = finitePositiveNumber(run.estimatedValueUsd);
+      const costUsd = Math.max(0, persistedCostUsd - (messageCost?.costUsd ?? 0));
+      const estimatedValueUsd = Math.max(
+        0,
+        persistedEstimatedValueUsd - (messageCost?.estimatedValueUsd ?? 0),
+      );
       if (costUsd === 0 && estimatedValueUsd === 0) continue;
       const entry = bySchedule.get(run.scheduleId) ?? {
         totalCostUsd: 0,

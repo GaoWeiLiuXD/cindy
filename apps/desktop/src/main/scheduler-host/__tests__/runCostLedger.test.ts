@@ -43,6 +43,14 @@ describe('computeScheduleRunCostDeltas', () => {
 });
 
 describe('recordScheduleRunCostDirect', () => {
+  it('忽略低于消息账本阈值的正费用', async () => {
+    await expect(recordScheduleRunCostDirect({
+      runId: 'run-near-zero',
+      costUsd: 1e-12,
+      isEstimate: false,
+    })).resolves.toBeNull();
+  });
+
   it('更新竞态下 run 已消失时返回 null', async () => {
     const selectChain = {
       from() {

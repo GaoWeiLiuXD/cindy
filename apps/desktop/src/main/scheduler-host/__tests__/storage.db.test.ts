@@ -836,6 +836,54 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
     }
   });
 
+  it('keeps direct ledger remainder when a run also has message costs', async () => {
+    const harness = createStorageHarness();
+    const schedule = baseSchedule({ id: 'sch-mixed-ledger', targetSessionId: 'sess-mixed-ledger' });
+    try {
+      harness.db.run(sql`
+        INSERT INTO sessions (id, title, source, workspace_kind, created_at, updated_at, total_cost_usd)
+        VALUES ('sess-mixed-ledger', 'Mixed ledger session', 'desktop', 'dialogue', 1, 1, 0)
+      `);
+      await harness.storage.insert(schedule);
+      await harness.storage.insertRun({
+        id: 'run-mixed-ledger',
+        scheduleId: schedule.id,
+        sessionId: 'sess-mixed-ledger',
+        firedAt: 10,
+        finishedAt: 20,
+        status: 'success',
+        costUsd: 0.6,
+        costAttribution: 'exact',
+      });
+      harness.db.run(sql`
+        INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at)
+        VALUES
+          ('mixed-user', 'mixed-user', 'sess-mixed-ledger', 'user', '{}',
+            '{"origin":{"kind":"scheduler","scheduleId":"sch-mixed-ledger","runId":"run-mixed-ledger"}}', 10),
+          ('mixed-assistant', 'mixed-assistant', 'sess-mixed-ledger', 'assistant', '{}',
+            '{"origin":{"kind":"scheduler","scheduleId":"sch-mixed-ledger","runId":"run-mixed-ledger"},"turnCostUsd":0.42}', 11)
+      `);
+
+      await expect(harness.storage.listCostSummaries()).resolves.toEqual([
+        {
+          scheduleId: schedule.id,
+          totalCostUsd: 0.6,
+          totalEstimatedValueUsd: 0,
+          sessionCount: 1,
+          sessions: [
+            {
+              sessionId: 'sess-mixed-ledger',
+              totalCostUsd: 0.6,
+              totalEstimatedValueUsd: 0,
+            },
+          ],
+        },
+      ]);
+    } finally {
+      harness.close();
+    }
+  });
+
   it('marks runs with no reliable pricing as unavailable instead of zero', async () => {
     const harness = createStorageHarness();
     const schedule = baseSchedule({ id: 'sch-unavailable', targetSessionId: 'sess-unavailable' });
