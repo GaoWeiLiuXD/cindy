@@ -138,15 +138,21 @@ export async function recordTurnCostOnMessage(
       return result;
     });
     if (!patched) return false;
-    deps.broadcast({
-      sessionId,
-      clientId,
-      turnCostUsd: costUsd,
-      turnCostIsEstimate: isEstimate,
-      userTurnCostUsd,
-      userTurnCostIsEstimate,
-      ...(turnUsageDetails ? { turnUsageDetails } : {}),
-    });
+    try {
+      deps.broadcast({
+        sessionId,
+        clientId,
+        turnCostUsd: costUsd,
+        turnCostIsEstimate: isEstimate,
+        userTurnCostUsd,
+        userTurnCostIsEstimate,
+        ...(turnUsageDetails ? { turnUsageDetails } : {}),
+      });
+    } catch (err) {
+      // The message cost is already durable; a broadcast failure must not
+      // make scheduler fallback record the same segment a second time.
+      log.warn('recordTurnCostOnMessage broadcast failed:', err instanceof Error ? err.message : String(err));
+    }
     return true;
   } catch (err) {
     log.warn('recordTurnCostOnMessage failed:', err instanceof Error ? err.message : String(err));

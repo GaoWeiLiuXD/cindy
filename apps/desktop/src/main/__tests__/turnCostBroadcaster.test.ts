@@ -302,6 +302,26 @@ describe('recordSchedulerTurnCost', () => {
     expect(recordDirect).toHaveBeenCalledOnce();
   });
 
+  it('broadcast failure after message persistence does not trigger scheduler fallback', async () => {
+    const { deps } = makeDeps(true);
+    deps.broadcast = () => {
+      throw new Error('window closed');
+    };
+    const recordOnMessage: typeof recordTurnCostOnMessage = (args) =>
+      recordTurnCostOnMessage(args, deps);
+    const recordDirect = vi.fn(async () => 'schedule-1');
+
+    await expect(recordSchedulerTurnCost(
+      {
+        ...ARGS,
+        turnOrigin: schedulerOrigin,
+      },
+      { recordOnMessage, recordDirect },
+    )).resolves.toBeNull();
+
+    expect(recordDirect).not.toHaveBeenCalled();
+  });
+
   it('可靠计价结果为零时仍用 runId 标记为已确认费用', async () => {
     const recordOnMessage = vi.fn(async () => false);
     const recordDirect = vi.fn(async () => 'schedule-1');
