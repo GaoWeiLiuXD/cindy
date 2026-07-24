@@ -88,7 +88,7 @@ export async function applyScheduleRunCostMetaChange(
  * 没有可挂费用的 assistant message 时，按 scheduler runId 直接写聚合快照。
  *
  * 这是 Codex 纯 tool turn 等场景的兜底；正常有消息时仍以 agent_meta 账本为主。
- * 直接路径覆盖单 run 快照而非累加，使 done 重放保持幂等。
+ * 直接路径将每个无法挂载消息的 turn 分段累加到 run 快照。
  * 返回 scheduleId 供调用方广播 changed，run 已被删除时返回 null。
  */
 export async function recordScheduleRunCostDirect(args: {
@@ -113,9 +113,9 @@ export async function recordScheduleRunCostDirect(args: {
   await db
     .update(scheduleRuns)
     .set({
-      costUsd: isEstimate ? 0 : amount,
-      estimatedValueUsd: isEstimate ? amount : 0,
-      costAttribution: amount > 0 ? 'exact' : 'zero',
+      costUsd: sql<number>`MAX(0, ${scheduleRuns.costUsd} + ${isEstimate ? 0 : amount})`,
+      estimatedValueUsd: sql<number>`MAX(0, ${scheduleRuns.estimatedValueUsd} + ${isEstimate ? amount : 0})`,
+      costAttribution: isEstimate || amount > 0 ? 'exact' : 'zero',
     })
     .where(eq(scheduleRuns.id, runId));
   return run.scheduleId;

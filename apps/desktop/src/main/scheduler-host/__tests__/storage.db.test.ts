@@ -12,6 +12,9 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import * as schema from '../../localDb/schema';
 import { createDbClient } from '../../localDb/client/DbClient';
+import type { DbClient } from '../../localDb/client/DbClient';
+import { clearCurrentDbClient, setCurrentDbClient } from '../../localDb/client/current';
+import { recordScheduleRunCostDirect } from '../runCostLedger';
 import { DrizzleScheduleStorage, type SchedulerDrizzleDb } from '../storage';
 
 function baseSchedule(overrides: Partial<Schedule> = {}): Schedule {
@@ -783,6 +786,47 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
         },
       ]);
     } finally {
+      harness.close();
+    }
+  });
+
+  it('accumulates multiple direct run ledger segments', async () => {
+    const harness = createStorageHarness();
+    const schedule = baseSchedule({ id: 'sch-direct-segments' });
+    const dbClient = { drizzle: harness.db } as unknown as DbClient;
+    try {
+      await harness.storage.insert(schedule);
+      await harness.storage.insertRun({
+        id: 'run-direct-segments',
+        scheduleId: schedule.id,
+        firedAt: 10,
+        finishedAt: 20,
+        status: 'success',
+        costAttribution: 'unavailable',
+      });
+      setCurrentDbClient(dbClient, 'test-user');
+
+      await recordScheduleRunCostDirect({
+        runId: 'run-direct-segments',
+        costUsd: 0.42,
+        isEstimate: false,
+      });
+      await recordScheduleRunCostDirect({
+        runId: 'run-direct-segments',
+        costUsd: 0.18,
+        isEstimate: false,
+      });
+
+      await expect(harness.storage.listRuns(schedule.id)).resolves.toEqual([
+        expect.objectContaining({
+          id: 'run-direct-segments',
+          costUsd: 0.6,
+          estimatedValueUsd: 0,
+          costAttribution: 'exact',
+        }),
+      ]);
+    } finally {
+      clearCurrentDbClient(dbClient);
       harness.close();
     }
   });

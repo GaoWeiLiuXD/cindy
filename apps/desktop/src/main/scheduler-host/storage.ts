@@ -426,6 +426,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       const origin = scheduleOriginFromAgentMeta(row.agentMeta);
       if (!origin?.runId || !attributableRunIds.has(origin.runId)) continue;
       const cost = turnCostFromAgentMeta(row.agentMeta);
+      if (cost.costUsd <= 0 && cost.estimatedValueUsd <= 0) continue;
       const current = ledger.get(origin.runId) ?? { costUsd: 0, estimatedValueUsd: 0 };
       current.costUsd += cost.costUsd;
       current.estimatedValueUsd += cost.estimatedValueUsd;

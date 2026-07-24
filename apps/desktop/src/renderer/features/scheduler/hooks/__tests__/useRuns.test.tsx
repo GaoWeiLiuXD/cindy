@@ -11,6 +11,16 @@ let scheduleListeners: Listener[] = [];
 let turnCostListeners: Listener[] = [];
 let listRuns: ReturnType<typeof vi.fn>;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   scheduleListeners = [];
   turnCostListeners = [];
@@ -55,5 +65,37 @@ describe('useRuns 异步费用刷新', () => {
     await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(2));
     unmount();
     expect(turnCostListeners).toHaveLength(0);
+  });
+
+  it('同一 schedule 的旧刷新响应不能覆盖较新的费用快照', async () => {
+    const firstRefresh = deferred<unknown[]>();
+    const secondRefresh = deferred<unknown[]>();
+    listRuns
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => firstRefresh.promise)
+      .mockImplementationOnce(() => secondRefresh.promise);
+
+    const { result } = renderHook(() => useRuns('schedule-1'));
+    await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      turnCostListeners.forEach((listener) => listener({}));
+      turnCostListeners.forEach((listener) => listener({}));
+    });
+    await waitFor(() => expect(listRuns).toHaveBeenCalledTimes(3));
+
+    const latestRuns = [{ id: 'latest-run' }];
+    const staleRuns = [{ id: 'stale-run' }];
+    await act(async () => {
+      secondRefresh.resolve(latestRuns);
+      await secondRefresh.promise;
+    });
+    await waitFor(() => expect(result.current.runs).toEqual(latestRuns));
+
+    await act(async () => {
+      firstRefresh.resolve(staleRuns);
+      await firstRefresh.promise;
+    });
+    expect(result.current.runs).toEqual(latestRuns);
   });
 });

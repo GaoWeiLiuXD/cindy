@@ -242,8 +242,8 @@ export interface ScheduleRun {
   /** 本次 run 的订阅 token 估算价值，不计入真实账单。 */
   estimatedValueUsd?: number;
   /**
-   * exact = 已确认非零费用；zero = 已确认零费用；unavailable = agent run 尚无可靠
-   * 计价；legacy = 历史数据无法精确拆到单次 run。
+   * exact = 已确认费用（可能是实际账单，也可能是 estimate-only）；zero = 已确认零费用；
+   * unavailable = agent run 尚无可靠计价；legacy = 历史数据无法精确拆到单次 run。
    */
   costAttribution?: 'exact' | 'zero' | 'unavailable' | 'legacy';
   /**
