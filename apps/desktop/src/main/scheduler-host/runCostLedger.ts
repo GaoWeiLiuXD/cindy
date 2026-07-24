@@ -110,13 +110,22 @@ export async function recordScheduleRunCostDirect(args: {
     .limit(1);
   if (!run) return null;
 
-  await db
+  const result = await db
     .update(scheduleRuns)
     .set({
       costUsd: sql<number>`MAX(0, ${scheduleRuns.costUsd} + ${isEstimate ? 0 : amount})`,
       estimatedValueUsd: sql<number>`MAX(0, ${scheduleRuns.estimatedValueUsd} + ${isEstimate ? amount : 0})`,
-      costAttribution: isEstimate || amount > 0 ? 'exact' : 'zero',
+      // A confirmed zero-cost segment must not downgrade a run that already
+      // contains an exact segment; otherwise later summary reads lose the
+      // accumulated direct cost.
+      costAttribution:
+        isEstimate || amount > 0
+          ? 'exact'
+          : sql<string>`CASE WHEN ${scheduleRuns.costAttribution} = 'exact' THEN 'exact' ELSE 'zero' END`,
     })
-    .where(eq(scheduleRuns.id, runId));
+    .where(eq(scheduleRuns.id, runId))
+    .run();
+  const changes = (result as unknown as { changes?: number }).changes;
+  if (typeof changes !== 'number' || changes === 0) return null;
   return run.scheduleId;
 }

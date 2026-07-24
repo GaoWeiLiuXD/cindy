@@ -165,7 +165,7 @@ const defaultSchedulerTurnCostFallbackDeps: SchedulerTurnCostFallbackDeps = {
 };
 
 /**
- * 记录一笔 scheduler turn 费用：优先写 assistant message；消息不存在时按 runId
+ * 记录一笔 scheduler turn 费用：优先写 assistant message；消息路径无法写入时按 runId
  * 直接归因，保证会话费用与自动化费用不会因纯 tool turn 分叉。
  */
 export async function recordSchedulerTurnCost(

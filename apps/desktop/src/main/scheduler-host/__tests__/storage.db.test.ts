@@ -816,6 +816,11 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
         costUsd: 0.18,
         isEstimate: false,
       });
+      await recordScheduleRunCostDirect({
+        runId: 'run-direct-segments',
+        costUsd: 0,
+        isEstimate: false,
+      });
 
       await expect(harness.storage.listRuns(schedule.id)).resolves.toEqual([
         expect.objectContaining({
