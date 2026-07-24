@@ -47,6 +47,7 @@ export function useRuns(scheduleId: string | null, limit = 50): UseRunsResult {
       // 完全没有选中：清空展示。其他场景（切任务）保留旧数据等新数据替换。
       setRuns([]);
       setRunsScheduleId(null);
+      setLoading(false);
       setError(null);
       setHasLoaded(false);
       return;

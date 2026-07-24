@@ -98,4 +98,27 @@ describe('useRuns 异步费用刷新', () => {
     });
     expect(result.current.runs).toEqual(latestRuns);
   });
+
+  it('清空 scheduleId 时结束旧请求留下的 loading 状态', async () => {
+    const pendingRefresh = deferred<unknown[]>();
+    listRuns.mockImplementationOnce(() => pendingRefresh.promise);
+
+    const { result, rerender } = renderHook(
+      ({ scheduleId }: { scheduleId: string | null }) => useRuns(scheduleId),
+      { initialProps: { scheduleId: 'schedule-1' as string | null } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(true));
+
+    rerender({ scheduleId: null });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.runs).toEqual([]);
+    expect(result.current.hasLoaded).toBe(false);
+
+    await act(async () => {
+      pendingRefresh.resolve([{ id: 'stale-run' }]);
+      await pendingRefresh.promise;
+    });
+    expect(result.current.loading).toBe(false);
+    expect(result.current.runs).toEqual([]);
+  });
 });
