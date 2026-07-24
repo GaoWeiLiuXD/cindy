@@ -768,7 +768,9 @@ export const scheduleRuns = sqliteTable(
      * zero 表示已确认零费用；unavailable 表示 agent run 尚无可靠计价；legacy
      * 表示迁移前数据缺少 runId，不能精确拆分。SQLite 无 CHECK，无需 migration。
      */
-    costAttribution: text('cost_attribution', { enum: ['exact', 'zero', 'unavailable', 'legacy'] })
+    costAttribution: text('cost_attribution', {
+      enum: ['exact', 'direct', 'mixed', 'zero', 'unavailable', 'legacy'],
+    })
       .notNull()
       .default('legacy'),
     /**

@@ -82,9 +82,25 @@ export async function applyScheduleRunCostMetaChange(
     await db
       .update(scheduleRuns)
       .set({
-        costUsd: sql<number>`MAX(0, ${scheduleRuns.costUsd} + ${change.costUsdDelta})`,
-        estimatedValueUsd: sql<number>`MAX(0, ${scheduleRuns.estimatedValueUsd} + ${change.estimatedValueUsdDelta})`,
-        costAttribution: 'exact',
+        // A direct-only snapshot is an independent ledger. Once it exists,
+        // keep the message ledger in agent_meta and let read paths add it;
+        // otherwise a successful message update would make a later read
+        // unable to tell whether the snapshot already contains that segment.
+        costUsd: sql<number>`CASE
+          WHEN ${scheduleRuns.costAttribution} = 'direct'
+            THEN ${scheduleRuns.costUsd}
+          ELSE MAX(0, ${scheduleRuns.costUsd} + ${change.costUsdDelta})
+        END`,
+        estimatedValueUsd: sql<number>`CASE
+          WHEN ${scheduleRuns.costAttribution} = 'direct'
+            THEN ${scheduleRuns.estimatedValueUsd}
+          ELSE MAX(0, ${scheduleRuns.estimatedValueUsd} + ${change.estimatedValueUsdDelta})
+        END`,
+        costAttribution: sql<string>`CASE
+          WHEN ${scheduleRuns.costAttribution} IN ('direct', 'mixed')
+            THEN ${scheduleRuns.costAttribution}
+          ELSE 'exact'
+        END`,
       })
       .where(eq(scheduleRuns.id, change.runId));
   }
@@ -129,8 +145,16 @@ export async function recordScheduleRunCostDirect(args: {
       // accumulated direct cost.
       costAttribution:
         isEstimate || amount > 0
-          ? 'exact'
-          : sql<string>`CASE WHEN ${scheduleRuns.costAttribution} = 'exact' THEN 'exact' ELSE 'zero' END`,
+          ? sql<string>`CASE
+              WHEN ${scheduleRuns.costAttribution} = 'mixed' THEN 'mixed'
+              WHEN ${scheduleRuns.costAttribution} = 'exact' THEN 'mixed'
+              ELSE 'direct'
+            END`
+          : sql<string>`CASE
+              WHEN ${scheduleRuns.costAttribution} IN ('exact', 'direct', 'mixed')
+                THEN ${scheduleRuns.costAttribution}
+              ELSE 'zero'
+            END`,
     })
     .where(eq(scheduleRuns.id, runId))
     .run();

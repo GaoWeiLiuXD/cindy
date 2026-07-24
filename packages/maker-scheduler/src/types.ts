@@ -242,10 +242,11 @@ export interface ScheduleRun {
   /** 本次 run 的订阅 token 估算价值，不计入真实账单。 */
   estimatedValueUsd?: number;
   /**
-   * exact = 已确认费用（可能是实际账单，也可能是 estimate-only）；zero = 已确认零费用；
+   * exact = 已确认费用（可能是实际账单，也可能是 estimate-only）；direct = 费用仅来自
+   * 无法挂载消息的直接账本；mixed = 快照同时包含直接账本和消息账本；zero = 已确认零费用；
    * unavailable = agent run 尚无可靠计价；legacy = 历史数据无法精确拆到单次 run。
    */
-  costAttribution?: 'exact' | 'zero' | 'unavailable' | 'legacy';
+  costAttribution?: 'exact' | 'direct' | 'mixed' | 'zero' | 'unavailable' | 'legacy';
   /**
    * Agent 这一轮 turn 的最终文本（与飞书正常对话气泡显示内容同源 — 按 isFinal
    * 替换、否则追加 delta，done 时定格）。仅 prompt 类 run 在 success 时填，

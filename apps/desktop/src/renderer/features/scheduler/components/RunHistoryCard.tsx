@@ -158,7 +158,10 @@ export function RunHistoryCard({
       ? t('scheduler.runs.legacyCostUnavailable')
       : run.costAttribution === 'unavailable'
         ? t('scheduler.runs.costUnavailable')
-        : run.costAttribution === 'exact' || run.costAttribution === 'zero'
+        : run.costAttribution === 'exact' ||
+            run.costAttribution === 'direct' ||
+            run.costAttribution === 'mixed' ||
+            run.costAttribution === 'zero'
           ? [
               (run.costUsd ?? 0) > 0
                 ? t('scheduler.runs.runCost', { cost: formatUsd(run.costUsd ?? 0) })

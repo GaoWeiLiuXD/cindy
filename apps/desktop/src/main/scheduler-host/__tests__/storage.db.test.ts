@@ -853,7 +853,7 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
         finishedAt: 20,
         status: 'success',
         costUsd: 0.6,
-        costAttribution: 'exact',
+        costAttribution: 'mixed',
       });
       harness.db.run(sql`
         INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at)
@@ -887,6 +887,7 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
   it('merges direct-only snapshot with a later message ledger update', async () => {
     const harness = createStorageHarness();
     const schedule = baseSchedule({ id: 'sch-direct-only-snapshot', targetSessionId: 'sess-direct-only' });
+    const dbClient = { drizzle: harness.db } as unknown as DbClient;
     try {
       harness.db.run(sql`
         INSERT INTO sessions (id, title, source, workspace_kind, created_at, updated_at, total_cost_usd)
@@ -900,8 +901,13 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
         firedAt: 10,
         finishedAt: 20,
         status: 'success',
-        costUsd: 0.18,
-        costAttribution: 'exact',
+        costAttribution: 'unavailable',
+      });
+      setCurrentDbClient(dbClient, 'test-user');
+      await recordScheduleRunCostDirect({
+        runId: 'run-direct-only-snapshot',
+        costUsd: 0.6,
+        isEstimate: false,
       });
       harness.db.run(sql`
         INSERT INTO messages (id, client_id, session_id, role, content, agent_meta, created_at)
@@ -909,13 +915,13 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
           ('direct-only-user', 'direct-only-user', 'sess-direct-only', 'user', '{}',
             '{"origin":{"kind":"scheduler","scheduleId":"sch-direct-only-snapshot","runId":"run-direct-only-snapshot"}}', 10),
           ('direct-only-assistant', 'direct-only-assistant', 'sess-direct-only', 'assistant', '{}',
-            '{"origin":{"kind":"scheduler","scheduleId":"sch-direct-only-snapshot","runId":"run-direct-only-snapshot"},"turnCostUsd":0.42}', 11)
+            '{"origin":{"kind":"scheduler","scheduleId":"sch-direct-only-snapshot","runId":"run-direct-only-snapshot"},"turnCostUsd":0.4}', 11)
       `);
 
       await expect(harness.storage.listRuns(schedule.id)).resolves.toEqual([
         expect.objectContaining({
           id: 'run-direct-only-snapshot',
-          costUsd: 0.6,
+          costUsd: 1,
           estimatedValueUsd: 0,
           costAttribution: 'exact',
         }),
@@ -923,19 +929,20 @@ describe('DrizzleScheduleStorage (in-memory)', () => {
       await expect(harness.storage.listCostSummaries()).resolves.toEqual([
         {
           scheduleId: schedule.id,
-          totalCostUsd: 0.6,
+          totalCostUsd: 1,
           totalEstimatedValueUsd: 0,
           sessionCount: 1,
           sessions: [
             {
               sessionId: 'sess-direct-only',
-              totalCostUsd: 0.6,
+              totalCostUsd: 1,
               totalEstimatedValueUsd: 0,
             },
           ],
         },
       ]);
     } finally {
+      clearCurrentDbClient(dbClient);
       harness.close();
     }
   });

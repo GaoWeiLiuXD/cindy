@@ -1622,7 +1622,7 @@ export class Scheduler extends EventEmitter {
         firedAt,
         finishedAt: this.clock.now(),
         status: input.status,
-        costAttribution: 'unavailable',
+        costAttribution: input.status === 'skipped' ? 'zero' : 'unavailable',
         resultText: input.resultText,
         errorMsg: input.errorMsg,
       };

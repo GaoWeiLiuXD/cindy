@@ -186,26 +186,6 @@ function finitePositiveNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function mergeRunCostTotals(
-  persisted: { costUsd: number; estimatedValueUsd: number },
-  message: { costUsd: number; estimatedValueUsd: number },
-): { costUsd: number; estimatedValueUsd: number } {
-  const mergeDimension = (persistedValue: number, messageValue: number): number =>
-    // A snapshot at least as large as the message ledger normally already
-    // includes that message cost; a smaller snapshot is the direct-only
-    // fallback left behind when the message snapshot update failed.
-    persistedValue >= messageValue
-      ? persistedValue
-      : persistedValue + messageValue;
-  return {
-    costUsd: mergeDimension(persisted.costUsd, message.costUsd),
-    estimatedValueUsd: mergeDimension(
-      persisted.estimatedValueUsd,
-      message.estimatedValueUsd,
-    ),
-  };
-}
-
 function chunkArray<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -415,6 +395,10 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     db: SchedulerDrizzleDb,
     runs: ScheduleRun[],
   ): Promise<ScheduleRun[]> {
+    const normalizeAttribution = (run: ScheduleRun): ScheduleRun =>
+      run.costAttribution === 'direct' || run.costAttribution === 'mixed'
+        ? { ...run, costAttribution: 'exact' }
+        : run;
     const attributableRunIds = new Set(
       runs.filter((run) => run.costAttribution !== 'legacy').map((run) => run.id),
     );
@@ -424,7 +408,9 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         .map((run) => run.sessionId)
         .filter((id): id is string => Boolean(id)),
     );
-    if (attributableRunIds.size === 0 || sessionIds.size === 0) return runs;
+    if (attributableRunIds.size === 0 || sessionIds.size === 0) {
+      return runs.map(normalizeAttribution);
+    }
 
     const rows = (
       await Promise.all(
@@ -455,16 +441,22 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
 
     return runs.map((run) => {
       const persisted = ledger.get(run.id);
-      if (!persisted) return run;
+      if (!persisted) return normalizeAttribution(run);
+      if (run.costAttribution === 'direct') {
+        return {
+          ...run,
+          costUsd: finitePositiveNumber(run.costUsd) + persisted.costUsd,
+          estimatedValueUsd:
+            finitePositiveNumber(run.estimatedValueUsd) + persisted.estimatedValueUsd,
+          costAttribution: 'exact',
+        };
+      }
+      if (run.costAttribution === 'mixed') {
+        return { ...run, costAttribution: 'exact' };
+      }
       return {
         ...run,
-        ...mergeRunCostTotals(
-          {
-            costUsd: finitePositiveNumber(run.costUsd),
-            estimatedValueUsd: finitePositiveNumber(run.estimatedValueUsd),
-          },
-          persisted,
-        ),
+        ...persisted,
         costAttribution: 'exact',
       };
     });
@@ -773,20 +765,57 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         bySchedule.set(run.scheduleId, entry);
         continue;
       }
+      if (run.costAttribution === 'direct' || run.costAttribution === 'mixed') {
+        const messageCost = messageCostByRunId.get(run.runId);
+        const costUsd =
+          run.costAttribution === 'direct'
+            ? finitePositiveNumber(run.costUsd)
+            : Math.max(
+                0,
+                finitePositiveNumber(run.costUsd) - (messageCost?.costUsd ?? 0),
+              );
+        const estimatedValueUsd =
+          run.costAttribution === 'direct'
+            ? finitePositiveNumber(run.estimatedValueUsd)
+            : Math.max(
+                0,
+                finitePositiveNumber(run.estimatedValueUsd) -
+                  (messageCost?.estimatedValueUsd ?? 0),
+              );
+        if (costUsd === 0 && estimatedValueUsd === 0) continue;
+        const entry = bySchedule.get(run.scheduleId) ?? {
+          totalCostUsd: 0,
+          totalEstimatedValueUsd: 0,
+          hasUnavailableCost: false,
+          sessionIds: new Set<string>(),
+          sessionCosts: new Map(),
+        };
+        entry.totalCostUsd += costUsd;
+        entry.totalEstimatedValueUsd += estimatedValueUsd;
+        if (run.sessionId) {
+          entry.sessionIds.add(run.sessionId);
+          const sessionCost = entry.sessionCosts.get(run.sessionId) ?? {
+            totalCostUsd: 0,
+            totalEstimatedValueUsd: 0,
+          };
+          sessionCost.totalCostUsd += costUsd;
+          sessionCost.totalEstimatedValueUsd += estimatedValueUsd;
+          entry.sessionCosts.set(run.sessionId, sessionCost);
+          if (costUsd > 0) {
+            billableMessageCostBySessionId.set(
+              run.sessionId,
+              (billableMessageCostBySessionId.get(run.sessionId) ?? 0) + costUsd,
+            );
+          }
+        }
+        bySchedule.set(run.scheduleId, entry);
+        continue;
+      }
       if (run.costAttribution !== 'exact') continue;
       const messageCost = messageCostByRunId.get(run.runId);
-      const merged = mergeRunCostTotals(
-        {
-          costUsd: finitePositiveNumber(run.costUsd),
-          estimatedValueUsd: finitePositiveNumber(run.estimatedValueUsd),
-        },
-        messageCost ?? { costUsd: 0, estimatedValueUsd: 0 },
-      );
-      const costUsd = Math.max(0, merged.costUsd - (messageCost?.costUsd ?? 0));
-      const estimatedValueUsd = Math.max(
-        0,
-        merged.estimatedValueUsd - (messageCost?.estimatedValueUsd ?? 0),
-      );
+      if (messageCost) continue;
+      const costUsd = finitePositiveNumber(run.costUsd);
+      const estimatedValueUsd = finitePositiveNumber(run.estimatedValueUsd);
       if (costUsd === 0 && estimatedValueUsd === 0) continue;
       const entry = bySchedule.get(run.scheduleId) ?? {
         totalCostUsd: 0,
