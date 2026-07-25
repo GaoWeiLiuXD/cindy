@@ -433,8 +433,6 @@ export function NewMakerDraftRoute() {
     effectiveRemoteHostId == null &&
     effectiveDeviceLinkDeviceId == null;
   const collabPolicy = useCollabProjectPolicy(effectiveWorkingDir, collabPolicyEligible);
-  const effectiveCollabEnabled =
-    effectiveCollab.enabled && collabPolicyEligible && collabPolicy.enabled;
   const projectPickerOptions = useProjectPickerOptions();
   const createAgentModeLabel =
     getProjectPickerDisplayName(effectiveWorkingDir, projectPickerOptions) ??
@@ -1223,6 +1221,8 @@ export function NewMakerDraftRoute() {
         );
         return false;
       }
+      const shouldEnableCollab =
+        effectiveCollab.enabled && collabPolicyEligible && policyEnabled;
       // device-link 切设备后,capabilities/providers hook 可能还没 re-render 到新设备快照;
       // 此时 effectiveFastMode / supportsFastMode / sendProviderId 仍基于旧设备。
       if (isDeviceLinkDraft && (capabilitiesLoading || deviceProvidersLoading)) return false;
@@ -1552,7 +1552,7 @@ export function NewMakerDraftRoute() {
                 // 才进入 1.6s 平滑期, overlay 从 "空 ChatView" 自然过渡到 "已在
                 // streaming 的 ChatView", 不暴露中间空窗。clear 时机见本 async 块末尾。
 
-                if (effectiveCollabEnabled) {
+                if (shouldEnableCollab) {
                   try {
                     const result = await window.electronAPI.maker.enableOrca(
                       newSession.id,
@@ -1666,7 +1666,7 @@ export function NewMakerDraftRoute() {
           // 不阻断 send 流程。worker 类型由 popover 选择,失败回退到单 session 路由。
           let orcaNavTarget: string | null = null;
           let orcaWorkersRevealState: { focusWorkerSessionId: string } | null = null;
-          if (effectiveCollabEnabled) {
+          if (shouldEnableCollab) {
             try {
               const result = await window.electronAPI.maker.enableOrca(
                 newSession.id,
@@ -1746,8 +1746,8 @@ export function NewMakerDraftRoute() {
       // 漏在依赖里会让"切换后立即发送"用到旧值(bot review P2)。
       effectivePlanMode,
       patchActivePrefs,
-      effectiveCollabEnabled,
       effectiveCollab.enabled,
+      collabPolicyEligible,
       collabPolicy.enabled,
       collabPolicy.loading,
       collabPolicy.refresh,
@@ -1773,6 +1773,7 @@ export function NewMakerDraftRoute() {
   // 失败抛错 → NewGoalDialog 内联报错并保持打开。
   const handleCreateGoal = useCallback(
     async (objective: string, limits: GoalLimitValues): Promise<void> => {
+      let policyEnabled = collabPolicy.enabled;
       if (effectiveCollab.enabled && collabPolicyEligible) {
         if (collabPolicy.loading) {
           throw new Error(t('newChat.collaboration.loadingHint'));
@@ -1782,16 +1783,15 @@ export function NewMakerDraftRoute() {
           if (refreshed.unavailable) {
             throw new Error(t('newChat.collaboration.unavailableHint'));
           }
-          if (!refreshed.enabled) {
-            patchCollab({ enabled: false });
-            throw new Error(t('newChat.collaboration.disabledHint'));
-          }
+          policyEnabled = refreshed.enabled;
         }
-        if (!collabPolicy.unavailable && !collabPolicy.enabled) {
+        if (!policyEnabled) {
           patchCollab({ enabled: false });
           throw new Error(t('newChat.collaboration.disabledHint'));
         }
       }
+      const shouldEnableCollab =
+        effectiveCollab.enabled && collabPolicyEligible && policyEnabled;
       if (isDeviceLinkDraft && (capabilitiesLoading || deviceProvidersLoading)) {
         throw new Error(t('ccAgent.draft.deviceStillLoading'));
       }
@@ -1949,7 +1949,7 @@ export function NewMakerDraftRoute() {
       // session 不匹配返回 stale-context(codex P2)——与 Send 路径同口径,把 reveal
       // 塞进 navigate state,由 CCAgentSessionView mount 后消费。
       let orcaWorkersRevealState: { focusWorkerSessionId: string } | null = null;
-      if (effectiveCollabEnabled) {
+      if (shouldEnableCollab) {
         try {
           const result = await window.electronAPI.maker.enableOrca(
             newSession.id,
@@ -1993,7 +1993,6 @@ export function NewMakerDraftRoute() {
       effectiveRemoteHostId,
       effectiveExtraDirs,
       chatInitialProviderId,
-      effectiveCollabEnabled,
       effectiveCollab,
       collabPolicyEligible,
       collabPolicy.loading,
@@ -2281,7 +2280,7 @@ export function NewMakerDraftRoute() {
                     // vendor(上方 VendorSegmentedSwitcher)。onOpenDetails 打开「开启协同」富弹窗
                     // (CreateWorkerPopover:role/agent/model/初始任务),与会话内完全一致;OFF 态点击
                     // 走它而非简单 worker popover。ON 态点击 onChange(enabled:false) 关闭协同。
-                    // createSession 已在 effectiveCollabEnabled 时用 workerConfig 拉起 Worker。
+                    // createSession 后按本次策略校验结果用 workerConfig 拉起 Worker。
                     collaboration={
                       collabPolicyEligible
                         ? {
