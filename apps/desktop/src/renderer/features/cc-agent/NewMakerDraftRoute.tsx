@@ -2279,11 +2279,13 @@ export function NewMakerDraftRoute() {
                                 collabPolicy.unavailable ||
                                 !collabPolicy.enabled),
                             disabledReason:
-                              !collabPolicy.loading && collabPolicy.unavailable
-                                ? t('newChat.collaboration.unavailableHint')
-                                : !collabPolicy.loading && !collabPolicy.enabled
-                                  ? t('newChat.collaboration.disabledHint')
-                                  : undefined,
+                              collabPolicy.loading
+                                ? t('newChat.collaboration.loadingHint')
+                                : collabPolicy.unavailable
+                                  ? t('newChat.collaboration.unavailableHint')
+                                  : !collabPolicy.enabled
+                                    ? t('newChat.collaboration.disabledHint')
+                                    : undefined,
                           }
                         : undefined
                     }

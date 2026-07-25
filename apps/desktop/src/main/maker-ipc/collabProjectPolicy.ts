@@ -16,11 +16,12 @@ export function assertCollabProjectEnabled(
   context: CollabProjectPolicyContext,
   isPluginEnabled: (pluginId: 'collab', workingDir: string) => boolean,
 ): void {
+  const workingDir = typeof context.workingDir === 'string' ? context.workingDir.trim() : null;
   if (
     context.workspaceKind !== 'project' ||
     context.remoteHostId != null ||
-    typeof context.workingDir !== 'string' ||
-    context.workingDir.trim() === ''
+    workingDir === null ||
+    workingDir === ''
   ) {
     throwIpcError(
       'PRECONDITION_FAILED',
@@ -28,7 +29,7 @@ export function assertCollabProjectEnabled(
     );
   }
 
-  if (!isPluginEnabled('collab', context.workingDir)) {
+  if (!isPluginEnabled('collab', workingDir)) {
     throwIpcError(
       'PRECONDITION_FAILED',
       'collaboration is disabled for this project',
