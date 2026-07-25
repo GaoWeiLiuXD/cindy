@@ -769,6 +769,7 @@
             "label": "ASR API key",
             "hint": "Stored locally with system encryption and used only for this voice service.",
             "savedHint": "A key is stored locally. Leave this field blank to keep it.",
+            "endpointChangedHint": "The service origin changed. Enter a new key, or remove the saved key before saving.",
             "placeholder": "Enter the ASR API key",
             "savedPlaceholder": "Key saved — enter a new value to replace it",
             "clear": "Remove key"

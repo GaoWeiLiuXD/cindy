@@ -10,6 +10,43 @@ export const MAX_CUSTOM_ASR_WEBSOCKET_URL_CHARS = 2_048;
 export const MAX_CUSTOM_ASR_MODEL_CHARS = 200;
 export const MAX_CUSTOM_ASR_API_KEY_CHARS = 8_192;
 
+/**
+ * Credential scope for a custom ASR endpoint. Paths may change without
+ * exposing the key to a different server, while scheme/host/port changes
+ * require an explicit credential update.
+ */
+export function voiceInputCustomAsrCredentialScope(websocketUrl: string): string | null {
+  try {
+    return new URL(websocketUrl).origin;
+  } catch {
+    return null;
+  }
+}
+
+export function canReuseVoiceInputCustomAsrCredential(
+  currentWebsocketUrl: string | undefined,
+  nextWebsocketUrl: string,
+): boolean {
+  if (!currentWebsocketUrl) return false;
+  const currentScope = voiceInputCustomAsrCredentialScope(currentWebsocketUrl);
+  return currentScope !== null
+    && currentScope === voiceInputCustomAsrCredentialScope(nextWebsocketUrl);
+}
+
+/**
+ * Qwen's realtime protocol selects its model in the WebSocket query rather
+ * than the session.update payload. The form's model field remains the source
+ * of truth and overrides a stale model query already present in the URL.
+ */
+export function resolveVoiceInputCustomAsrWebsocketUrl(
+  config: VoiceInputCustomAsrConfig,
+): string {
+  if (config.protocol !== 'qwen-realtime') return config.websocketUrl;
+  const websocketUrl = new URL(config.websocketUrl);
+  websocketUrl.searchParams.set('model', config.model);
+  return websocketUrl.toString();
+}
+
 export function validateVoiceInputCustomAsrWebsocketUrl(value: string): string | null {
   const websocketUrl = value.trim();
   if (!websocketUrl || websocketUrl.length > MAX_CUSTOM_ASR_WEBSOCKET_URL_CHARS) {

@@ -1,4 +1,4 @@
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({
@@ -10,6 +10,8 @@ vi.mock('electron', () => ({
 
 import {
   buildSessionUpdateMessage,
+  invalidatePrewarmedRealtimeAsrWebSocketSession,
+  prewarmRealtimeAsrWebSocketSession,
   realtimeErrorMessage,
   RealtimeAsrWebSocketProvider,
   resamplePcm16,
@@ -262,6 +264,88 @@ describe('RealtimeAsrWebSocketProvider helpers', () => {
       );
     } finally {
       await provider?.stop();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not reuse a prewarmed socket across credential cache identities', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    const authorizations: Array<string | undefined> = [];
+    const sockets: WebSocket[] = [];
+    let provider: RealtimeAsrWebSocketProvider | undefined;
+    server.on('connection', (socket, request) => {
+      sockets.push(socket);
+      authorizations.push(request.headers.authorization);
+      socket.on('message', (data) => {
+        const message = JSON.parse(data.toString()) as { type?: string };
+        if (message.type === 'session.update') {
+          socket.send(JSON.stringify({ type: 'session.updated' }));
+        }
+      });
+    });
+
+    try {
+      await waitFor(() => server.address() !== null);
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected local test server address.');
+      const realtimeUrl = `ws://127.0.0.1:${address.port}/v1/realtime`;
+
+      await prewarmRealtimeAsrWebSocketSession({
+        accessTokenProvider: async () => 'old-key',
+        credentialCacheKey: 'old-key-hash',
+        realtimeUrl,
+        model: 'gpt-realtime-whisper',
+      });
+      await waitFor(() => authorizations.length === 1);
+
+      provider = new RealtimeAsrWebSocketProvider({
+        accessTokenProvider: async () => 'new-key',
+        credentialCacheKey: 'new-key-hash',
+        realtimeUrl,
+        model: 'gpt-realtime-whisper',
+      });
+      provider.onEvent(() => {});
+      await provider.start();
+
+      expect(authorizations).toEqual(['Bearer old-key', 'Bearer new-key']);
+    } finally {
+      await provider?.stop();
+      for (const socket of sockets) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('immediately closes a prewarmed socket when credentials are invalidated', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    let serverSocket: WebSocket | undefined;
+    server.on('connection', (socket) => {
+      serverSocket = socket;
+      socket.on('message', (data) => {
+        const message = JSON.parse(data.toString()) as { type?: string };
+        if (message.type === 'session.update') {
+          socket.send(JSON.stringify({ type: 'session.updated' }));
+        }
+      });
+    });
+
+    try {
+      await waitFor(() => server.address() !== null);
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected local test server address.');
+
+      await prewarmRealtimeAsrWebSocketSession({
+        accessTokenProvider: async () => 'old-key',
+        credentialCacheKey: 'old-key-hash',
+        realtimeUrl: `ws://127.0.0.1:${address.port}/v1/realtime`,
+        model: 'gpt-realtime-whisper',
+      });
+      await waitFor(() => serverSocket?.readyState === WebSocket.OPEN);
+
+      invalidatePrewarmedRealtimeAsrWebSocketSession();
+
+      await waitFor(() => serverSocket?.readyState === WebSocket.CLOSED);
+    } finally {
+      serverSocket?.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });

@@ -1,4 +1,5 @@
 import { app, ipcMain, shell, systemPreferences } from 'electron';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 
 import {
@@ -48,6 +49,7 @@ import {
   prewarmLiteLlmRefinerEndpoint,
 } from './LiteLlmTextModelClient.js';
 import {
+  invalidatePrewarmedRealtimeAsrWebSocketSession,
   RealtimeAsrWebSocketProvider,
   prewarmRealtimeAsrWebSocketSession,
   type RealtimeAsrWebSocketProviderOptions,
@@ -120,7 +122,15 @@ import {
   type VoiceInputRefinerProfile,
   type VoiceInputRefinerProviderKind,
 } from '../../shared/voiceInputRefinerProfiles.js';
-import { MAX_CUSTOM_ASR_API_KEY_CHARS } from '../../shared/voiceInputCustomAsr.js';
+import {
+  canReuseVoiceInputCustomAsrCredential,
+  MAX_CUSTOM_ASR_API_KEY_CHARS,
+  resolveVoiceInputCustomAsrWebsocketUrl,
+} from '../../shared/voiceInputCustomAsr.js';
+import {
+  persistVoiceInputSelectionWithCustomAsrSecret,
+  type CustomAsrSecretUpdate,
+} from './voiceInputCustomAsrPersistence.js';
 
 const log = createLogger('voice-input');
 
@@ -978,17 +988,22 @@ function buildCustomRealtimeAsrProviderOptions(
   config: VoiceInputCustomAsrConfig,
   sourceLanguage: string | undefined,
 ): RealtimeAsrWebSocketProviderOptions {
+  const profile = getVoiceInputAsrProfile('custom-realtime-asr');
   const openAiProtocol = config.protocol === 'openai-realtime';
+  const apiKey = getProviderSecretStore().get('voice-asr');
   return {
-    accessTokenProvider: () => Promise.resolve(getProviderSecretStore().get('voice-asr')),
+    accessTokenProvider: () => Promise.resolve(apiKey),
+    credentialCacheKey: apiKey
+      ? createHash('sha256').update(apiKey).digest('hex')
+      : '',
     model: config.model,
-    realtimeUrl: config.websocketUrl,
+    realtimeUrl: resolveVoiceInputCustomAsrWebsocketUrl(config),
     sourceLanguage,
     pcmSampleRate: openAiProtocol ? 24_000 : 16_000,
     protocolProfile: openAiProtocol ? 'openai-transcription-manual' : 'qwen-asr-server-vad',
     providerKind: 'custom-realtime-asr',
-    missingCredentialMessage: 'Configure an API key for the custom realtime ASR service.',
-    errorFallbackMessage: 'Custom realtime speech recognition failed.',
+    missingCredentialMessage: profile.missingCredentialMessage,
+    errorFallbackMessage: profile.errorFallbackMessage,
   };
 }
 
@@ -1381,11 +1396,6 @@ function voiceInputModelSelectionPatchFromIpc(payload: unknown): VoiceInputModel
   return patch;
 }
 
-type CustomAsrSecretUpdate =
-  | { action: 'none' }
-  | { action: 'set'; value: string }
-  | { action: 'clear' };
-
 function customAsrSecretUpdateFromIpc(payload: unknown): CustomAsrSecretUpdate {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { action: 'none' };
   const source = payload as Record<string, unknown>;
@@ -1401,18 +1411,23 @@ function customAsrSecretUpdateFromIpc(payload: unknown): CustomAsrSecretUpdate {
   return { action: 'set', value };
 }
 
-function applyCustomAsrSecretUpdate(update: CustomAsrSecretUpdate): void {
-  if (update.action === 'none') return;
-  const store = getProviderSecretStore();
-  if (update.action === 'set') {
-    if (!store.set('voice-asr', update.value)) {
-      throwIpcError('INTERNAL', 'Failed to store the custom ASR API key.');
-    }
-    return;
-  }
-  const removed = store.remove('voice-asr');
-  if (!removed.success) {
-    throwIpcError('INTERNAL', 'Failed to remove the custom ASR API key.');
+function assertCustomAsrCredentialScope(
+  currentSelection: VoiceInputModelSelection,
+  patch: VoiceInputModelSelectionPatch,
+  secretUpdate: CustomAsrSecretUpdate,
+): void {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'customAsr')) return;
+  if (!patch.customAsr || secretUpdate.action !== 'none') return;
+  if (!getProviderSecretStore().has('voice-asr')) return;
+
+  if (!canReuseVoiceInputCustomAsrCredential(
+    currentSelection.customAsr?.websocketUrl,
+    patch.customAsr.websocketUrl,
+  )) {
+    throwIpcError(
+      'INVALID_PARAMS',
+      'customAsrApiKey must be set or cleared when the custom ASR endpoint origin changes',
+    );
   }
 }
 
@@ -1760,15 +1775,23 @@ export function registerVoiceInputIpc(): void {
       assertTrustedAppRendererEvent(event);
       const patch = voiceInputModelSelectionPatchFromIpc(payload);
       const customAsrSecretUpdate = customAsrSecretUpdateFromIpc(payload);
+      const currentSelection = readActiveVoiceInputModelSelection('ipc-set-before-write');
+      assertCustomAsrCredentialScope(currentSelection, patch, customAsrSecretUpdate);
       let selection: VoiceInputModelSelection;
       try {
-        selection = setVoiceInputModelSelection(patch);
-        applyCustomAsrSecretUpdate(customAsrSecretUpdate);
+        selection = persistVoiceInputSelectionWithCustomAsrSecret(
+          () => setVoiceInputModelSelection(patch),
+          getProviderSecretStore(),
+          customAsrSecretUpdate,
+        );
       } catch (error) {
         log.warn('voice input model selection write failed', {
           error: error instanceof Error ? error.message : String(error),
         });
         throwIpcError('INTERNAL', 'Failed to save voice input model selection.');
+      }
+      if (customAsrSecretUpdate.action !== 'none') {
+        invalidatePrewarmedRealtimeAsrWebSocketSession();
       }
       markVoiceInputModelSelectionApplied('ipc-set', selection);
       const result = await buildVoiceInputModelSelectionIpcResult('set');

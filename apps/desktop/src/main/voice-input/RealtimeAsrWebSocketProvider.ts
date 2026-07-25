@@ -18,6 +18,8 @@ export type RealtimeAsrWebSocketProviderOptions = {
   model?: string;
   realtimeUrl?: string;
   extraHeaders?: Record<string, string>;
+  /** Non-secret identity used to prevent warm-socket reuse across credentials. */
+  credentialCacheKey?: string;
   pcmSampleRate?: number;
   protocolProfile?: VoiceInputRealtimeProtocolProfile;
   providerKind?: string;
@@ -69,6 +71,7 @@ const log = createLogger('voice-input:realtime-asr-websocket');
 type WarmRealtimeSession = {
   socket: WebSocket;
   connectionKey: string;
+  credentialCacheKey: string;
   model: string;
   languageCode: string | undefined;
   pcmSampleRate: number;
@@ -93,6 +96,7 @@ type TakenWarmRealtimeSession = {
 };
 
 let warmRealtimeSession: WarmRealtimeSession | null = null;
+let warmRealtimeSessionGeneration = 0;
 // Same-key in-flight dedup: a second prewarm for the SAME (model, language)
 // returned the same in-flight promise immediately. Kept for callers that
 // want fast same-config short-circuit before the chain serializer below.
@@ -104,6 +108,13 @@ const inFlightWarmPrewarms = new Map<string, Promise<void>>();
 // world after its turn — if a previously queued prewarm already settled a
 // matching warm session, the later link returns without creating another.
 let warmPrewarmChain: Promise<void> = Promise.resolve();
+
+export function invalidatePrewarmedRealtimeAsrWebSocketSession(): void {
+  warmRealtimeSessionGeneration += 1;
+  inFlightWarmPrewarms.clear();
+  warmRealtimeSession?.close();
+  warmRealtimeSession = null;
+}
 
 type RealtimeConnectionConfig = {
   realtimeUrl: string;
@@ -150,17 +161,19 @@ function realtimeHeaders(accessToken: string, extraHeaders: Record<string, strin
 
 function warmConfigKey(
   connectionKey: string,
+  credentialCacheKey: string,
   model: string,
   languageCode: string | undefined,
   pcmSampleRate: number,
   protocolProfile: VoiceInputRealtimeProtocolProfile,
 ): string {
-  return `${connectionKey}::${model}::${languageCode ?? ''}::pcm-${pcmSampleRate}::${protocolProfile}`;
+  return `${connectionKey}::credential-${credentialCacheKey}::${model}::${languageCode ?? ''}::pcm-${pcmSampleRate}::${protocolProfile}`;
 }
 
 function isExistingWarmMatch(
   existing: WarmRealtimeSession | null,
   connectionKey: string,
+  credentialCacheKey: string,
   model: string,
   languageCode: string | undefined,
   pcmSampleRate: number,
@@ -168,6 +181,7 @@ function isExistingWarmMatch(
 ): boolean {
   if (!existing) return false;
   if (existing.connectionKey !== connectionKey) return false;
+  if (existing.credentialCacheKey !== credentialCacheKey) return false;
   if (existing.model !== model) return false;
   if (existing.languageCode !== languageCode) return false;
   if (existing.pcmSampleRate !== pcmSampleRate) return false;
@@ -178,18 +192,28 @@ function isExistingWarmMatch(
 }
 
 export function prewarmRealtimeAsrWebSocketSession(options: RealtimeAsrWebSocketProviderOptions): Promise<void> {
+  const generation = warmRealtimeSessionGeneration;
   const model = options.model ?? OPENAI_REALTIME_WHISPER_MODEL;
   const sourceLanguage = options.sourceLanguage ?? 'auto';
   const languageCode = openAiLanguageCode(sourceLanguage);
   const pcmSampleRate = options.pcmSampleRate ?? DEFAULT_REALTIME_PCM_SAMPLE_RATE;
   const protocolProfile = options.protocolProfile ?? 'openai-transcription-manual';
+  const credentialCacheKey = options.credentialCacheKey ?? '';
   const connection = resolveRealtimeConnectionConfig(options);
-  const configKey = warmConfigKey(connection.connectionKey, model, languageCode, pcmSampleRate, protocolProfile);
+  const configKey = warmConfigKey(
+    connection.connectionKey,
+    credentialCacheKey,
+    model,
+    languageCode,
+    pcmSampleRate,
+    protocolProfile,
+  );
 
   // Fast-path 1: an existing warm session already matches.
   if (isExistingWarmMatch(
     warmRealtimeSession,
     connection.connectionKey,
+    credentialCacheKey,
     model,
     languageCode,
     pcmSampleRate,
@@ -208,11 +232,13 @@ export function prewarmRealtimeAsrWebSocketSession(options: RealtimeAsrWebSocket
   // Queue on the global chain so any different-key prewarm finishes (and
   // potentially supersedes our need) before we create another socket.
   const next = warmPrewarmChain.then(async () => {
+    if (generation !== warmRealtimeSessionGeneration) return;
     // Re-check after the wait — a prior queued prewarm may have created
     // exactly the warm session we wanted, in which case we're done.
     if (isExistingWarmMatch(
       warmRealtimeSession,
       connection.connectionKey,
+      credentialCacheKey,
       model,
       languageCode,
       pcmSampleRate,
@@ -224,7 +250,17 @@ export function prewarmRealtimeAsrWebSocketSession(options: RealtimeAsrWebSocket
     // ours. createWarmRealtimeSession returns a promise that settles when
     // session.updated arrives; awaiting here keeps the chain serialized.
     warmRealtimeSession?.close();
-    await createWarmRealtimeSession(options, connection, model, sourceLanguage, languageCode, pcmSampleRate, protocolProfile);
+    await createWarmRealtimeSession(
+      options,
+      connection,
+      generation,
+      credentialCacheKey,
+      model,
+      sourceLanguage,
+      languageCode,
+      pcmSampleRate,
+      protocolProfile,
+    );
   });
   warmPrewarmChain = next.catch(() => undefined);
   inFlightWarmPrewarms.set(configKey, next);
@@ -238,6 +274,7 @@ export function prewarmRealtimeAsrWebSocketSession(options: RealtimeAsrWebSocket
 
 function takeWarmRealtimeSession(
   connectionKey: string,
+  credentialCacheKey: string,
   model: string,
   sourceLanguage: string,
   pcmSampleRate: number,
@@ -247,6 +284,10 @@ function takeWarmRealtimeSession(
   if (!warm) return null;
   if (!warm.ready || warm.socket.readyState !== WebSocket.OPEN) return null;
   if (warm.connectionKey !== connectionKey) {
+    warm.close();
+    return null;
+  }
+  if (warm.credentialCacheKey !== credentialCacheKey) {
     warm.close();
     return null;
   }
@@ -275,6 +316,8 @@ function takeWarmRealtimeSession(
 function createWarmRealtimeSession(
   options: RealtimeAsrWebSocketProviderOptions,
   connection: RealtimeConnectionConfig,
+  generation: number,
+  credentialCacheKey: string,
   model: string,
   sourceLanguage: string,
   languageCode: string | undefined,
@@ -289,6 +332,7 @@ function createWarmRealtimeSession(
   const readyPromise: Promise<void> = (async (): Promise<void> => {
     const accessToken = await options.accessTokenProvider();
     if (!accessToken) return;
+    if (generation !== warmRealtimeSessionGeneration) return;
 
     await new Promise<void>((resolve, reject) => {
       const socket = new WebSocket(connection.realtimeUrl, {
@@ -413,6 +457,7 @@ function createWarmRealtimeSession(
       warmRealtimeSession = {
         socket,
         connectionKey: connection.connectionKey,
+        credentialCacheKey,
         model,
         languageCode,
         pcmSampleRate,
@@ -528,6 +573,7 @@ export class RealtimeAsrWebSocketProvider implements AsrProvider {
   private activeRealtimeUrl: string;
   private readonly extraHeaders: Record<string, string>;
   private readonly connectionKey: string;
+  private readonly credentialCacheKey: string;
   private readonly pcmSampleRate: number;
   private readonly protocolProfile: VoiceInputRealtimeProtocolProfile;
   private readonly providerKind: string;
@@ -602,6 +648,7 @@ export class RealtimeAsrWebSocketProvider implements AsrProvider {
     this.activeRealtimeUrl = connection.realtimeUrl;
     this.extraHeaders = connection.extraHeaders;
     this.connectionKey = connection.connectionKey;
+    this.credentialCacheKey = options.credentialCacheKey ?? '';
     this.providerKind = options.providerKind ?? 'openai-realtime-whisper';
     this.missingCredentialMessage =
       options.missingCredentialMessage ?? 'Codex ChatGPT login is required for realtime voice input.';
@@ -640,6 +687,7 @@ export class RealtimeAsrWebSocketProvider implements AsrProvider {
 
     const warm = dynamicConnection ? null : takeWarmRealtimeSession(
       this.connectionKey,
+      this.credentialCacheKey,
       this.model,
       this.sourceLanguage,
       this.pcmSampleRate,

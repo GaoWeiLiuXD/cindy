@@ -53,6 +53,7 @@ import {
 } from '@/voice-input/shortcut';
 import { requestRendererMicrophonePermission } from '@/voice-input/startGuards';
 import {
+  canReuseVoiceInputCustomAsrCredential,
   MAX_CUSTOM_ASR_API_KEY_CHARS,
   MAX_CUSTOM_ASR_MODEL_CHARS,
   MAX_CUSTOM_ASR_WEBSOCKET_URL_CHARS,
@@ -476,8 +477,15 @@ function VoiceInputServiceSourceCard() {
   const customAsrUrlInvalid = Boolean(
     customAsrWebsocketUrl.trim() && validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl),
   );
+  const customAsrEndpointRequiresNewKey = customAsrApiKeyConfigured
+    && validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl) === null
+    && !canReuseVoiceInputCustomAsrCredential(
+      selection?.customAsr?.websocketUrl,
+      customAsrWebsocketUrl,
+    );
   const customAsrCanSave = validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl) === null
-    && Boolean(customAsrModel.trim());
+    && Boolean(customAsrModel.trim())
+    && (!customAsrEndpointRequiresNewKey || Boolean(customAsrApiKey.trim()));
   const credentialRecoveryInVoiceSettings = customAsrSelected
     || readiness?.failureReason === 'codex-realtime-unsupported';
 
@@ -623,17 +631,21 @@ function VoiceInputServiceSourceCard() {
 
               <VoiceInputInlineSettingRow
                 label={t('settings.voiceInput.serviceSource.customAsr.apiKey.label')}
-                hint={t(customAsrApiKeyConfigured
-                  ? 'settings.voiceInput.serviceSource.customAsr.apiKey.savedHint'
-                  : 'settings.voiceInput.serviceSource.customAsr.apiKey.hint')}
+                hint={t(customAsrEndpointRequiresNewKey
+                  ? 'settings.voiceInput.serviceSource.customAsr.apiKey.endpointChangedHint'
+                  : customAsrApiKeyConfigured
+                    ? 'settings.voiceInput.serviceSource.customAsr.apiKey.savedHint'
+                    : 'settings.voiceInput.serviceSource.customAsr.apiKey.hint')}
               >
                 <input
                   type="password"
                   value={customAsrApiKey}
                   onChange={(event) => setCustomAsrApiKey(event.target.value)}
-                  placeholder={t(customAsrApiKeyConfigured
-                    ? 'settings.voiceInput.serviceSource.customAsr.apiKey.savedPlaceholder'
-                    : 'settings.voiceInput.serviceSource.customAsr.apiKey.placeholder')}
+                  placeholder={t(customAsrEndpointRequiresNewKey
+                    ? 'settings.voiceInput.serviceSource.customAsr.apiKey.placeholder'
+                    : customAsrApiKeyConfigured
+                      ? 'settings.voiceInput.serviceSource.customAsr.apiKey.savedPlaceholder'
+                      : 'settings.voiceInput.serviceSource.customAsr.apiKey.placeholder')}
                   maxLength={MAX_CUSTOM_ASR_API_KEY_CHARS}
                   spellCheck={false}
                   autoComplete="new-password"

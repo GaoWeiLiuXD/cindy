@@ -769,6 +769,7 @@
             "label": "ASR API Key",
             "hint": "使用系统加密保存在本机，仅供这个语音服务使用。",
             "savedHint": "本机已保存 Key；留空可保持不变。",
+            "endpointChangedHint": "服务地址已切换到新的来源。请填写新的 Key，或先移除已保存的 Key。",
             "placeholder": "输入 ASR API Key",
             "savedPlaceholder": "Key 已保存；输入新值可替换",
             "clear": "移除 Key"

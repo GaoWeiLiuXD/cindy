@@ -14,6 +14,10 @@ import {
   voiceInputAsrChainForServiceMode,
   voiceInputModelSelectionSignature,
 } from '../VoiceInputModelSelection.js';
+import {
+  canReuseVoiceInputCustomAsrCredential,
+  resolveVoiceInputCustomAsrWebsocketUrl,
+} from '../../../shared/voiceInputCustomAsr.js';
 
 describe('VoiceInputModelSelection', () => {
   describe('serviceMode', () => {
@@ -277,6 +281,34 @@ describe('VoiceInputModelSelection', () => {
       websocketUrl: 'wss://asr.example.com/realtime?token=secret',
       model: 'gpt-realtime-whisper',
     }).ok).toBe(false);
+  });
+
+  it('binds saved credentials to an endpoint origin and routes Qwen models in the URL', () => {
+    expect(canReuseVoiceInputCustomAsrCredential(
+      'wss://asr.example.com/v1/realtime',
+      'wss://asr.example.com/v2/realtime?intent=transcription',
+    )).toBe(true);
+    expect(canReuseVoiceInputCustomAsrCredential(
+      'wss://asr.example.com/v1/realtime',
+      'wss://other.example.com/v1/realtime',
+    )).toBe(false);
+    expect(canReuseVoiceInputCustomAsrCredential(
+      undefined,
+      'wss://asr.example.com/v1/realtime',
+    )).toBe(false);
+
+    expect(resolveVoiceInputCustomAsrWebsocketUrl({
+      protocol: 'qwen-realtime',
+      websocketUrl: 'wss://asr.example.com/realtime?tenant=one&model=stale',
+      model: 'qwen3-asr-flash-realtime',
+    })).toBe(
+      'wss://asr.example.com/realtime?tenant=one&model=qwen3-asr-flash-realtime',
+    );
+    expect(resolveVoiceInputCustomAsrWebsocketUrl({
+      protocol: 'openai-realtime',
+      websocketUrl: 'wss://asr.example.com/realtime?intent=transcription',
+      model: 'gpt-realtime-whisper',
+    })).toBe('wss://asr.example.com/realtime?intent=transcription');
   });
 
   it('uses explicit chain config as the fallback tail, keeping the selected primary as head', () => {
