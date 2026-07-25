@@ -162,6 +162,44 @@ describe('useCollabProjectPolicy', () => {
     expect(result.current.enabled).toBe(false);
   });
 
+  it('does not resolve a superseded project refresh with another project policy', async () => {
+    const projectARetry = deferred<{ effectiveEnabled: boolean }>();
+    const getState = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary IPC failure'))
+      .mockReturnValueOnce(projectARetry.promise)
+      .mockResolvedValueOnce({ effectiveEnabled: true });
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result, rerender } = renderHook(
+      ({ workingDir }: { workingDir: string }) =>
+        useCollabProjectPolicy(workingDir, true),
+      { initialProps: { workingDir: 'C:\\projects\\project-a' } },
+    );
+    await waitFor(() => expect(result.current.unavailable).toBe(true));
+
+    let projectARefresh!: ReturnType<typeof result.current.refresh>;
+    act(() => {
+      projectARefresh = result.current.refresh();
+    });
+
+    rerender({ workingDir: 'C:\\projects\\project-b' });
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    let projectAResult!: Awaited<typeof projectARefresh>;
+    await act(async () => {
+      projectARetry.resolve({ effectiveEnabled: false });
+      projectAResult = await projectARefresh;
+    });
+
+    expect(projectAResult).toEqual({ enabled: false, unavailable: false });
+    expect(result.current.enabled).toBe(true);
+    expect(getState).toHaveBeenNthCalledWith(2, 'collab', 'C:/projects/project-a');
+    expect(getState).toHaveBeenNthCalledWith(3, 'collab', 'C:/projects/project-b');
+  });
+
   it('does not keep global refresh listeners for ineligible sessions', async () => {
     const getState = vi.fn().mockResolvedValue({ effectiveEnabled: true });
     (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {

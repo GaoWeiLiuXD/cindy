@@ -44,14 +44,14 @@ export function useCollabProjectPolicy(
     unavailable: false,
   });
   const requestIdRef = useRef(0);
-  const latestRefreshPromiseRef = useRef<Promise<PolicyResult> | null>(null);
+  const latestRefreshPromiseByWorkingDirRef = useRef(
+    new Map<string, Promise<PolicyResult>>(),
+  );
   const refresh = useCallback((): Promise<PolicyResult> => {
     const requestId = ++requestIdRef.current;
     if (!requestedWorkingDir) {
       setState({ workingDir: null, enabled: false, unavailable: false });
-      const result = Promise.resolve({ enabled: false, unavailable: false });
-      latestRefreshPromiseRef.current = result;
-      return result;
+      return Promise.resolve({ enabled: false, unavailable: false });
     }
 
     let requestPromise!: Promise<PolicyResult>;
@@ -65,7 +65,8 @@ export function useCollabProjectPolicy(
         const next = await window.electronAPI.maker.plugins.getState('collab', requestedWorkingDir);
         const result = { enabled: next.effectiveEnabled, unavailable: false };
         if (requestId !== requestIdRef.current) {
-          const latest = latestRefreshPromiseRef.current;
+          const latest =
+            latestRefreshPromiseByWorkingDirRef.current.get(requestedWorkingDir);
           return latest && latest !== requestPromise ? latest : result;
         }
         setState({
@@ -81,14 +82,15 @@ export function useCollabProjectPolicy(
         });
         const result = { enabled: false, unavailable: true };
         if (requestId !== requestIdRef.current) {
-          const latest = latestRefreshPromiseRef.current;
+          const latest =
+            latestRefreshPromiseByWorkingDirRef.current.get(requestedWorkingDir);
           return latest && latest !== requestPromise ? latest : result;
         }
         setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: true });
         return result;
       }
     })();
-    latestRefreshPromiseRef.current = requestPromise;
+    latestRefreshPromiseByWorkingDirRef.current.set(requestedWorkingDir, requestPromise);
     return requestPromise;
   }, [requestedWorkingDir]);
 
