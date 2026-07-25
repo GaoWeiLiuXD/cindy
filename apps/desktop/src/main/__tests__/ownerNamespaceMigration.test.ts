@@ -484,6 +484,40 @@ describe('legacy Ghost plugin recovery', () => {
     ).rejects.toThrow();
   });
 
+  it('does not move linked legacy plugin directories', async () => {
+    const root = await tempRoot();
+    const externalRoot = await tempRoot();
+    const linkedPlugin = path.join(externalRoot, 'linked-plugin');
+    await writeGhostDirAtPath(linkedPlugin, 'linked-plugin');
+    await fs.mkdir(path.join(root, 'brain'), { recursive: true });
+    await fs.symlink(
+      linkedPlugin,
+      path.join(root, 'brain', 'linked-plugin'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(
+      recoverLegacyGhostPlugins(
+        { mode: 'cloud', dataOwnerId: 'cloud-a', user: { id: 'cloud-a' } },
+        realFsDeps(root),
+      ),
+    ).resolves.toEqual({ status: 'skipped', moved: 0, conflicts: 0 });
+    await expect(
+      fs.readFile(path.join(linkedPlugin, 'ghost.json'), 'utf-8'),
+    ).resolves.toContain('"id":"linked-plugin"');
+    await expect(
+      fs.access(
+        path.join(
+          root,
+          'owners',
+          dataOwnerStorageKey('cloud-a'),
+          'cindy-brain',
+          'linked-plugin',
+        ),
+      ),
+    ).rejects.toThrow();
+  });
+
   it('does not follow a linked owner-scoped recovery destination', async () => {
     const root = await tempRoot();
     const externalRoot = await tempRoot();

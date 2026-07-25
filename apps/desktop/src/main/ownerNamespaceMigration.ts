@@ -350,8 +350,15 @@ function listLegacyGhostDirsInRoots(
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      if (entry.name.startsWith('.')) continue;
       const dir = path.join(root, entry.name);
+      let dirStats: fsSync.Stats;
+      try {
+        dirStats = fsSync.lstatSync(dir);
+      } catch {
+        continue;
+      }
+      if (!dirStats.isDirectory() || dirStats.isSymbolicLink()) continue;
       const valid = readValidLegacyGhostDir(dir, entry.name);
       if (valid) result.push({ root, id: entry.name, dir, command: valid.command });
     }

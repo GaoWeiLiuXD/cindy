@@ -184,7 +184,9 @@ export function GhostPluginPage() {
   useEffect(() => {
     if (installedGhostIdsKeyRef.current === installedGhostIdsKey) return;
     installedGhostIdsKeyRef.current = installedGhostIdsKey;
-    void refreshMarket(true);
+    // refreshMarket(true) reports an unavailable market by rejecting after preserving
+    // the current snapshot; the state update already happened in refreshMarket.
+    void refreshMarket(true).catch(() => undefined);
   }, [installedGhostIdsKey, refreshMarket]);
   const activeSessionWorkingDir = useSyncExternalStore(
     subscribeToLastWorkingDir,
