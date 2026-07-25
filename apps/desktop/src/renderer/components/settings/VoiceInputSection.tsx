@@ -52,6 +52,12 @@ import {
   type VoiceInputShortcut,
 } from '@/voice-input/shortcut';
 import { requestRendererMicrophonePermission } from '@/voice-input/startGuards';
+import {
+  MAX_CUSTOM_ASR_API_KEY_CHARS,
+  MAX_CUSTOM_ASR_MODEL_CHARS,
+  MAX_CUSTOM_ASR_WEBSOCKET_URL_CHARS,
+  validateVoiceInputCustomAsrWebsocketUrl,
+} from '../../../shared/voiceInputCustomAsr';
 
 const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = ['auto', ...SUPPORTED_LOCALES];
 const AUTO_MICROPHONE_VALUE = '__auto__';
@@ -344,19 +350,34 @@ function VoiceInputServiceSourceCard() {
     asrProfiles,
     refinerProfiles,
     readiness,
+    customAsrApiKeyConfigured,
     saving,
     setServiceMode,
     setAsrProvider,
     setRefinerProvider,
     setRefinerFallbackProvider,
+    saveCustomAsr,
+    clearCustomAsrApiKey,
     resetToDefault,
   } = useVoiceInputModelSelection();
+  const [customAsrProtocol, setCustomAsrProtocol] = useState<'openai-realtime' | 'qwen-realtime'>('openai-realtime');
+  const [customAsrWebsocketUrl, setCustomAsrWebsocketUrl] = useState('');
+  const [customAsrModel, setCustomAsrModel] = useState('');
+  const [customAsrApiKey, setCustomAsrApiKey] = useState('');
 
   const localMode = appMode === 'local';
   const serviceMode: VoiceInputServiceModeData = localMode
     ? 'byok'
     : (selection?.serviceMode ?? 'cindy');
   const byok = serviceMode === 'byok';
+  const customAsrSelected = selection?.asrProvider === 'custom-realtime-asr';
+
+  useEffect(() => {
+    if (!selection?.customAsr) return;
+    setCustomAsrProtocol(selection.customAsr.protocol);
+    setCustomAsrWebsocketUrl(selection.customAsr.websocketUrl);
+    setCustomAsrModel(selection.customAsr.model);
+  }, [selection?.customAsr]);
 
   const openProvidersTab = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -394,10 +415,17 @@ function VoiceInputServiceSourceCard() {
       .filter((profile) => profile.mode !== 'batch-http')
       .map((profile) => ({
         value: profile.id,
-        label: profile.model,
-        description: credentialSourceLabel(profile),
+        label: profile.id === 'custom-realtime-asr'
+          ? t('settings.voiceInput.serviceSource.customAsr.optionLabel')
+          : profile.model,
+        description: profile.id === 'custom-realtime-asr'
+          ? t('settings.voiceInput.serviceSource.customAsr.optionDescription')
+          : profile.id === 'openai-realtime-whisper'
+            ? t('settings.voiceInput.serviceSource.credential.codexRealtimeUnsupported')
+            : credentialSourceLabel(profile),
+        disabled: profile.id === 'openai-realtime-whisper',
       }))
-  ), [asrProfiles, credentialSourceLabel]);
+  ), [asrProfiles, credentialSourceLabel, t]);
 
   const refinerOptions = useMemo<ReadonlyArray<VoiceInputSelectOption<string>>>(() => (
     refinerProfiles.map((profile) => ({
@@ -429,12 +457,44 @@ function VoiceInputServiceSourceCard() {
   // raw main-process message (which is an untranslated profile constant).
   const byokCredentialErrorText = useMemo(() => {
     if (!byok || !readiness || readiness.ok) return null;
+    if (readiness.failureReason === 'custom-asr-config-missing') {
+      return t('settings.voiceInput.serviceSource.credentialError.customAsrConfigMissing');
+    }
+    if (readiness.failureReason === 'custom-asr-key-missing') {
+      return t('settings.voiceInput.serviceSource.credentialError.customAsrKeyMissing');
+    }
+    if (readiness.failureReason === 'codex-realtime-unsupported') {
+      return t('settings.voiceInput.serviceSource.credentialError.codexRealtimeUnsupported');
+    }
     if (readiness.auth === 'codex') return t('settings.voiceInput.serviceSource.credentialError.codexMissing');
     if (readiness.provider.startsWith('elevenlabs')) {
       return t('settings.voiceInput.serviceSource.credentialError.elevenlabsMissing');
     }
     return t('settings.voiceInput.serviceSource.credentialError.gatewayMissing');
   }, [byok, readiness, t]);
+
+  const customAsrUrlInvalid = Boolean(
+    customAsrWebsocketUrl.trim() && validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl),
+  );
+  const customAsrCanSave = validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl) === null
+    && Boolean(customAsrModel.trim());
+  const credentialRecoveryInVoiceSettings = customAsrSelected
+    || readiness?.failureReason === 'codex-realtime-unsupported';
+
+  const handleSaveCustomAsr = useCallback(async () => {
+    const saved = await saveCustomAsr({
+      protocol: customAsrProtocol,
+      websocketUrl: customAsrWebsocketUrl,
+      model: customAsrModel,
+    }, customAsrApiKey);
+    if (saved) setCustomAsrApiKey('');
+  }, [
+    customAsrApiKey,
+    customAsrModel,
+    customAsrProtocol,
+    customAsrWebsocketUrl,
+    saveCustomAsr,
+  ]);
 
   const customized = !localMode && Boolean(selection?.serviceModeConfigured);
 
@@ -487,6 +547,138 @@ function VoiceInputServiceSourceCard() {
             />
           </VoiceInputInlineSettingRow>
 
+          {customAsrSelected ? (
+            <div className="flex flex-col gap-3 rounded-[12px] border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] p-3.5">
+              <p className="text-12 leading-[1.45] text-[var(--settings-section-sublabel)]">
+                {t('settings.voiceInput.serviceSource.customAsr.notice')}
+              </p>
+
+              <VoiceInputInlineSettingRow
+                label={t('settings.voiceInput.serviceSource.customAsr.protocol.label')}
+                hint={t('settings.voiceInput.serviceSource.customAsr.protocol.hint')}
+              >
+                <VoiceInputSelect
+                  value={customAsrProtocol}
+                  options={[
+                    {
+                      value: 'openai-realtime',
+                      label: t('settings.voiceInput.serviceSource.customAsr.protocol.openai'),
+                    },
+                    {
+                      value: 'qwen-realtime',
+                      label: t('settings.voiceInput.serviceSource.customAsr.protocol.qwen'),
+                    },
+                  ]}
+                  onChange={setCustomAsrProtocol}
+                  ariaLabel={t('settings.voiceInput.serviceSource.customAsr.protocol.ariaLabel')}
+                />
+              </VoiceInputInlineSettingRow>
+
+              <VoiceInputInlineSettingRow
+                label={t('settings.voiceInput.serviceSource.customAsr.websocketUrl.label')}
+                hint={t('settings.voiceInput.serviceSource.customAsr.websocketUrl.hint')}
+              >
+                <input
+                  type="url"
+                  value={customAsrWebsocketUrl}
+                  onChange={(event) => setCustomAsrWebsocketUrl(event.target.value)}
+                  placeholder={t('settings.voiceInput.serviceSource.customAsr.websocketUrl.placeholder')}
+                  maxLength={MAX_CUSTOM_ASR_WEBSOCKET_URL_CHARS}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className={cn(
+                    'h-9 w-full rounded-full border px-3 text-13 outline-none transition-colors',
+                    'border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] text-[var(--settings-input-text)]',
+                    'placeholder:text-[var(--settings-section-sublabel)] placeholder:opacity-55',
+                    'focus:border-[var(--settings-input-border-focus)]',
+                  )}
+                />
+              </VoiceInputInlineSettingRow>
+              {customAsrUrlInvalid ? (
+                <p className="rounded-[10px] border border-[var(--error-border)] bg-[var(--error-bg)] px-3 py-2 text-12 leading-[1.4] text-[var(--error-fg)]">
+                  {t('settings.voiceInput.serviceSource.customAsr.websocketUrl.invalid')}
+                </p>
+              ) : null}
+
+              <VoiceInputInlineSettingRow
+                label={t('settings.voiceInput.serviceSource.customAsr.model.label')}
+                hint={t('settings.voiceInput.serviceSource.customAsr.model.hint')}
+              >
+                <input
+                  type="text"
+                  value={customAsrModel}
+                  onChange={(event) => setCustomAsrModel(event.target.value)}
+                  placeholder={t('settings.voiceInput.serviceSource.customAsr.model.placeholder')}
+                  maxLength={MAX_CUSTOM_ASR_MODEL_CHARS}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className={cn(
+                    'h-9 w-full rounded-full border px-3 text-13 outline-none transition-colors',
+                    'border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] text-[var(--settings-input-text)]',
+                    'placeholder:text-[var(--settings-section-sublabel)] placeholder:opacity-55',
+                    'focus:border-[var(--settings-input-border-focus)]',
+                  )}
+                />
+              </VoiceInputInlineSettingRow>
+
+              <VoiceInputInlineSettingRow
+                label={t('settings.voiceInput.serviceSource.customAsr.apiKey.label')}
+                hint={t(customAsrApiKeyConfigured
+                  ? 'settings.voiceInput.serviceSource.customAsr.apiKey.savedHint'
+                  : 'settings.voiceInput.serviceSource.customAsr.apiKey.hint')}
+              >
+                <input
+                  type="password"
+                  value={customAsrApiKey}
+                  onChange={(event) => setCustomAsrApiKey(event.target.value)}
+                  placeholder={t(customAsrApiKeyConfigured
+                    ? 'settings.voiceInput.serviceSource.customAsr.apiKey.savedPlaceholder'
+                    : 'settings.voiceInput.serviceSource.customAsr.apiKey.placeholder')}
+                  maxLength={MAX_CUSTOM_ASR_API_KEY_CHARS}
+                  spellCheck={false}
+                  autoComplete="new-password"
+                  className={cn(
+                    'h-9 w-full rounded-full border px-3 text-13 outline-none transition-colors',
+                    'border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] text-[var(--settings-input-text)]',
+                    'placeholder:text-[var(--settings-section-sublabel)] placeholder:opacity-55',
+                    'focus:border-[var(--settings-input-border-focus)]',
+                  )}
+                />
+              </VoiceInputInlineSettingRow>
+
+              <div className="flex flex-wrap justify-end gap-2">
+                {customAsrApiKeyConfigured ? (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void clearCustomAsrApiKey()}
+                    className={cn(
+                      'h-8 rounded-full border px-3 text-12 outline-none transition-colors',
+                      'border-[var(--settings-input-border)] text-[var(--settings-section-sublabel)]',
+                      'hover:border-[var(--settings-input-border-focus)] focus-visible:border-[var(--settings-input-border-focus)]',
+                      saving && 'cursor-not-allowed opacity-55',
+                    )}
+                  >
+                    {t('settings.voiceInput.serviceSource.customAsr.apiKey.clear')}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={saving || !customAsrCanSave}
+                  onClick={() => void handleSaveCustomAsr()}
+                  className={cn(
+                    'h-8 rounded-full border px-3 text-12 font-medium outline-none transition-colors',
+                    'border-[var(--settings-input-border-focus)] bg-[var(--settings-btn-primary-bg)] text-[var(--settings-btn-primary-text)]',
+                    'hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--settings-input-border-focus)]',
+                    (saving || !customAsrCanSave) && 'cursor-not-allowed opacity-55',
+                  )}
+                >
+                  {t('settings.voiceInput.serviceSource.customAsr.save')}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <VoiceInputInlineSettingRow
             label={t('settings.voiceInput.serviceSource.refiner.label')}
             hint={t('settings.voiceInput.serviceSource.refiner.hint')}
@@ -521,7 +713,7 @@ function VoiceInputServiceSourceCard() {
               <p className="min-w-0 text-12 leading-[1.4] text-[var(--error-fg)]">
                 {byokCredentialErrorText}
               </p>
-              <button
+              {!credentialRecoveryInVoiceSettings ? <button
                 type="button"
                 onClick={openProvidersTab}
                 className={cn(
@@ -532,7 +724,7 @@ function VoiceInputServiceSourceCard() {
                 )}
               >
                 {t('settings.voiceInput.serviceSource.manageProviders')}
-              </button>
+              </button> : null}
             </div>
           ) : null}
         </>

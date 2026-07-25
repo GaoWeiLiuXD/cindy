@@ -75,11 +75,12 @@ describe('providerSecrets registry', () => {
     expect(providerSecretStorageKey('mivo')).toBe('mivo_api_key');
     expect(providerSecretStorageKey('brave')).toBe('brave_search_api_key');
     expect(providerSecretStorageKey('tavily')).toBe('tavily_api_key');
+    expect(providerSecretStorageKey('voice-asr')).toBe('voice_input_asr_api_key');
   });
 
   it('lists all registered provider ids', () => {
     expect(PROVIDER_SECRET_IDS).toEqual(
-      expect.arrayContaining(['xd', 'mivo', 'brave', 'tavily']),
+      expect.arrayContaining(['xd', 'mivo', 'brave', 'tavily', 'voice-asr']),
     );
   });
 

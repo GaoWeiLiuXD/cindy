@@ -183,6 +183,13 @@ type VoiceInputModelSelectionResultData = {
     serviceMode: VoiceInputServiceModeData;
     serviceModeConfigured: boolean;
     asrProvider: VoiceInputProviderKindData;
+    asrProviderChain: VoiceInputProviderKindData[];
+    asrProviderChainSource: 'default' | 'configured';
+    customAsr?: {
+      protocol: 'openai-realtime' | 'qwen-realtime';
+      websocketUrl: string;
+      model: string;
+    };
     refinerProvider: VoiceInputRefinerProviderKindData;
     refinerModel?: string;
     /** Effective refiner chain, head first; length 1 = no fallback (BYOK default). */
@@ -209,7 +216,9 @@ type VoiceInputModelSelectionResultData = {
     auth: 'api-key' | 'codex';
     settingsTab: 'api-keys' | 'connections' | 'providers';
     error?: string;
+    failureReason?: 'custom-asr-config-missing' | 'custom-asr-key-missing' | 'codex-realtime-unsupported';
   };
+  customAsrApiKeyConfigured: boolean;
 };
 type LocalThemeOpenDirResult = import('../shared/local-themes').LocalThemeOpenDirResult;
 type LocalThemesResult = import('../shared/local-themes').LocalThemesResult;
@@ -1264,6 +1273,7 @@ interface ElectronAPI {
     getReadiness: () => Promise<{
       ok: boolean;
       provider:
+        | 'custom-realtime-asr'
         | 'elevenlabs-scribe-realtime'
         | 'openai-realtime-whisper'
         | 'litellm-gpt-realtime-whisper'
@@ -1275,11 +1285,13 @@ interface ElectronAPI {
       settingsTab: 'api-keys' | 'connections' | 'providers';
       error?: string;
       authErrorReason?: string;
+      failureReason?: 'custom-asr-config-missing' | 'custom-asr-key-missing' | 'codex-realtime-unsupported';
     }>;
     getReadinessCached: () =>
       | {
           ok: boolean;
           provider:
+            | 'custom-realtime-asr'
             | 'elevenlabs-scribe-realtime'
             | 'openai-realtime-whisper'
             | 'litellm-gpt-realtime-whisper'
@@ -1291,6 +1303,7 @@ interface ElectronAPI {
           settingsTab: 'api-keys' | 'connections' | 'providers';
           error?: string;
           authErrorReason?: string;
+          failureReason?: 'custom-asr-config-missing' | 'custom-asr-key-missing' | 'codex-realtime-unsupported';
         }
       | null;
     getModelSelection: () => Promise<VoiceInputModelSelectionResultData>;
@@ -1299,6 +1312,12 @@ interface ElectronAPI {
       asrProvider?: string | null;
       refinerProvider?: string | null;
       refinerModel?: string | null;
+      customAsr?: {
+        protocol: 'openai-realtime' | 'qwen-realtime';
+        websocketUrl: string;
+        model: string;
+      } | null;
+      customAsrApiKey?: string | null;
       /** BYOK fallback tail; null clears the override (primary runs alone). */
       refinerProviderChain?: string[] | null;
     }) => Promise<VoiceInputModelSelectionResultData>;

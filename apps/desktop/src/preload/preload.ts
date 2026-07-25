@@ -161,6 +161,7 @@ type VoiceInputReadinessWire = {
   settingsTab: 'api-keys' | 'connections' | 'providers';
   error?: string;
   authErrorReason?: string;
+  failureReason?: 'custom-asr-config-missing' | 'custom-asr-key-missing' | 'codex-realtime-unsupported';
 };
 type VoiceInputModelSelectionWire = {
   serviceMode: 'cindy' | 'byok';
@@ -168,6 +169,15 @@ type VoiceInputModelSelectionWire = {
   asrProvider: VoiceInputProviderKind;
   refinerProvider: VoiceInputRefinerProviderKind;
   refinerModel?: string;
+  asrProviderChain: VoiceInputProviderKind[];
+  asrProviderChainSource: 'default' | 'configured';
+  customAsr?: {
+    protocol: 'openai-realtime' | 'qwen-realtime';
+    websocketUrl: string;
+    model: string;
+  };
+  refinerProviderChain: VoiceInputRefinerProviderKind[];
+  refinerProviderChainSource: 'default' | 'configured';
   configPath: string;
 };
 type VoiceInputModelSelectionResultWire = {
@@ -185,12 +195,20 @@ type VoiceInputModelSelectionResultWire = {
     auth: 'api-key' | 'codex';
   }>;
   readiness: VoiceInputReadinessWire;
+  customAsrApiKeyConfigured: boolean;
 };
 type VoiceInputModelSelectionPatchWire = {
   serviceMode?: 'cindy' | 'byok' | null;
   asrProvider?: string | null;
   refinerProvider?: string | null;
   refinerModel?: string | null;
+  customAsr?: {
+    protocol: 'openai-realtime' | 'qwen-realtime';
+    websocketUrl: string;
+    model: string;
+  } | null;
+  customAsrApiKey?: string | null;
+  refinerProviderChain?: string[] | null;
 };
 type DiscordBotSessionAuthCheckWire = {
   ok: boolean;

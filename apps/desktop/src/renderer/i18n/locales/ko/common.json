@@ -715,16 +715,16 @@
       },
       "serviceSource": {
         "label": "음성 서비스",
-        "hint": "기본적으로 Cindy가 제공하는 음성 서비스를 사용합니다. 자신의 키와 모델로 전환할 수도 있습니다.",
-        "localHint": "로컬 모드에서는 Cindy 계정 서비스를 사용하지 않습니다. 자신의 키와 모델을 설정하세요.",
+        "hint": "기본적으로 Cindy 음성 서비스를 사용합니다. 실시간 ASR 지원 서비스와 별도의 음성 인증 정보로 전환할 수도 있습니다.",
+        "localHint": "로컬 모드에서는 Cindy 계정 서비스를 사용하지 않습니다. 실시간 ASR 지원 서비스와 별도의 음성 인증 정보를 설정하세요.",
         "ariaLabel": "음성 서비스 소스 선택",
         "options": {
           "cindy": "Cindy 공식 서비스",
-          "byok": "사용자 지정(내 키 사용)"
+          "byok": "사용자 지정 음성 서비스"
         },
         "optionDescriptions": {
           "cindy": "Cindy 로그인 정보를 사용하며 키 설정이 필요 없습니다",
-          "byok": "자신의 키와 모델을 사용하며 비용은 내 계정으로 청구됩니다"
+          "byok": "ASR 지원 서비스와 별도의 음성 인증 정보를 사용합니다"
         },
         "asr": {
           "label": "인식 모델",
@@ -743,15 +743,51 @@
           "none": "대체 모델 없음",
           "noneDescription": "기본 모델이 실패하면 원본 인식 텍스트를 유지"
         },
+        "customAsr": {
+          "optionLabel": "사용자 지정 실시간 ASR",
+          "optionDescription": "전용 음성 인식 WebSocket과 API 키 사용",
+          "notice": "ASR 지원 서비스에서 제공하는 전체 WebSocket 주소를 입력하세요. Cindy는 채팅 모델 주소를 재사용하거나 음성 경로를 자동으로 추가하지 않습니다.",
+          "protocol": {
+            "label": "실시간 프로토콜",
+            "hint": "ASR 서비스가 구현한 메시지 형식을 선택하세요.",
+            "ariaLabel": "사용자 지정 실시간 ASR 프로토콜",
+            "openai": "OpenAI 전사",
+            "qwen": "Qwen 실시간 ASR"
+          },
+          "websocketUrl": {
+            "label": "WebSocket URL",
+            "hint": "전체 wss:// URL입니다. 로컬 루프백 서비스는 ws://를 사용할 수 있습니다.",
+            "placeholder": "wss://asr.example.com/v1/realtime",
+            "invalid": "인증 정보가 포함되지 않은 올바른 wss:// URL을 입력하세요. ws://는 로컬 루프백 서비스에서만 사용할 수 있습니다."
+          },
+          "model": {
+            "label": "ASR 모델",
+            "hint": "서비스가 허용하는 정확한 음성 인식 모델 ID를 입력하세요.",
+            "placeholder": "음성 인식 모델 ID"
+          },
+          "apiKey": {
+            "label": "ASR API 키",
+            "hint": "시스템 암호화로 로컬에 저장되며 이 음성 서비스에만 사용됩니다.",
+            "savedHint": "키가 로컬에 저장되어 있습니다. 비워 두면 기존 키를 유지합니다.",
+            "placeholder": "ASR API 키 입력",
+            "savedPlaceholder": "키 저장됨 — 새 값을 입력하면 교체됩니다",
+            "clear": "키 삭제"
+          },
+          "save": "음성 서비스 저장"
+        },
         "credential": {
-          "gatewayKey": "AI 게이트웨이 키 사용",
+          "gatewayKey": "AI 게이트웨이가 선택한 실시간 ASR 경로를 지원해야 합니다",
           "codexLogin": "Codex 로그인 사용",
-          "elevenlabsKey": "ElevenLabs 키 사용(환경 변수)"
+          "elevenlabsKey": "ElevenLabs 키 사용(환경 변수)",
+          "codexRealtimeUnsupported": "사용 불가: Codex 로그인은 OpenAI API Realtime 인증 정보가 아닙니다"
         },
         "credentialError": {
           "gatewayMissing": "사용 가능한 AI 게이트웨이 키가 없어 이 모델을 사용할 수 없습니다.",
           "codexMissing": "Codex에 로그인하지 않아 이 모델을 사용할 수 없습니다.",
-          "elevenlabsMissing": "ElevenLabs 키(환경 변수)가 설정되지 않아 이 모델을 사용할 수 없습니다."
+          "elevenlabsMissing": "ElevenLabs 키(환경 변수)가 설정되지 않아 이 모델을 사용할 수 없습니다.",
+          "customAsrConfigMissing": "음성 입력을 시작하기 전에 실시간 ASR 서비스 설정을 모두 입력하고 저장하세요.",
+          "customAsrKeyMissing": "사용자 지정 실시간 ASR 서비스의 API 키를 입력하고 저장하세요.",
+          "codexRealtimeUnsupported": "Codex 로그인은 실시간 음성 인식에 사용할 수 없습니다. 지원되는 ASR 서비스를 선택하세요."
         },
         "manageProviders": "모델 제공자 열기",
         "reset": "기본값으로 복원"

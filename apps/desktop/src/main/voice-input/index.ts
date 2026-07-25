@@ -20,6 +20,8 @@ import {
 } from '@cindy/voice-input-core';
 import { createLogger } from '../logger.js';
 import { getAppCapabilities } from '../appCapabilities.js';
+import { getProviderSecretStore } from '../secrets/providerSecretStore.js';
+import { assertTrustedAppRendererEvent } from '../security/trustedAppRenderer.js';
 import {
   desktopCodexAuthAdapter,
   readOwnerScopedXdGatewayKey,
@@ -102,7 +104,10 @@ import {
   effectiveVoiceInputServiceMode,
   reloadVoiceInputModelSelection,
   setVoiceInputModelSelection,
+  validateVoiceInputCustomAsrConfig,
+  voiceInputAsrChainForServiceMode,
   voiceInputModelSelectionSignature,
+  type VoiceInputCustomAsrConfig,
   type VoiceInputModelSelection,
   type VoiceInputModelSelectionPatch,
   type VoiceInputServiceMode,
@@ -115,6 +120,7 @@ import {
   type VoiceInputRefinerProfile,
   type VoiceInputRefinerProviderKind,
 } from '../../shared/voiceInputRefinerProfiles.js';
+import { MAX_CUSTOM_ASR_API_KEY_CHARS } from '../../shared/voiceInputCustomAsr.js';
 
 const log = createLogger('voice-input');
 
@@ -186,6 +192,7 @@ type VoiceInputReadiness = {
   settingsTab: 'api-keys' | 'connections' | 'providers';
   error?: string;
   authErrorReason?: string;
+  failureReason?: 'custom-asr-config-missing' | 'custom-asr-key-missing' | 'codex-realtime-unsupported';
 };
 
 type VoiceInputRefinerReadiness = {
@@ -219,6 +226,7 @@ type VoiceInputModelSelectionIpcResult = {
     auth: VoiceInputRefinerProfile['auth'];
   }>;
   readiness: VoiceInputReadiness;
+  customAsrApiKeyConfigured: boolean;
 };
 
 type VoiceInputSystemPermissions = {
@@ -638,11 +646,26 @@ function resolveVoiceInputProviderKind(): VoiceInputProviderKind {
   return readActiveVoiceInputModelSelection('resolve-asr-provider').asrProvider;
 }
 
+function resolveVoiceInputProviderModel(provider: VoiceInputProviderKind): string {
+  return provider === 'custom-realtime-asr'
+    ? (readActiveVoiceInputModelSelection('resolve-custom-asr-model').customAsr?.model
+      ?? getVoiceInputAsrProfile(provider).model)
+    : getVoiceInputAsrProfile(provider).model;
+}
+
 // Configured ASR fallback chain (primary first), reordered so providers in
 // sticky-failover cooldown sort behind healthy ones.
 function resolveVoiceInputAsrChain(): VoiceInputProviderKind[] {
   const selection = readActiveVoiceInputModelSelection('resolve-asr-chain');
-  return orderVoiceInputProvidersByHealth('asr', selection.asrProviderChain);
+  // Managed Cindy voice keeps the product-owned provider failover chain.
+  // BYOK must not infer that unrelated providers share credentials or routes:
+  // unless the user explicitly configured a chain, dial only the selected
+  // primary provider.
+  const chain = voiceInputAsrChainForServiceMode({
+    ...selection,
+    serviceMode: isVoiceInputByokMode() ? 'byok' : 'cindy',
+  });
+  return orderVoiceInputProvidersByHealth('asr', chain);
 }
 
 function resolveVoiceInputRefinerProfile(): VoiceInputRefinerProfile {
@@ -951,6 +974,24 @@ function buildRealtimeAsrProviderOptions(
   return options;
 }
 
+function buildCustomRealtimeAsrProviderOptions(
+  config: VoiceInputCustomAsrConfig,
+  sourceLanguage: string | undefined,
+): RealtimeAsrWebSocketProviderOptions {
+  const openAiProtocol = config.protocol === 'openai-realtime';
+  return {
+    accessTokenProvider: () => Promise.resolve(getProviderSecretStore().get('voice-asr')),
+    model: config.model,
+    realtimeUrl: config.websocketUrl,
+    sourceLanguage,
+    pcmSampleRate: openAiProtocol ? 24_000 : 16_000,
+    protocolProfile: openAiProtocol ? 'openai-transcription-manual' : 'qwen-asr-server-vad',
+    providerKind: 'custom-realtime-asr',
+    missingCredentialMessage: 'Configure an API key for the custom realtime ASR service.',
+    errorFallbackMessage: 'Custom realtime speech recognition failed.',
+  };
+}
+
 /**
  * Best-effort warm-up for the configured voice-input provider.
  *
@@ -1040,7 +1081,16 @@ export async function prewarmVoiceInputProvider(options?: { sourceLanguage?: str
       // preconnect so the first audio frame does not wait behind TLS +
       // session.update.
       if (byokMode && profile.mode === 'realtime-websocket' && profile.realtime?.prewarmable && !disableRealtimePreconnect) {
-        if (profile.auth === 'codex') {
+        if (provider === 'custom-realtime-asr') {
+          const customAsr = readActiveVoiceInputModelSelection('custom-asr-prewarm').customAsr;
+          const customAsrKey = getProviderSecretStore().get('voice-asr');
+          if (customAsr && customAsrKey) {
+            await prewarmRealtimeAsrWebSocketSession(buildCustomRealtimeAsrProviderOptions(
+              customAsr,
+              asrLanguageHint,
+            ));
+          }
+        } else if (profile.auth === 'codex') {
           const token = await desktopCodexAuthAdapter.getAccessToken();
           if (token) {
             await prewarmRealtimeAsrWebSocketSession(buildRealtimeAsrProviderOptions(
@@ -1088,6 +1138,7 @@ type AsrCredentialReadiness = {
   ok: boolean;
   error?: string;
   authErrorReason?: string;
+  failureReason?: VoiceInputReadiness['failureReason'];
 };
 
 async function getAsrProfileCredentialReadiness(profile: VoiceInputAsrProfile): Promise<AsrCredentialReadiness> {
@@ -1106,6 +1157,30 @@ async function getAsrProfileCredentialReadiness(profile: VoiceInputAsrProfile): 
   // Mirror the pre-managed-migration readiness checks per auth kind. The
   // managed voice service is deliberately not consulted here — no cross-mode
   // fallback in either direction.
+  if (profile.id === 'custom-realtime-asr') {
+    const customAsr = readActiveVoiceInputModelSelection('custom-asr-readiness').customAsr;
+    if (!customAsr) {
+      return {
+        ok: false,
+        error: profile.missingCredentialMessage,
+        failureReason: 'custom-asr-config-missing',
+      };
+    }
+    const hasCustomAsrKey = getProviderSecretStore().has('voice-asr');
+    return {
+      ok: hasCustomAsrKey,
+      error: hasCustomAsrKey ? undefined : profile.missingCredentialMessage,
+      failureReason: hasCustomAsrKey ? undefined : 'custom-asr-key-missing',
+    };
+  }
+  if (profile.id === 'openai-realtime-whisper') {
+    return {
+      ok: false,
+      error: 'Codex sign-in cannot be used as an OpenAI API Realtime credential.',
+      failureReason: 'codex-realtime-unsupported',
+    };
+  }
+
   if (profile.auth === 'codex') {
     const codexAuthState = await desktopCodexAuthAdapter.getState();
     return {
@@ -1139,11 +1214,12 @@ function toVoiceInputReadiness(
   return {
     ok: credential.ok,
     provider,
-    providerModel: profile.model,
+    providerModel: resolveVoiceInputProviderModel(provider),
     auth: profile.auth,
     settingsTab: profile.settingsTab,
     error: credential.error,
     authErrorReason: credential.authErrorReason,
+    failureReason: credential.failureReason,
   };
 }
 
@@ -1284,6 +1360,15 @@ function voiceInputModelSelectionPatchFromIpc(payload: unknown): VoiceInputModel
   if (Object.prototype.hasOwnProperty.call(source, 'asrProvider')) {
     patch.asrProvider = resolveAsrProviderFromIpc(source.asrProvider);
   }
+  if (Object.prototype.hasOwnProperty.call(source, 'customAsr')) {
+    if (source.customAsr === null || source.customAsr === undefined) {
+      patch.customAsr = null;
+    } else {
+      const validated = validateVoiceInputCustomAsrConfig(source.customAsr);
+      if (!validated.ok) throwIpcError('INVALID_PARAMS', validated.error);
+      patch.customAsr = validated.value;
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(source, 'refinerProvider')) {
     patch.refinerProvider = resolveRefinerProviderFromIpc(source.refinerProvider);
   }
@@ -1294,6 +1379,41 @@ function voiceInputModelSelectionPatchFromIpc(payload: unknown): VoiceInputModel
     patch.refinerProviderChain = resolveRefinerProviderChainFromIpc(source.refinerProviderChain);
   }
   return patch;
+}
+
+type CustomAsrSecretUpdate =
+  | { action: 'none' }
+  | { action: 'set'; value: string }
+  | { action: 'clear' };
+
+function customAsrSecretUpdateFromIpc(payload: unknown): CustomAsrSecretUpdate {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { action: 'none' };
+  const source = payload as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(source, 'customAsrApiKey')) return { action: 'none' };
+  if (source.customAsrApiKey === null) return { action: 'clear' };
+  if (typeof source.customAsrApiKey !== 'string') {
+    throwIpcError('INVALID_PARAMS', 'customAsrApiKey must be a string or null');
+  }
+  const value = source.customAsrApiKey.trim();
+  if (!value || value.length > MAX_CUSTOM_ASR_API_KEY_CHARS) {
+    throwIpcError('INVALID_PARAMS', 'customAsrApiKey must contain 1 to 8192 characters');
+  }
+  return { action: 'set', value };
+}
+
+function applyCustomAsrSecretUpdate(update: CustomAsrSecretUpdate): void {
+  if (update.action === 'none') return;
+  const store = getProviderSecretStore();
+  if (update.action === 'set') {
+    if (!store.set('voice-asr', update.value)) {
+      throwIpcError('INTERNAL', 'Failed to store the custom ASR API key.');
+    }
+    return;
+  }
+  const removed = store.remove('voice-asr');
+  if (!removed.success) {
+    throwIpcError('INTERNAL', 'Failed to remove the custom ASR API key.');
+  }
 }
 
 function resolveRefinerProviderChainFromIpc(value: unknown): VoiceInputRefinerProviderKind[] | null {
@@ -1378,6 +1498,7 @@ async function buildVoiceInputModelSelectionIpcResult(
       auth: profile.auth,
     })),
     readiness,
+    customAsrApiKeyConfigured: getProviderSecretStore().has('voice-asr'),
   };
 }
 
@@ -1389,6 +1510,18 @@ async function createVoiceInputProvider(
   const profile = getVoiceInputAsrProfile(provider);
   if (voiceContext && !isManagedVoiceAsrProfile(profile)) {
     throw new Error(CINDY_VOICE_SERVICE_UNAVAILABLE_MESSAGE);
+  }
+  if (provider === 'custom-realtime-asr') {
+    if (!isVoiceInputByokMode()) {
+      throw new Error(CINDY_VOICE_SERVICE_UNAVAILABLE_MESSAGE);
+    }
+    const customAsr = readActiveVoiceInputModelSelection('custom-asr-create').customAsr;
+    if (!customAsr) throw new Error(profile.missingCredentialMessage);
+    if (!getProviderSecretStore().has('voice-asr')) throw new Error(profile.missingCredentialMessage);
+    return new RealtimeAsrWebSocketProvider(buildCustomRealtimeAsrProviderOptions(
+      customAsr,
+      sourceLanguage,
+    ));
   }
   if (profile.mode === 'realtime-websocket') {
     const realtimeConfig = profile.realtime;
@@ -1616,17 +1749,21 @@ export function registerVoiceInputIpc(): void {
     refreshVoiceInputReadinessCache('ipc'),
   );
 
-  ipcMain.handle('voice-input:model-selection:get', async (): Promise<VoiceInputModelSelectionIpcResult> =>
-    buildVoiceInputModelSelectionIpcResult('get'),
-  );
+  ipcMain.handle('voice-input:model-selection:get', async (event): Promise<VoiceInputModelSelectionIpcResult> => {
+    assertTrustedAppRendererEvent(event);
+    return buildVoiceInputModelSelectionIpcResult('get');
+  });
 
   ipcMain.handle(
     'voice-input:model-selection:set',
-    async (_event, payload: unknown): Promise<VoiceInputModelSelectionIpcResult> => {
+    async (event, payload: unknown): Promise<VoiceInputModelSelectionIpcResult> => {
+      assertTrustedAppRendererEvent(event);
       const patch = voiceInputModelSelectionPatchFromIpc(payload);
+      const customAsrSecretUpdate = customAsrSecretUpdateFromIpc(payload);
       let selection: VoiceInputModelSelection;
       try {
         selection = setVoiceInputModelSelection(patch);
+        applyCustomAsrSecretUpdate(customAsrSecretUpdate);
       } catch (error) {
         log.warn('voice input model selection write failed', {
           error: error instanceof Error ? error.message : String(error),
@@ -1640,7 +1777,8 @@ export function registerVoiceInputIpc(): void {
     },
   );
 
-  ipcMain.handle('voice-input:model-selection:reload', async (): Promise<VoiceInputModelSelectionIpcResult> => {
+  ipcMain.handle('voice-input:model-selection:reload', async (event): Promise<VoiceInputModelSelectionIpcResult> => {
+    assertTrustedAppRendererEvent(event);
     const selection = reloadVoiceInputModelSelection();
     markVoiceInputModelSelectionApplied('ipc-reload', selection);
     const result = await buildVoiceInputModelSelectionIpcResult('reload');
@@ -1963,7 +2101,7 @@ export function registerVoiceInputIpc(): void {
         refineSourceLanguage,
         provider: provider.activeProviderKind ?? readiness.provider,
         providerModel: provider.activeProviderKind
-          ? getVoiceInputAsrProfile(provider.activeProviderKind).model
+          ? resolveVoiceInputProviderModel(provider.activeProviderKind)
           : readiness.providerModel,
         asrChain: startableAsrChain,
         refiner: refiner ? effectiveRefinerProfile?.model : undefined,
