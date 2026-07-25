@@ -100,7 +100,7 @@ describe('sendToSession ordering', () => {
     expect(lifecycleDispatchBlock).not.toContain('.send({');
   });
 
-  it('prefers live workspace metadata when applying the lead collaboration policy gate', () => {
+  it('uses the persisted current project path and live workspace kind for the collaboration gate', () => {
     const policyGuardBlock = extractBetween(
       source,
       'async function assertLeadCollabProjectEnabled',
@@ -111,8 +111,12 @@ describe('sendToSession ordering', () => {
       "const liveWorkspaceKind = (lead as { workspaceKind?: unknown } | undefined)?.workspaceKind;",
     );
     expect(policyGuardBlock).toContain(
+      "typeof leadRow?.workingDir === 'string' ? leadRow.workingDir : lead?.workDir;",
+    );
+    expect(policyGuardBlock).toContain(
       "liveWorkspaceKind === 'project' || liveWorkspaceKind === 'dialogue'",
     );
+    expectOrder(policyGuardBlock, 'leadRow?.workingDir', 'lead?.workDir');
     expect(policyGuardBlock).toContain(' : leadRow?.workspaceKind;');
     expectOrder(policyGuardBlock, 'const liveWorkspaceKind =', 'assertCollabProjectEnabled(');
   });

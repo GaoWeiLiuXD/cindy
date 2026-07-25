@@ -4114,7 +4114,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     const lead = maker.getSession(leadSessionId);
     const leadRow = await getSessionRowSnapshot(leadSessionId);
     const rawWorkingDir =
-      typeof lead?.workDir === 'string' ? lead.workDir : leadRow?.workingDir;
+      typeof leadRow?.workingDir === 'string' ? leadRow.workingDir : lead?.workDir;
     const normalizedWorkingDir =
       typeof rawWorkingDir === 'string'
         ? normalizeWorkingDirForStorage(rawWorkingDir) ?? rawWorkingDir
