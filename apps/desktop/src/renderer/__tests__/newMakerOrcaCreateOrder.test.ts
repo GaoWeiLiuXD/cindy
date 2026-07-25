@@ -35,4 +35,14 @@ describe('NewMakerDraftRoute Orca worker create order', () => {
     expect(mappedFallbacks).toHaveLength(3);
     expect(source).not.toContain("toast.error(t('newChat.collaboration.startFailed'");
   });
+
+  it('blocks new-goal creation until a selected collaboration policy is available', () => {
+    const goalHandler = source.slice(source.indexOf('const handleCreateGoal = useCallback('));
+    expect(goalHandler).toContain("if (collabPolicy.loading)");
+    expect(goalHandler).toContain("if (collabPolicy.unavailable)");
+    expect(goalHandler).toContain("if (!collabPolicy.enabled)");
+    expect(goalHandler.indexOf("if (collabPolicy.loading)")).toBeLessThan(
+      goalHandler.indexOf('const newSession = await createSession'),
+    );
+  });
 });

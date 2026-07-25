@@ -4080,17 +4080,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     dispatched: boolean;
     dispatchOutcome?: CollabDispatchOutcome;
   }> {
-    const lead = maker.getSession(leadSessionId);
-    const leadRow = await getSessionRowSnapshot(leadSessionId);
-    assertCollabProjectEnabled(
-      {
-        workingDir:
-          typeof lead?.workDir === 'string' ? lead.workDir : leadRow?.workingDir,
-        workspaceKind: leadRow?.workspaceKind,
-        remoteHostId: lead?.remoteHostId ?? leadRow?.remoteHostId,
-      },
-      (pluginId, workingDir) => getPluginRegistry().isEnabled(pluginId, workingDir),
-    );
+    await assertLeadCollabProjectEnabled(leadSessionId);
     const result = await orcaLifecycleService.enableTeam({
       leadSessionId,
       workerAgent: opts.workerAgent,
@@ -4117,6 +4107,20 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
       dispatched: result.dispatched,
       ...(result.dispatchOutcome ? { dispatchOutcome: result.dispatchOutcome } : {}),
     };
+  }
+
+  async function assertLeadCollabProjectEnabled(leadSessionId: string): Promise<void> {
+    const lead = maker.getSession(leadSessionId);
+    const leadRow = await getSessionRowSnapshot(leadSessionId);
+    assertCollabProjectEnabled(
+      {
+        workingDir:
+          typeof lead?.workDir === 'string' ? lead.workDir : leadRow?.workingDir,
+        workspaceKind: leadRow?.workspaceKind,
+        remoteHostId: lead?.remoteHostId ?? leadRow?.remoteHostId,
+      },
+      (pluginId, workingDir) => getPluginRegistry().isEnabled(pluginId, workingDir),
+    );
   }
 
   type SendToSessionDispatchSession = {
@@ -5508,6 +5512,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     cancelWorkerQueuedMessage: (params) => orcaTeamService.cancelWorkerQueuedMessage(params),
     startTeam: async ({ leadSessionId }) => {
       try {
+        await assertLeadCollabProjectEnabled(leadSessionId);
         return await orcaLifecycleService.startTeam({ leadSessionId });
       } catch (err) {
         return {
@@ -5519,6 +5524,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     },
     createWorker: async (params) => {
       try {
+        await assertLeadCollabProjectEnabled(params.leadSessionId);
         return await orcaLifecycleService.createWorker(params);
       } catch (err) {
         return {
@@ -5530,6 +5536,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     },
     createWorkerFromTask: async ({ leadSessionId, task, agentKind }) => {
       try {
+        await assertLeadCollabProjectEnabled(leadSessionId);
         const created = await orcaLifecycleService.createWorker({
           leadSessionId,
           role: 'developer',

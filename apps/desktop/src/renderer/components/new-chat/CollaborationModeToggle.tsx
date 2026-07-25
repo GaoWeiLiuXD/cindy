@@ -88,26 +88,28 @@ export function CollaborationModeToggle({
   if (enabled) {
     return (
       <Tip text={disabledReason ?? t('newChat.collaboration.stopHint')} side="top">
-        <button
-          type="button"
-          disabled={disabled}
-          // 与 VendorSegmentedSwitcher / FastModeToggle 一致:阻 mousedown 抢焦点
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => onChange({ enabled: false, worker })}
-          aria-label={t('newChat.collaboration.toggleOnAria')}
-          aria-pressed
-          className={cn(
-            'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
-            'bg-[var(--composer-pill-bg,#FCFCFC)] dark:bg-[var(--composer-pill-bg,#393838)] text-[var(--warning-accent)]' /* ON 态恢复橙(用户改稿 2026-07-20,覆盖 07-17 去橙中性);OFF 态仍中性 */,
-            'border border-[var(--border-default)]',
-            'hover:bg-[var(--model-trigger-hover)]',
-            pillSizeCn,
-            disabled && 'cursor-not-allowed opacity-50',
-          )}
-        >
-          <UsersRound size={iconSize} className="shrink-0" />
-          {!iconOnly && <span>{t('newChat.collaboration.pillLabel')}</span>}
-        </button>
+        <span tabIndex={disabled ? 0 : undefined} className="inline-flex">
+          <button
+            type="button"
+            disabled={disabled}
+            // 与 VendorSegmentedSwitcher / FastModeToggle 一致:阻 mousedown 抢焦点
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onChange({ enabled: false, worker })}
+            aria-label={t('newChat.collaboration.toggleOnAria')}
+            aria-pressed
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
+              'bg-[var(--composer-pill-bg,#FCFCFC)] dark:bg-[var(--composer-pill-bg,#393838)] text-[var(--warning-accent)]' /* ON 态恢复橙(用户改稿 2026-07-20,覆盖 07-17 去橙中性);OFF 态仍中性 */,
+              'border border-[var(--border-default)]',
+              'hover:bg-[var(--model-trigger-hover)]',
+              pillSizeCn,
+              disabled && 'cursor-not-allowed opacity-50',
+            )}
+          >
+            <UsersRound size={iconSize} className="shrink-0" />
+            {!iconOnly && <span>{t('newChat.collaboration.pillLabel')}</span>}
+          </button>
+        </span>
       </Tip>
     );
   }
@@ -119,40 +121,12 @@ export function CollaborationModeToggle({
         text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
         side="top"
       >
-        <button
-          type="button"
-          disabled={disabled}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onOpenDetails}
-          aria-label={t('newChat.collaboration.toggleOffAria')}
-          aria-pressed={false}
-          className={cn(
-            'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
-            'bg-[var(--composer-pill-bg,#FCFCFC)] dark:bg-[var(--composer-pill-bg,#393838)] text-[var(--text-primary)]' /* spec 2026-07-17, token by 一哥 */,
-            'border border-[var(--border-default)]',
-            'hover:bg-[var(--model-trigger-hover)]',
-            pillSizeCn,
-            disabled && 'cursor-not-allowed opacity-50',
-          )}
-        >
-          <UsersRound size={iconSize} className="shrink-0" />
-          {!iconOnly && <span>{t('newChat.collaboration.pillLabel')}</span>}
-        </button>
-      </Tip>
-    );
-  }
-
-  return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Tip
-          text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
-          side="top"
-        >
+        <span tabIndex={disabled ? 0 : undefined} className="inline-flex">
           <button
             type="button"
             disabled={disabled}
             onMouseDown={(e) => e.preventDefault()}
+            onClick={onOpenDetails}
             aria-label={t('newChat.collaboration.toggleOffAria')}
             aria-pressed={false}
             className={cn(
@@ -167,6 +141,38 @@ export function CollaborationModeToggle({
             <UsersRound size={iconSize} className="shrink-0" />
             {!iconOnly && <span>{t('newChat.collaboration.pillLabel')}</span>}
           </button>
+        </span>
+      </Tip>
+    );
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Tip
+          text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
+          side="top"
+        >
+          <span tabIndex={disabled ? 0 : undefined} className="inline-flex">
+            <button
+              type="button"
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              aria-label={t('newChat.collaboration.toggleOffAria')}
+              aria-pressed={false}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
+                'bg-[var(--composer-pill-bg,#FCFCFC)] dark:bg-[var(--composer-pill-bg,#393838)] text-[var(--text-primary)]' /* spec 2026-07-17, token by 一哥 */,
+                'border border-[var(--border-default)]',
+                'hover:bg-[var(--model-trigger-hover)]',
+                pillSizeCn,
+                disabled && 'cursor-not-allowed opacity-50',
+              )}
+            >
+              <UsersRound size={iconSize} className="shrink-0" />
+              {!iconOnly && <span>{t('newChat.collaboration.pillLabel')}</span>}
+            </button>
+          </span>
         </Tip>
       </PopoverTrigger>
       <PopoverContent

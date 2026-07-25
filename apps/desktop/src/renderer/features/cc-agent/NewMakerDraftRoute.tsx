@@ -1765,6 +1765,18 @@ export function NewMakerDraftRoute() {
   // 失败抛错 → NewGoalDialog 内联报错并保持打开。
   const handleCreateGoal = useCallback(
     async (objective: string, limits: GoalLimitValues): Promise<void> => {
+      if (effectiveCollab.enabled && collabPolicyEligible) {
+        if (collabPolicy.loading) {
+          throw new Error(t('newChat.collaboration.loadingHint'));
+        }
+        if (collabPolicy.unavailable) {
+          throw new Error(t('newChat.collaboration.unavailableHint'));
+        }
+        if (!collabPolicy.enabled) {
+          patchCollab({ enabled: false });
+          throw new Error(t('newChat.collaboration.disabledHint'));
+        }
+      }
       if (isDeviceLinkDraft && (capabilitiesLoading || deviceProvidersLoading)) {
         throw new Error(t('ccAgent.draft.deviceStillLoading'));
       }
@@ -1968,6 +1980,11 @@ export function NewMakerDraftRoute() {
       chatInitialProviderId,
       effectiveCollabEnabled,
       effectiveCollab,
+      collabPolicyEligible,
+      collabPolicy.loading,
+      collabPolicy.unavailable,
+      collabPolicy.enabled,
+      patchCollab,
       navigate,
       t,
     ],

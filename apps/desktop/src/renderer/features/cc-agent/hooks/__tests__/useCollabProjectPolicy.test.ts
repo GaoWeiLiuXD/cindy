@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useCollabProjectPolicy } from '../useCollabProjectPolicy';
@@ -28,5 +28,22 @@ describe('useCollabProjectPolicy', () => {
     expect(result.current.enabled).toBe(false);
     expect(result.current.loading).toBe(false);
     expect(getState).toHaveBeenCalledWith('collab', 'C:\\projects\\cindy');
+  });
+
+  it('refreshes the project policy when the window regains focus', async () => {
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ effectiveEnabled: true })
+      .mockResolvedValueOnce({ effectiveEnabled: false });
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result } = renderHook(() => useCollabProjectPolicy('C:\\projects\\cindy', true));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(result.current.enabled).toBe(false));
+    expect(getState).toHaveBeenCalledTimes(2);
   });
 });

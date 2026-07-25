@@ -127,6 +127,7 @@ export function BuiltinToolsSection({ workingDir }: BuiltinToolsSectionProps) {
           await window.electronAPI.maker.plugins.setEnabled(id, next);
         }
         await reload();
+        window.dispatchEvent(new Event('cindy:project-plugin-state-changed'));
         toast.success(
           next
             ? t('settings.builtinTools.toast.enabled', { name: label })
@@ -164,6 +165,7 @@ export function BuiltinToolsSection({ workingDir }: BuiltinToolsSectionProps) {
           await window.electronAPI.maker.plugins.clearEnabled(id);
         }
         await reload();
+        window.dispatchEvent(new Event('cindy:project-plugin-state-changed'));
         toast.success(t('settings.defaults.restored'));
       } catch (err) {
         log.warn(`plugins.clearEnabled(${id}) failed`, err);

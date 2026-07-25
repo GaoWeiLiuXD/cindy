@@ -25,11 +25,24 @@ export function useCollabProjectPolicy(
   eligible: boolean,
 ): CollabProjectPolicy {
   const requestedWorkingDir = eligible && workingDir ? workingDir : null;
+  const [refreshToken, setRefreshToken] = useState(0);
   const [state, setState] = useState<PolicyState>({
     workingDir: null,
     enabled: requestedWorkingDir == null ? false : null,
     unavailable: false,
   });
+
+  useEffect(() => {
+    const refresh = () => setRefreshToken((current) => current + 1);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('cindy:project-plugin-state-changed', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('cindy:project-plugin-state-changed', refresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (!requestedWorkingDir) {
@@ -63,7 +76,7 @@ export function useCollabProjectPolicy(
     return () => {
       cancelled = true;
     };
-  }, [requestedWorkingDir]);
+  }, [requestedWorkingDir, refreshToken]);
 
   const current = state.workingDir === requestedWorkingDir ? state.enabled : null;
   const unavailable =
