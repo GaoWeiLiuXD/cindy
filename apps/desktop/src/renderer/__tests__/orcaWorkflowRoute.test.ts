@@ -177,6 +177,18 @@ describe('OrcaWorkflowRoute source invariants', () => {
     expect(collaborationModeToggleSource).toContain("'aria-disabled': true");
   });
 
+  it('keeps the active collaboration tooltip free of policy-disabled reasons', () => {
+    expect(sessionViewSource).toContain(
+      "disabledReason:\n" +
+        "                            !collabEnabled\n" +
+        "                              ? collabPolicy.loading",
+    );
+    expect(sessionViewSource).toContain(
+      "                                  : undefined\n" +
+        "                              : undefined,",
+    );
+  });
+
   it('keeps /orca as a legacy compatibility redirect to the plain lead route', () => {
     expect(routeSource).toContain('const { sessions, isLoading } = useCCSessions()');
     expect(routeSource).toContain('if (!sessionId || isLoading) return;');

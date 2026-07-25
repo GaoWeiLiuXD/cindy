@@ -473,6 +473,8 @@ describe('sendToSession ordering', () => {
     );
 
     expect(ipcCreateBlock).toContain('orcaLifecycleService.createWorker({');
+    expect(ipcCreateBlock).toContain('await assertLeadCollabProjectEnabled(b.leadSessionId);');
+    expectOrder(ipcCreateBlock, 'await assertLeadCollabProjectEnabled(b.leadSessionId);', 'const result = await orcaLifecycleService.createWorker({');
     expect(mcpCreateBlock).toContain('return await orcaLifecycleService.createWorker(params);');
     expect(ipcCreateBlock).not.toContain('readCodexAuthMode()');
     expect(mcpCreateBlock).not.toContain('readCodexAuthMode()');

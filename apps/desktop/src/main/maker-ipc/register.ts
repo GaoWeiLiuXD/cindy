@@ -5085,6 +5085,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     if (!label.ok) throwIpcError('INVALID_PARAMS', label.message);
     const agent = b.agent === 'codex' ? 'codex' as const : 'claude-code' as const;
     const model = typeof b.model === 'string' && b.model.length > 0 ? b.model : undefined;
+    await assertLeadCollabProjectEnabled(b.leadSessionId);
     const result = await orcaLifecycleService.createWorker({
       leadSessionId: b.leadSessionId,
       role: b.role,

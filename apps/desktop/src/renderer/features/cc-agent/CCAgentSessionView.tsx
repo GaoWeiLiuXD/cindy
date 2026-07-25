@@ -3196,16 +3196,17 @@ export function CCAgentSessionView({
                             !collabEnabled &&
                             (collabPolicy.loading || !collabPolicy.enabled),
                           disabledReason:
-                            !collabEnabled &&
-                            collabPolicy.loading
-                              ? t('newChat.collaboration.loadingHint')
-                              : collabPolicy.unavailable || !collabPolicy.enabled
-                                ? t(
-                                    collabPolicy.unavailable
-                                      ? 'newChat.collaboration.unavailableHint'
-                                      : 'newChat.collaboration.disabledHint',
-                                  )
-                                : undefined,
+                            !collabEnabled
+                              ? collabPolicy.loading
+                                ? t('newChat.collaboration.loadingHint')
+                                : collabPolicy.unavailable || !collabPolicy.enabled
+                                  ? t(
+                                      collabPolicy.unavailable
+                                        ? 'newChat.collaboration.unavailableHint'
+                                        : 'newChat.collaboration.disabledHint',
+                                    )
+                                  : undefined
+                              : undefined,
                         }
                       : undefined
                   }
