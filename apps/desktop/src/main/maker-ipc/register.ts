@@ -43,10 +43,7 @@ import {
   type AgentInputSessionReferenceContext,
 } from '../../shared/agentInputQueue.js';
 import { getManagedWorktreeBasePath } from '../../shared/managedWorktreePaths.js';
-import {
-  normalizeWorkingDirForProjectSettings,
-  normalizeWorkingDirForStorage,
-} from '../../shared/workingDir.js';
+import { normalizeWorkingDirForProjectSettings } from '../../shared/workingDir.js';
 import { buildTurnUsageDetails } from '../../shared/turnUsageDetails.js';
 import type { DesktopCommandContext } from '../commands/index.js';
 import { getDesktopCommandRegistry } from '../commands/index.js';
