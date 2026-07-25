@@ -4,18 +4,15 @@
  * for project-level tool configuration without URL plumbing.
  */
 
-import { getManagedWorktreeBasePath } from '../../shared/managedWorktreePaths';
 import { normalizeWorkingDirForStorage } from '../../shared/workingDir';
 
 let _lastWorkingDir: string | null = null;
 const listeners = new Set<() => void>();
 
 export function setLastWorkingDir(dir: string | null): void {
-  const normalized = normalizeWorkingDirForStorage(dir);
-  // Project settings belong to the base repository, not to a Cindy-managed
-  // session worktree whose lifecycle is temporary.
-  _lastWorkingDir =
-    normalized == null ? null : getManagedWorktreeBasePath(normalized) ?? normalized;
+  // Keep the active session cwd. Consumers that intentionally group managed
+  // worktrees into their base repository must do so in their own scope.
+  _lastWorkingDir = normalizeWorkingDirForStorage(dir);
   for (const l of listeners) l();
 }
 

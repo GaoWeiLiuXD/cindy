@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { createLogger } from '@/lib/logger';
 import { extractIpcError } from '@/utils/ipcError';
 import { recentWorkdirsStore, type RecentWorkdirEntry } from '@/lib/recentWorkdirsStore';
+import { normalizeWorkingDirForGrouping } from '../../../shared/workingDir';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -101,7 +102,10 @@ export function BuiltinToolsSection({ workingDir }: BuiltinToolsSectionProps) {
   const [selectedScope, setSelectedScope] = useState<string | null | undefined>();
 
   const recentWorkdirs = useRecentWorkdirs();
-  const effectiveWorkingDir = selectedScope === undefined ? workingDir : selectedScope ?? undefined;
+  const activeProjectWorkingDir = normalizeWorkingDirForGrouping(workingDir) ?? undefined;
+  const effectiveWorkingDir =
+    normalizeWorkingDirForGrouping(selectedScope === undefined ? workingDir : selectedScope) ??
+    undefined;
 
   const reload = useCallback(async () => {
     try {
@@ -201,7 +205,7 @@ export function BuiltinToolsSection({ workingDir }: BuiltinToolsSectionProps) {
         </div>
         <ScopePicker
           effectiveWorkingDir={effectiveWorkingDir}
-          activeSessionWorkingDir={workingDir}
+          activeSessionWorkingDir={activeProjectWorkingDir}
           recentWorkdirs={recentWorkdirs}
           onPick={setSelectedScope}
         />
@@ -345,9 +349,10 @@ function ScopePicker({
     const seen = new Set<string>();
     const out: string[] = [];
     const push = (p: string | undefined) => {
-      if (!p || seen.has(p)) return;
-      seen.add(p);
-      out.push(p);
+      const grouped = normalizeWorkingDirForGrouping(p) ?? undefined;
+      if (!grouped || seen.has(grouped)) return;
+      seen.add(grouped);
+      out.push(grouped);
     };
     push(effectiveWorkingDir);
     push(activeSessionWorkingDir);

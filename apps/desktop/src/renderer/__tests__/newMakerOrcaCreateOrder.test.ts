@@ -54,4 +54,11 @@ describe('NewMakerDraftRoute Orca worker create order', () => {
     expect(source.match(/if \(shouldEnableCollab\)/g)).toHaveLength(3);
     expect(source).not.toContain('effectiveCollabEnabled');
   });
+
+  it('surfaces initial policy loading and retries an unavailable draft toggle', () => {
+    expect(source).toContain("toast.warning(t('newChat.collaboration.loadingHint'))");
+    expect(source).toContain('onDisabledActivate: collabPolicy.unavailable');
+    expect(source).toContain('void collabPolicy.refresh().then((policy) => {');
+    expect(source).toContain('if (policy.enabled && !policy.unavailable) {');
+  });
 });

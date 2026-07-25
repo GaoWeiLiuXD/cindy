@@ -1690,6 +1690,7 @@ export function CCAgentSessionView({
   // ChatInput 工具行启用协同变成 Lead,否则 doc 模式下首次开启入口完全没有。
   // 工具行同时传 denseToolbar=true,协同 pill 自动收成 icon-only,窄 rail 视觉 OK。
   const collabPolicyEligible =
+    !orcaMode &&
     session?.orcaRole !== 'worker' &&
     session?.remoteHostId == null &&
     session?.workspaceKind === 'project' &&

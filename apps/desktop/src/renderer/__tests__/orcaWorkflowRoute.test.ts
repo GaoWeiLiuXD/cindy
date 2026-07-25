@@ -209,6 +209,14 @@ describe('OrcaWorkflowRoute source invariants', () => {
     );
   });
 
+  it('does not subscribe to project policy updates from the legacy Orca route', () => {
+    expect(sessionViewSource).toContain(
+      'const collabPolicyEligible =\n' +
+        '    !orcaMode &&\n' +
+        "    session?.orcaRole !== 'worker'",
+    );
+  });
+
   it('keeps /orca as a legacy compatibility redirect to the plain lead route', () => {
     expect(routeSource).toContain('const { sessions, isLoading } = useCCSessions()');
     expect(routeSource).toContain('if (!sessionId || isLoading) return;');

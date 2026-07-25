@@ -1203,7 +1203,10 @@ export function NewMakerDraftRoute() {
       },
     ): Promise<boolean | undefined> => {
       if (sendInFlightRef.current) return false;
-      if (effectiveCollab.enabled && collabPolicy.loading) return false;
+      if (effectiveCollab.enabled && collabPolicy.loading) {
+        toast.warning(t('newChat.collaboration.loadingHint'));
+        return false;
+      }
       let policyEnabled = collabPolicy.enabled;
       let policyUnavailable = collabPolicy.unavailable;
       if (effectiveCollab.enabled && policyUnavailable) {
@@ -2288,6 +2291,15 @@ export function NewMakerDraftRoute() {
                             worker: effectiveCollab.worker,
                             onChange: (next) => patchCollab(next),
                             onOpenDetails: () => setCreateWorkerOpen(true),
+                            onDisabledActivate: collabPolicy.unavailable
+                              ? () => {
+                                  void collabPolicy.refresh().then((policy) => {
+                                    if (policy.enabled && !policy.unavailable) {
+                                      setCreateWorkerOpen(true);
+                                    }
+                                  });
+                                }
+                              : undefined,
                             disabled:
                               !effectiveCollab.enabled &&
                               (collabPolicy.loading ||
