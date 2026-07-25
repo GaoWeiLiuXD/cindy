@@ -391,10 +391,12 @@ export function countLegacyGhostPlugins(
   return listLegacyGhostDirs(userDataDir, ownerKey).length;
 }
 
-export function listSharedLegacyGhostPluginIds(
+export function listLegacyGhostPluginSources(
+  ownerId: string,
   userDataDir = app.getPath('userData'),
-): string[] {
-  return listSharedLegacyGhostDirs(userDataDir).map((legacy) => legacy.id);
+): Array<{ id: string; dir: string }> {
+  const ownerKey = dataOwnerStorageKey(ownerId);
+  return listLegacyGhostDirs(userDataDir, ownerKey).map(({ id, dir }) => ({ id, dir }));
 }
 
 function hasSafeRecoveryTargetChainSync(userDataDir: string, targetRoot: string): boolean {
@@ -455,6 +457,9 @@ export function getLegacyGhostRecoveryStatus(
   const legacyGhosts = [...sharedLegacyGhosts, ...scopedLegacyGhosts];
   const legacyPluginCount = legacyGhosts.length;
   if (legacyPluginCount === 0) return NO_LEGACY_GHOST_RECOVERY;
+  if (process.env.XDT_PASSIVE_SHARED_USER_DATA === '1') {
+    return { state: 'deferred', legacyPluginCount, canRetry: false };
+  }
 
   const markerRead = readMarkerSync(root);
   const sharedRecoveryBlocked =

@@ -1041,6 +1041,26 @@ describe('legacy Ghost plugin recovery', () => {
     });
   });
 
+  it('disables manual recovery retry in passive shared-userData mode', async () => {
+    const root = await tempRoot();
+    await writeGhostDir(root, 'cindy-brain', 'valid-plugin');
+    process.env.XDT_PASSIVE_SHARED_USER_DATA = '1';
+    try {
+      expect(
+        getLegacyGhostRecoveryStatus(
+          { mode: 'cloud', dataOwnerId: 'cloud-a', user: { id: 'cloud-a' } },
+          root,
+        ),
+      ).toEqual({
+        state: 'deferred',
+        legacyPluginCount: 1,
+        canRetry: false,
+      });
+    } finally {
+      delete process.env.XDT_PASSIVE_SHARED_USER_DATA;
+    }
+  });
+
   it('aborts before the first write when the owner generation guard changes', async () => {
     const root = await tempRoot();
     await writeGhostDir(root, 'cindy-brain', 'valid-plugin');

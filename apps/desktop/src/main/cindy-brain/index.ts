@@ -200,7 +200,7 @@ import { requireAppCapability } from '../appCapabilities.js';
 import {
   getLegacyGhostRecoveryStatus,
   hasLegacyOwnerNamespaceClaim,
-  listSharedLegacyGhostPluginIds,
+  listLegacyGhostPluginSources,
   recoverLegacyGhostPlugins,
 } from '../ownerNamespaceMigration.js';
 import {
@@ -330,16 +330,21 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
     const authorizedStatus = getLegacyGhostRecoveryStatusForActiveSession();
     if (!authorizedStatus.canRetry) return authorizedStatus;
 
-    const sharedLegacyGhostIds = listSharedLegacyGhostPluginIds(app.getPath('userData'));
-    for (const id of sharedLegacyGhostIds) {
-      getGhostRuntime().stop(id);
-      getGhostNodeRuntimeBroker().stop(id);
-    }
     const existingGhostDirs = new Map(
       getGhostManager()
         .list()
         .map((ghost) => [ghost.manifest.id, ghost.dir]),
     );
+    const legacySources = listLegacyGhostPluginSources(
+      expectedOwner.dataOwnerId,
+      app.getPath('userData'),
+    );
+    for (const source of legacySources) {
+      const activeDir = existingGhostDirs.get(source.id);
+      if (activeDir !== undefined && path.resolve(activeDir) !== path.resolve(source.dir)) continue;
+      getGhostRuntime().stop(source.id);
+      getGhostNodeRuntimeBroker().stop(source.id);
+    }
     const result = await recoverLegacyGhostPlugins(
       {
         mode: 'cloud',
