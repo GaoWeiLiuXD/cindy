@@ -86,4 +86,26 @@ describe('useCollabProjectPolicy', () => {
     await waitFor(() => expect(result.current.enabled).toBe(true));
     expect(getState).toHaveBeenCalledTimes(2);
   });
+
+  it('does not keep global refresh listeners for ineligible sessions', async () => {
+    const getState = vi.fn().mockResolvedValue({ effectiveEnabled: true });
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result, rerender } = renderHook(
+      ({ eligible }: { eligible: boolean }) =>
+        useCollabProjectPolicy('C:\\projects\\cindy', eligible),
+      { initialProps: { eligible: true } },
+    );
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    rerender({ eligible: false });
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('cindy:project-plugin-state-changed'));
+    });
+    expect(getState).toHaveBeenCalledTimes(1);
+  });
 });

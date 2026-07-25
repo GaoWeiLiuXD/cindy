@@ -42,6 +42,7 @@ export function useCollabProjectPolicy(
   const refresh = useCallback(() => setRefreshToken((current) => current + 1), []);
 
   useEffect(() => {
+    if (!eligible) return;
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') refresh();
     };
@@ -53,7 +54,7 @@ export function useCollabProjectPolicy(
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('cindy:project-plugin-state-changed', refresh);
     };
-  }, [refresh]);
+  }, [eligible, refresh]);
 
   useEffect(() => {
     if (!requestedWorkingDir) {
