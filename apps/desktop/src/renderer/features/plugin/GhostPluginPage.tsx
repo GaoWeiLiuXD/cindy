@@ -253,7 +253,7 @@ export function GhostPluginPage() {
           setLegacyRecoveryStatus(null);
         }
       });
-  }, [dataOwnerId, ghosts, mode]);
+  }, [dataOwnerId, installedGhostIdsKey, mode]);
   // /plugins?ghost=<id> 深链:直接打开该插件详情(配置就绪弹窗等入口复用;
   // 读后即清参数,避免从详情返回列表后又被同一参数拉回详情)。
   useEffect(() => {

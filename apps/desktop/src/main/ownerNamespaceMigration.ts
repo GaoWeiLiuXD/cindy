@@ -79,6 +79,7 @@ export interface OwnerNamespaceMigrationResult {
   status: 'skipped' | 'deferred' | 'claimed-by-other-owner' | 'migrated' | 'partial';
   moved: number;
   conflicts: number;
+  provisioningStateMoved?: boolean;
   deferredReason?: OwnerNamespaceClaimDeferredReason;
 }
 
@@ -311,6 +312,18 @@ function pathExistsNoFollowSync(
   }
 }
 
+function hasBlockingProvisioningStateSync(legacyRoot: string, targetRoot: string): boolean {
+  const sourceState = path.join(legacyRoot, BUILTIN_PROVISIONING_STATE_FILE);
+  let sourceStateStats: fsSync.Stats;
+  try {
+    sourceStateStats = fsSync.lstatSync(sourceState);
+  } catch (error) {
+    return !isMissing(error);
+  }
+  if (!sourceStateStats.isFile() || sourceStateStats.isSymbolicLink()) return true;
+  return pathExistsNoFollowSync(path.join(targetRoot, BUILTIN_PROVISIONING_STATE_FILE));
+}
+
 function sharedLegacyGhostRootDirs(userDataDir: string): string[] {
   return [path.join(userDataDir, 'cindy-brain'), path.join(userDataDir, 'brain')];
 }
@@ -376,6 +389,12 @@ export function countLegacyGhostPlugins(
   ownerKey?: string,
 ): number {
   return listLegacyGhostDirs(userDataDir, ownerKey).length;
+}
+
+export function listSharedLegacyGhostPluginIds(
+  userDataDir = app.getPath('userData'),
+): string[] {
+  return listSharedLegacyGhostDirs(userDataDir).map((legacy) => legacy.id);
 }
 
 function hasSafeRecoveryTargetChainSync(userDataDir: string, targetRoot: string): boolean {
@@ -451,9 +470,25 @@ export function getLegacyGhostRecoveryStatus(
 
   const eligibleLegacyGhosts = sharedRecoveryBlocked ? scopedLegacyGhosts : legacyGhosts;
   const targetRoot = path.join(root, 'owners', ownerKey, 'cindy-brain');
-  const canRetry = eligibleLegacyGhosts.some(
-    (legacy) => !pathExistsNoFollowSync(path.join(targetRoot, legacy.id)),
+  if (!hasSafeRecoveryTargetChainSync(root, targetRoot)) {
+    return { state: 'partial', legacyPluginCount, canRetry: false };
+  }
+  const occupiedCommands = new Set(
+    listLegacyGhostDirsInRoots([targetRoot])
+      .map((legacy) => legacy.command?.toLowerCase() ?? null)
+      .filter((command): command is string => command !== null),
   );
+  const blockedRoots = new Set(
+    eligibleLegacyGhosts
+      .map((legacy) => legacy.root)
+      .filter((legacyRoot) => hasBlockingProvisioningStateSync(legacyRoot, targetRoot)),
+  );
+  const canRetry = eligibleLegacyGhosts.some((legacy) => {
+    if (blockedRoots.has(legacy.root)) return false;
+    if (pathExistsNoFollowSync(path.join(targetRoot, legacy.id))) return false;
+    const command = legacy.command?.toLowerCase() ?? null;
+    return command === null || !occupiedCommands.has(command);
+  });
   if (!canRetry) {
     if (
       sharedRecoveryBlocked &&
@@ -580,35 +615,9 @@ export async function recoverLegacyGhostPlugins(
   if (options.shouldAbort?.()) return { status: 'deferred', moved: 0, conflicts: 0 };
   await deps.mkdir(userDataDir);
   const sharedDirs = new Set(sharedLegacyGhosts.map((legacy) => legacy.dir));
-  const needsSharedClaim = movableLegacyGhosts.some((legacy) => sharedDirs.has(legacy.dir));
-  if (needsSharedClaim && !marker) {
-    marker = { version: 1, ownerKey, complete: false };
-    try {
-      await deps.writeFileExclusive(markerPath, JSON.stringify(marker));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      marker = await readMarker(deps, markerPath);
-      if (!marker) throw new Error('owner namespace claim marker disappeared');
-      if (marker.ownerKey !== ownerKey) {
-        const scopedMovableGhosts = movableLegacyGhosts.filter(
-          (legacy) => !sharedDirs.has(legacy.dir),
-        );
-        if (scopedMovableGhosts.length === 0) {
-          const result: OwnerNamespaceMigrationResult = {
-            status: 'claimed-by-other-owner',
-            moved: 0,
-            conflicts: 0,
-          };
-          recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
-          return result;
-        }
-        conflicts += movableLegacyGhosts.length - scopedMovableGhosts.length;
-        movableLegacyGhosts = scopedMovableGhosts;
-      }
-    }
-  }
 
   let moved = 0;
+  let provisioningStateMoved = false;
   let failed = false;
   if (!hasSafeRecoveryTargetChainSync(userDataDir, targetRoot)) {
     const result: OwnerNamespaceMigrationResult = {
@@ -645,6 +654,58 @@ export async function recoverLegacyGhostPlugins(
     commandSafeLegacyGhosts.push(legacy);
   }
   movableLegacyGhosts = commandSafeLegacyGhosts;
+  const preflightBlockedRoots = new Set(
+    movableLegacyGhosts
+      .map((legacy) => legacy.root)
+      .filter((legacyRoot) => hasBlockingProvisioningStateSync(legacyRoot, targetRoot)),
+  );
+  if (preflightBlockedRoots.size > 0) {
+    const blockedCount = movableLegacyGhosts.filter((legacy) =>
+      preflightBlockedRoots.has(legacy.root)
+    ).length;
+    conflicts += blockedCount;
+    failed = true;
+    movableLegacyGhosts = movableLegacyGhosts.filter(
+      (legacy) => !preflightBlockedRoots.has(legacy.root),
+    );
+  }
+  if (movableLegacyGhosts.length === 0) {
+    const result: OwnerNamespaceMigrationResult = {
+      status: conflicts > 0 ? 'partial' : 'skipped',
+      moved: 0,
+      conflicts,
+    };
+    recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
+    return result;
+  }
+  if (options.shouldAbort?.()) return { status: 'deferred', moved: 0, conflicts: 0 };
+  const needsSharedClaim = movableLegacyGhosts.some((legacy) => sharedDirs.has(legacy.dir));
+  if (needsSharedClaim && !marker) {
+    marker = { version: 1, ownerKey, complete: false };
+    try {
+      await deps.writeFileExclusive(markerPath, JSON.stringify(marker));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      marker = await readMarker(deps, markerPath);
+      if (!marker) throw new Error('owner namespace claim marker disappeared');
+      if (marker.ownerKey !== ownerKey) {
+        const scopedMovableGhosts = movableLegacyGhosts.filter(
+          (legacy) => !sharedDirs.has(legacy.dir),
+        );
+        if (scopedMovableGhosts.length === 0) {
+          const result: OwnerNamespaceMigrationResult = {
+            status: 'claimed-by-other-owner',
+            moved: 0,
+            conflicts: 0,
+          };
+          recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
+          return result;
+        }
+        conflicts += movableLegacyGhosts.length - scopedMovableGhosts.length;
+        movableLegacyGhosts = scopedMovableGhosts;
+      }
+    }
+  }
   const blockedRoots = new Set<string>();
   for (const legacyRoot of new Set(movableLegacyGhosts.map((legacy) => legacy.root))) {
     const sourceState = path.join(legacyRoot, BUILTIN_PROVISIONING_STATE_FILE);
@@ -692,8 +753,14 @@ export async function recoverLegacyGhostPlugins(
       });
       continue;
     }
+    if (options.shouldAbort?.()) {
+      blockedRoots.add(legacyRoot);
+      failed = true;
+      continue;
+    }
     try {
       await deps.rename(sourceState, targetState);
+      provisioningStateMoved = true;
     } catch (error) {
       blockedRoots.add(legacyRoot);
       failed = true;
@@ -770,6 +837,7 @@ export async function recoverLegacyGhostPlugins(
     status: failed || conflicts > 0 ? 'partial' : 'migrated',
     moved,
     conflicts,
+    ...(provisioningStateMoved ? { provisioningStateMoved: true } : {}),
   };
   recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
   return result;

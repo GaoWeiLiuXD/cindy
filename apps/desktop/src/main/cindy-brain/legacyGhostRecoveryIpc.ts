@@ -34,7 +34,7 @@ export function createLegacyGhostRecoveryIpcHandlers<Event>(
       try {
         return await deps.retry();
       } catch (error) {
-        deps.failure(error);
+        return deps.failure(error);
       }
     },
   };

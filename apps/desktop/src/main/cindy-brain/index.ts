@@ -200,6 +200,7 @@ import { requireAppCapability } from '../appCapabilities.js';
 import {
   getLegacyGhostRecoveryStatus,
   hasLegacyOwnerNamespaceClaim,
+  listSharedLegacyGhostPluginIds,
   recoverLegacyGhostPlugins,
 } from '../ownerNamespaceMigration.js';
 import {
@@ -329,6 +330,11 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
     const authorizedStatus = getLegacyGhostRecoveryStatusForActiveSession();
     if (!authorizedStatus.canRetry) return authorizedStatus;
 
+    const sharedLegacyGhostIds = listSharedLegacyGhostPluginIds(app.getPath('userData'));
+    for (const id of sharedLegacyGhostIds) {
+      getGhostRuntime().stop(id);
+      getGhostNodeRuntimeBroker().stop(id);
+    }
     const existingGhostDirs = new Map(
       getGhostManager()
         .list()
@@ -344,7 +350,7 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
       { shouldAbort },
     );
     if (shouldAbort()) return getLegacyGhostRecoveryStatusForActiveSession();
-    if (result.moved > 0) {
+    if (result.moved > 0 || result.provisioningStateMoved) {
       brainRootCache = null;
       const restoredBeforeReconcile = getGhostManager().list();
       const movedGhostIds = new Set<string>();
