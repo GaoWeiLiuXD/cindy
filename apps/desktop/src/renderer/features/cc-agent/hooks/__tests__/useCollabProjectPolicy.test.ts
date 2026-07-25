@@ -27,7 +27,7 @@ describe('useCollabProjectPolicy', () => {
 
     expect(result.current.enabled).toBe(false);
     expect(result.current.loading).toBe(false);
-    expect(getState).toHaveBeenCalledWith('collab', 'C:\\projects\\cindy');
+    expect(getState).toHaveBeenCalledWith('collab', 'C:/projects/cindy');
   });
 
   it('refreshes the project policy when the window regains focus', async () => {

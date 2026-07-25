@@ -43,6 +43,7 @@ import {
   type AgentInputSessionReferenceContext,
 } from '../../shared/agentInputQueue.js';
 import { getManagedWorktreeBasePath } from '../../shared/managedWorktreePaths.js';
+import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
 import { buildTurnUsageDetails } from '../../shared/turnUsageDetails.js';
 import type { DesktopCommandContext } from '../commands/index.js';
 import { getDesktopCommandRegistry } from '../commands/index.js';
@@ -4112,10 +4113,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
   async function assertLeadCollabProjectEnabled(leadSessionId: string): Promise<void> {
     const lead = maker.getSession(leadSessionId);
     const leadRow = await getSessionRowSnapshot(leadSessionId);
+    const rawWorkingDir =
+      typeof lead?.workDir === 'string' ? lead.workDir : leadRow?.workingDir;
+    const normalizedWorkingDir =
+      typeof rawWorkingDir === 'string'
+        ? normalizeWorkingDirForStorage(rawWorkingDir) ?? rawWorkingDir
+        : rawWorkingDir;
     assertCollabProjectEnabled(
       {
         workingDir:
-          typeof lead?.workDir === 'string' ? lead.workDir : leadRow?.workingDir,
+          typeof normalizedWorkingDir === 'string'
+            ? getManagedWorktreeBasePath(normalizedWorkingDir) ?? normalizedWorkingDir
+            : normalizedWorkingDir,
         workspaceKind: leadRow?.workspaceKind,
         remoteHostId: lead?.remoteHostId ?? leadRow?.remoteHostId,
       },

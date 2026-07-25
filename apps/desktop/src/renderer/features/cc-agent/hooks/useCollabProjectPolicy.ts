@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { createLogger } from '@/lib/logger';
+import { getManagedWorktreeBasePath } from '../../../../shared/managedWorktreePaths';
+import { normalizeWorkingDirForStorage } from '../../../../shared/workingDir';
 
 const log = createLogger('useCollabProjectPolicy');
 
@@ -24,7 +26,12 @@ export function useCollabProjectPolicy(
   workingDir: string | null | undefined,
   eligible: boolean,
 ): CollabProjectPolicy {
-  const requestedWorkingDir = eligible && workingDir ? workingDir : null;
+  const normalizedWorkingDir =
+    typeof workingDir === 'string' ? normalizeWorkingDirForStorage(workingDir) : null;
+  const requestedWorkingDir =
+    eligible && normalizedWorkingDir
+      ? getManagedWorktreeBasePath(normalizedWorkingDir) ?? normalizedWorkingDir
+      : null;
   const [refreshToken, setRefreshToken] = useState(0);
   const [state, setState] = useState<PolicyState>({
     workingDir: null,
