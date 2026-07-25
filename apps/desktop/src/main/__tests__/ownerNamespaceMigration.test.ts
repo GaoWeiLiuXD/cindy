@@ -593,6 +593,27 @@ describe('legacy Ghost plugin recovery', () => {
     await expect(fs.access(path.join(root, __testing.CLAIM_MARKER))).rejects.toThrow();
   });
 
+  it('does not restore plugins whose command is reserved for a builtin seed', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    await writeGhostDirAtPath(
+      path.join(root, 'brain', 'custom-plugin'),
+      'custom-plugin',
+      'Draw',
+    );
+
+    await expect(
+      recoverLegacyGhostPlugins(
+        { mode: 'cloud', dataOwnerId: ownerId, user: { id: ownerId } },
+        realFsDeps(root),
+        { reservedCommands: new Set(['draw']) },
+      ),
+    ).resolves.toMatchObject({ status: 'partial', moved: 0, conflicts: 1 });
+    await expect(
+      fs.readFile(path.join(root, 'brain', 'custom-plugin', 'ghost.json'), 'utf-8'),
+    ).resolves.toContain('"command":"Draw"');
+  });
+
   it('moves builtin provisioning state with plugins before reconciliation', async () => {
     const root = await tempRoot();
     const ownerId = 'cloud-a';

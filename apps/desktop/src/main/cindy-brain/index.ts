@@ -37,6 +37,7 @@ import { GhostManager, type InstallRejection, type UninstallRejection } from './
 import { GhostMutationCoordinator } from './ghostMutationCoordinator.js';
 import {
   clearBuiltinTombstone,
+  listEligibleBuiltinCommands,
   listBuiltinSeedIds,
   listEnterpriseSeedIds,
   listRestorableBuiltinGhosts,
@@ -349,6 +350,17 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
       expectedOwner.dataOwnerId,
       app.getPath('userData'),
     );
+    const excludedBuiltinIds = new Set(
+      legacySources.flatMap((source) => readBuiltinTombstones(path.dirname(source.dir))),
+    );
+    const reservedBuiltinCommands = new Set(
+      listEligibleBuiltinCommands(
+        builtinSeedRootDirs(),
+        currentProvisionIdentity(),
+        excludedBuiltinIds,
+        log,
+      ),
+    );
     for (const source of legacySources) {
       const activeDir = existingGhostDirs.get(source.id);
       if (activeDir !== undefined && path.resolve(activeDir) !== path.resolve(source.dir)) continue;
@@ -413,7 +425,7 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
           user: { id: expectedOwner.dataOwnerId },
         },
         undefined,
-        { shouldAbort },
+        { shouldAbort, reservedCommands: reservedBuiltinCommands },
       );
     } catch (error) {
       if (!shouldAbort()) restartStoppedActiveGhosts();

@@ -528,7 +528,10 @@ export function getLegacyGhostRecoveryStatus(
 export async function recoverLegacyGhostPlugins(
   state: MigrationSessionState,
   deps: MigrationDeps = productionDeps,
-  options: { shouldAbort?: () => boolean } = {},
+  options: {
+    shouldAbort?: () => boolean;
+    reservedCommands?: ReadonlySet<string>;
+  } = {},
 ): Promise<OwnerNamespaceMigrationResult> {
   const ownerId = verifiedCloudOwner(state);
   if (!ownerId) return { status: 'skipped', moved: 0, conflicts: 0 };
@@ -673,6 +676,9 @@ export async function recoverLegacyGhostPlugins(
       .map((legacy) => legacy.command?.toLowerCase() ?? null)
       .filter((command): command is string => command !== null),
   );
+  for (const command of options.reservedCommands ?? []) {
+    occupiedCommands.add(command.toLowerCase());
+  }
   const commandSafeLegacyGhosts: typeof movableLegacyGhosts = [];
   for (const legacy of movableLegacyGhosts) {
     const command = legacy.command?.toLowerCase() ?? null;
