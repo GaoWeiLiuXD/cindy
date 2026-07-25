@@ -451,6 +451,7 @@ export function getLegacyGhostRecoveryStatus(
   session: MigrationSessionState,
   userDataDir?: string,
   boundaryPending = false,
+  isPidAlive: (pid: number) => boolean = isPidAliveDefault,
 ): LegacyGhostRecoveryStatus {
   if (boundaryPending || session.mode !== 'cloud' || !session.dataOwnerId || !session.user) {
     return NO_LEGACY_GHOST_RECOVERY;
@@ -478,6 +479,9 @@ export function getLegacyGhostRecoveryStatus(
       return { state: 'claimed-by-other-owner', legacyPluginCount, canRetry: false };
     }
     return { state: 'partial', legacyPluginCount, canRetry: false };
+  }
+  if (hasConcurrentLiveInstanceSync(root, isPidAlive)) {
+    return { state: 'deferred', legacyPluginCount, canRetry: false };
   }
 
   const eligibleLegacyGhosts = sharedRecoveryBlocked ? scopedLegacyGhosts : legacyGhosts;
@@ -640,12 +644,26 @@ export async function recoverLegacyGhostPlugins(
     recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
     return result;
   }
-  await deps.mkdir(targetRoot);
-  if (!hasSafeRecoveryTargetChainSync(userDataDir, targetRoot)) {
+  const preflightBlockedRoots = new Set(
+    movableLegacyGhosts
+      .map((legacy) => legacy.root)
+      .filter((legacyRoot) => hasBlockingProvisioningStateSync(legacyRoot, targetRoot)),
+  );
+  if (preflightBlockedRoots.size > 0) {
+    const blockedCount = movableLegacyGhosts.filter((legacy) =>
+      preflightBlockedRoots.has(legacy.root)
+    ).length;
+    conflicts += blockedCount;
+    failed = true;
+    movableLegacyGhosts = movableLegacyGhosts.filter(
+      (legacy) => !preflightBlockedRoots.has(legacy.root),
+    );
+  }
+  if (movableLegacyGhosts.length === 0) {
     const result: OwnerNamespaceMigrationResult = {
-      status: 'partial',
+      status: conflicts > 0 ? 'partial' : 'skipped',
       moved: 0,
-      conflicts: conflicts + movableLegacyGhosts.length,
+      conflicts,
     };
     recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
     return result;
@@ -666,21 +684,6 @@ export async function recoverLegacyGhostPlugins(
     commandSafeLegacyGhosts.push(legacy);
   }
   movableLegacyGhosts = commandSafeLegacyGhosts;
-  const preflightBlockedRoots = new Set(
-    movableLegacyGhosts
-      .map((legacy) => legacy.root)
-      .filter((legacyRoot) => hasBlockingProvisioningStateSync(legacyRoot, targetRoot)),
-  );
-  if (preflightBlockedRoots.size > 0) {
-    const blockedCount = movableLegacyGhosts.filter((legacy) =>
-      preflightBlockedRoots.has(legacy.root)
-    ).length;
-    conflicts += blockedCount;
-    failed = true;
-    movableLegacyGhosts = movableLegacyGhosts.filter(
-      (legacy) => !preflightBlockedRoots.has(legacy.root),
-    );
-  }
   if (movableLegacyGhosts.length === 0) {
     const result: OwnerNamespaceMigrationResult = {
       status: conflicts > 0 ? 'partial' : 'skipped',

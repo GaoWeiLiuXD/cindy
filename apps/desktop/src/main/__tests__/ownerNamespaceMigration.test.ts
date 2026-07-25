@@ -675,6 +675,43 @@ describe('legacy Ghost plugin recovery', () => {
     ).resolves.toContain('current');
   });
 
+  it('does not reserve commands from roots blocked by provisioning preflight', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    const ownerKey = dataOwnerStorageKey(ownerId);
+    const blockedRoot = path.join(root, 'cindy-brain');
+    const safeRoot = path.join(root, 'brain');
+    const targetRoot = path.join(root, 'owners', ownerKey, 'cindy-brain');
+    await writeGhostDirAtPath(
+      path.join(blockedRoot, 'blocked-plugin'),
+      'blocked-plugin',
+      'Draw',
+    );
+    await writeGhostDirAtPath(path.join(safeRoot, 'safe-plugin'), 'safe-plugin', 'draw');
+    await fs.mkdir(targetRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(blockedRoot, '.builtin-provisioning.json'),
+      JSON.stringify({ removed: [], seeded: ['blocked-plugin'] }),
+    );
+    await fs.writeFile(
+      path.join(targetRoot, '.builtin-provisioning.json'),
+      JSON.stringify({ removed: [], seeded: [] }),
+    );
+
+    await expect(
+      recoverLegacyGhostPlugins(
+        { mode: 'cloud', dataOwnerId: ownerId, user: { id: ownerId } },
+        realFsDeps(root),
+      ),
+    ).resolves.toMatchObject({ status: 'partial', moved: 1, conflicts: 1 });
+    await expect(
+      fs.readFile(path.join(targetRoot, 'safe-plugin', 'ghost.json'), 'utf-8'),
+    ).resolves.toContain('"id":"safe-plugin"');
+    await expect(
+      fs.readFile(path.join(blockedRoot, 'blocked-plugin', 'ghost.json'), 'utf-8'),
+    ).resolves.toContain('"id":"blocked-plugin"');
+  });
+
   it('aborts before moving builtin provisioning state when the owner changes', async () => {
     const root = await tempRoot();
     const ownerId = 'cloud-a';
@@ -1013,6 +1050,19 @@ describe('legacy Ghost plugin recovery', () => {
     const root = await tempRoot();
     await writeGhostDir(root, 'cindy-brain', 'valid-plugin');
     await writeDevInstanceRecord(root, 4242);
+
+    expect(
+      getLegacyGhostRecoveryStatus(
+        { mode: 'cloud', dataOwnerId: 'cloud-a', user: { id: 'cloud-a' } },
+        root,
+        false,
+        (pid) => pid === 4242,
+      ),
+    ).toEqual({
+      state: 'deferred',
+      legacyPluginCount: 1,
+      canRetry: false,
+    });
 
     const result = await recoverLegacyGhostPlugins(
       { mode: 'cloud', dataOwnerId: 'cloud-a', user: { id: 'cloud-a' } },
