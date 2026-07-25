@@ -27,7 +27,10 @@ export function persistVoiceInputSelectionWithCustomAsrSecret<T>(
     return persistSelection();
   } catch (error) {
     if (!restoreSecret(secretStore, previousSecret)) {
-      throw new Error('Failed to save voice input model selection and restore the previous ASR key.');
+      throw new Error(
+        'Failed to save voice input model selection and restore the previous ASR key.',
+        { cause: error },
+      );
     }
     throw error;
   }

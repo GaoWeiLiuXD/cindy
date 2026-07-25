@@ -374,7 +374,13 @@ function VoiceInputServiceSourceCard() {
   const customAsrSelected = selection?.asrProvider === 'custom-realtime-asr';
 
   useEffect(() => {
-    if (!selection?.customAsr) return;
+    if (!selection?.customAsr) {
+      setCustomAsrProtocol('openai-realtime');
+      setCustomAsrWebsocketUrl('');
+      setCustomAsrModel('');
+      setCustomAsrApiKey('');
+      return;
+    }
     setCustomAsrProtocol(selection.customAsr.protocol);
     setCustomAsrWebsocketUrl(selection.customAsr.websocketUrl);
     setCustomAsrModel(selection.customAsr.model);

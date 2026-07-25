@@ -71,6 +71,31 @@ describe('custom ASR model-selection persistence', () => {
     expect(store.set).toHaveBeenCalledWith('voice-asr', 'old-key');
   });
 
+  it('preserves the config write error when restoring the previous key also fails', () => {
+    const store = createSecretStore('old-key');
+    vi.mocked(store.set)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    const configError = new Error('config write failed');
+
+    let thrown: unknown;
+    try {
+      persistVoiceInputSelectionWithCustomAsrSecret(
+        () => {
+          throw configError;
+        },
+        store,
+        { action: 'set', value: 'new-key' },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain('restore the previous ASR key');
+    expect((thrown as Error & { cause?: unknown }).cause).toBe(configError);
+  });
+
   it('commits both key and selection when both writes succeed', () => {
     const store = createSecretStore(null);
     const persistSelection = vi.fn(() => ({ ok: true }));

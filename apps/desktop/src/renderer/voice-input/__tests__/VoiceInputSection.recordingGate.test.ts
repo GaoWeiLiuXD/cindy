@@ -26,4 +26,17 @@ describe('VoiceInputSection shortcut recording gate', () => {
     expect(source).toContain('syncVoiceInputGlobalShortcut(getVoiceInputSettings().shortcut)');
     expect(source).toContain('}, [recordingShortcut]);');
   });
+
+  it('clears stale custom ASR form fields when the saved config is removed', () => {
+    const source = readFileSync(
+      new URL('../../components/settings/VoiceInputSection.tsx', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toContain('if (!selection?.customAsr) {');
+    expect(source).toContain("setCustomAsrProtocol('openai-realtime')");
+    expect(source).toContain("setCustomAsrWebsocketUrl('')");
+    expect(source).toContain("setCustomAsrModel('')");
+    expect(source).toContain("setCustomAsrApiKey('')");
+  });
 });
