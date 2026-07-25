@@ -165,6 +165,18 @@ describe('OrcaWorkflowRoute source invariants', () => {
     expect(sessionStatusIconSource).toContain("'text-[var(--cmd-palette-item-meta)]'");
   });
 
+  it('keeps policy reasons scoped to disabled collaboration controls', () => {
+    expect(collaborationModeToggleSource).toContain(
+      'const effectiveDisabledReason = disabled ? disabledReason : undefined;',
+    );
+    expect(collaborationModeToggleSource).toContain(
+      "text={effectiveDisabledReason ?? t('newChat.collaboration.stopHint')}",
+    );
+    expect(collaborationModeToggleSource.match(/disabledWrapperProps\(/g)).toHaveLength(3);
+    expect(collaborationModeToggleSource.match(/aria-hidden=\{disabled \|\| undefined\}/g)).toHaveLength(3);
+    expect(collaborationModeToggleSource).toContain("'aria-disabled': true");
+  });
+
   it('keeps /orca as a legacy compatibility redirect to the plain lead route', () => {
     expect(routeSource).toContain('const { sessions, isLoading } = useCCSessions()');
     expect(routeSource).toContain('if (!sessionId || isLoading) return;');

@@ -73,6 +73,16 @@ export function CollaborationModeToggle({
     ? 'h-[30px] w-[30px] justify-center px-0'
     : cn('h-[30px] px-2.5', dense ? 'text-[11.5px]' : 'text-[12px]');
   const iconSize = iconOnly ? 14 : 11;
+  const effectiveDisabledReason = disabled ? disabledReason : undefined;
+  const disabledWrapperProps = (label: string) =>
+    disabled
+      ? {
+          role: 'button' as const,
+          tabIndex: 0,
+          'aria-disabled': true,
+          'aria-label': disabledReason ?? label,
+        }
+      : {};
 
   const handleOpenChange = (next: boolean) => {
     if (next) setDraftWorker(worker);
@@ -87,8 +97,11 @@ export function CollaborationModeToggle({
   // ON 态:pill 本身就是"停止协同"的触发器
   if (enabled) {
     return (
-      <Tip text={disabledReason ?? t('newChat.collaboration.stopHint')} side="top">
-        <span tabIndex={disabled ? 0 : undefined} className="inline-flex">
+      <Tip text={effectiveDisabledReason ?? t('newChat.collaboration.stopHint')} side="top">
+        <span
+          {...disabledWrapperProps(t('newChat.collaboration.toggleOnAria'))}
+          className="inline-flex"
+        >
           <button
             type="button"
             disabled={disabled}
@@ -96,6 +109,7 @@ export function CollaborationModeToggle({
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onChange({ enabled: false, worker })}
             aria-label={t('newChat.collaboration.toggleOnAria')}
+            aria-hidden={disabled || undefined}
             aria-pressed
             className={cn(
               'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
@@ -118,16 +132,20 @@ export function CollaborationModeToggle({
   if (onOpenDetails) {
     return (
       <Tip
-        text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
+        text={effectiveDisabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
         side="top"
       >
-        <span tabIndex={disabled ? 0 : undefined} className="inline-flex">
+        <span
+          {...disabledWrapperProps(t('newChat.collaboration.toggleOffAria'))}
+          className="inline-flex"
+        >
           <button
             type="button"
             disabled={disabled}
             onMouseDown={(e) => e.preventDefault()}
             onClick={onOpenDetails}
             aria-label={t('newChat.collaboration.toggleOffAria')}
+            aria-hidden={disabled || undefined}
             aria-pressed={false}
             className={cn(
               'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
@@ -150,15 +168,19 @@ export function CollaborationModeToggle({
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Tip
-          text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
+          text={effectiveDisabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
           side="top"
         >
-          <span tabIndex={disabled ? 0 : undefined} className="inline-flex">
+          <span
+            {...disabledWrapperProps(t('newChat.collaboration.toggleOffAria'))}
+            className="inline-flex"
+          >
             <button
               type="button"
               disabled={disabled}
               onMouseDown={(e) => e.preventDefault()}
               aria-label={t('newChat.collaboration.toggleOffAria')}
+              aria-hidden={disabled || undefined}
               aria-pressed={false}
               className={cn(
                 'flex shrink-0 items-center gap-1.5 rounded-full font-medium transition-colors',
