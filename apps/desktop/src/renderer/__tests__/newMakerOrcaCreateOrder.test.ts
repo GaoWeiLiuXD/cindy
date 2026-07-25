@@ -41,7 +41,7 @@ describe('NewMakerDraftRoute Orca worker create order', () => {
     expect(goalHandler).toContain("if (collabPolicy.loading)");
     expect(goalHandler).toContain("if (collabPolicy.unavailable)");
     expect(goalHandler).toContain("collabPolicy.refresh()");
-    expect(goalHandler).toContain("if (!collabPolicy.enabled)");
+    expect(goalHandler).toContain("!collabPolicy.unavailable && !collabPolicy.enabled");
     expect(goalHandler.indexOf("if (collabPolicy.loading)")).toBeLessThan(
       goalHandler.indexOf('const newSession = await createSession'),
     );

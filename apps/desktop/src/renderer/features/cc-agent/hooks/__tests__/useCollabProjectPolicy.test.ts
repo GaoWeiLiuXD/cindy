@@ -82,7 +82,9 @@ describe('useCollabProjectPolicy', () => {
     const { result } = renderHook(() => useCollabProjectPolicy('C:\\projects\\cindy', true));
     await waitFor(() => expect(result.current.unavailable).toBe(true));
 
-    act(() => result.current.refresh());
+    await act(async () => {
+      await result.current.refresh();
+    });
     await waitFor(() => expect(result.current.enabled).toBe(true));
     expect(getState).toHaveBeenCalledTimes(2);
   });

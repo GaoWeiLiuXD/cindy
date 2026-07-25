@@ -1188,7 +1188,7 @@ export function NewMakerDraftRoute() {
   // ─── Send 拦截:vendorAuthGate → createSession → send / background worktree ──
   // 同步 return false 阻止 ChatInput 立即清空输入(异步流程未必成功)。
   const handleSend = useCallback(
-    (
+    async (
       message: string,
       model: string,
       effort: Effort,
@@ -1203,14 +1203,20 @@ export function NewMakerDraftRoute() {
         slashCommandRanges?: SlashCommandRange[];
         onAccepted?: () => void;
       },
-    ): boolean | undefined => {
+    ): Promise<boolean | undefined> => {
       if (sendInFlightRef.current) return false;
       if (effectiveCollab.enabled && collabPolicy.loading) return false;
-      if (effectiveCollab.enabled && (collabPolicy.unavailable || !collabPolicy.enabled)) {
-        if (collabPolicy.unavailable) collabPolicy.refresh();
+      let policyEnabled = collabPolicy.enabled;
+      let policyUnavailable = collabPolicy.unavailable;
+      if (effectiveCollab.enabled && policyUnavailable) {
+        const refreshed = await collabPolicy.refresh();
+        policyEnabled = refreshed.enabled;
+        policyUnavailable = refreshed.unavailable;
+      }
+      if (effectiveCollab.enabled && (policyUnavailable || !policyEnabled)) {
         toast.warning(
           t(
-            collabPolicy.unavailable
+            policyUnavailable
               ? 'newChat.collaboration.unavailableHint'
               : 'newChat.collaboration.disabledHint',
           ),
@@ -1772,10 +1778,16 @@ export function NewMakerDraftRoute() {
           throw new Error(t('newChat.collaboration.loadingHint'));
         }
         if (collabPolicy.unavailable) {
-          collabPolicy.refresh();
-          throw new Error(t('newChat.collaboration.unavailableHint'));
+          const refreshed = await collabPolicy.refresh();
+          if (refreshed.unavailable) {
+            throw new Error(t('newChat.collaboration.unavailableHint'));
+          }
+          if (!refreshed.enabled) {
+            patchCollab({ enabled: false });
+            throw new Error(t('newChat.collaboration.disabledHint'));
+          }
         }
-        if (!collabPolicy.enabled) {
+        if (!collabPolicy.unavailable && !collabPolicy.enabled) {
           patchCollab({ enabled: false });
           throw new Error(t('newChat.collaboration.disabledHint'));
         }

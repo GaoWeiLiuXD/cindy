@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { createLogger } from '@/lib/logger';
 import { getManagedWorktreeBasePath } from '../../../../shared/managedWorktreePaths';
@@ -16,7 +16,10 @@ export interface CollabProjectPolicy {
   enabled: boolean;
   loading: boolean;
   unavailable: boolean;
-  refresh: () => void;
+  refresh: () => Promise<{
+    enabled: boolean;
+    unavailable: boolean;
+  }>;
 }
 
 /**
@@ -33,13 +36,43 @@ export function useCollabProjectPolicy(
     eligible && normalizedWorkingDir
       ? getManagedWorktreeBasePath(normalizedWorkingDir) ?? normalizedWorkingDir
       : null;
-  const [refreshToken, setRefreshToken] = useState(0);
   const [state, setState] = useState<PolicyState>({
     workingDir: null,
     enabled: requestedWorkingDir == null ? false : null,
     unavailable: false,
   });
-  const refresh = useCallback(() => setRefreshToken((current) => current + 1), []);
+  const requestIdRef = useRef(0);
+  const refresh = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    if (!requestedWorkingDir) {
+      setState({ workingDir: null, enabled: false, unavailable: false });
+      return { enabled: false, unavailable: false };
+    }
+
+    setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: false });
+    try {
+      const next = await window.electronAPI.maker.plugins.getState('collab', requestedWorkingDir);
+      const result = { enabled: next.effectiveEnabled, unavailable: false };
+      if (requestId === requestIdRef.current) {
+        setState({
+          workingDir: requestedWorkingDir,
+          enabled: result.enabled,
+          unavailable: false,
+        });
+      }
+      return result;
+    } catch (err) {
+      log.warn('failed to read project collab policy', {
+        workingDir: requestedWorkingDir,
+        err,
+      });
+      const result = { enabled: false, unavailable: true };
+      if (requestId === requestIdRef.current) {
+        setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: true });
+      }
+      return result;
+    }
+  }, [requestedWorkingDir]);
 
   useEffect(() => {
     if (!eligible) return;
@@ -57,38 +90,11 @@ export function useCollabProjectPolicy(
   }, [eligible, refresh]);
 
   useEffect(() => {
-    if (!requestedWorkingDir) {
-      setState({ workingDir: null, enabled: false, unavailable: false });
-      return;
-    }
-
-    let cancelled = false;
-    setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: false });
-    void window.electronAPI.maker.plugins
-      .getState('collab', requestedWorkingDir)
-      .then((next) => {
-        if (cancelled) return;
-        setState({
-          workingDir: requestedWorkingDir,
-          enabled: next.effectiveEnabled,
-          unavailable: false,
-        });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        log.warn('failed to read project collab policy', {
-          workingDir: requestedWorkingDir,
-          err,
-        });
-        // Fail closed for starting collaboration, but do not turn a transient
-        // policy read failure into a persisted "disabled" user choice.
-        setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: true });
-      });
-
+    void refresh();
     return () => {
-      cancelled = true;
+      requestIdRef.current += 1;
     };
-  }, [requestedWorkingDir, refreshToken]);
+  }, [refresh]);
 
   const current = state.workingDir === requestedWorkingDir ? state.enabled : null;
   const unavailable =
