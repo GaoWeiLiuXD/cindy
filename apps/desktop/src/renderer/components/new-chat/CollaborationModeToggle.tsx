@@ -86,7 +86,7 @@ export function CollaborationModeToggle({
       ? {
           role: 'button' as const,
           tabIndex: 0,
-          'aria-disabled': true,
+          'aria-disabled': onDisabledActivate ? undefined : true,
           'aria-label': disabledReason ?? label,
           onClick: onDisabledActivate,
           onKeyDown: blockDisabledKeyboardActivation,

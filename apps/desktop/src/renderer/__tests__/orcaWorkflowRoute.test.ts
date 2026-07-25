@@ -174,7 +174,9 @@ describe('OrcaWorkflowRoute source invariants', () => {
     );
     expect(collaborationModeToggleSource.match(/disabledWrapperProps\(/g)).toHaveLength(3);
     expect(collaborationModeToggleSource.match(/aria-hidden=\{disabled \|\| undefined\}/g)).toHaveLength(3);
-    expect(collaborationModeToggleSource).toContain("'aria-disabled': true");
+    expect(collaborationModeToggleSource).toContain(
+      "'aria-disabled': onDisabledActivate ? undefined : true",
+    );
     expect(collaborationModeToggleSource).toContain(
       'onKeyDown: blockDisabledKeyboardActivation',
     );
