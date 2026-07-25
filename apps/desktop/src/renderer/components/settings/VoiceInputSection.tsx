@@ -474,16 +474,15 @@ function VoiceInputServiceSourceCard() {
     return t('settings.voiceInput.serviceSource.credentialError.gatewayMissing');
   }, [byok, readiness, t]);
 
-  const customAsrUrlInvalid = Boolean(
-    customAsrWebsocketUrl.trim() && validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl),
-  );
+  const customAsrUrlValidationError = validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl);
+  const customAsrUrlInvalid = Boolean(customAsrWebsocketUrl.trim() && customAsrUrlValidationError);
   const customAsrEndpointRequiresNewKey = customAsrApiKeyConfigured
-    && validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl) === null
+    && customAsrUrlValidationError === null
     && !canReuseVoiceInputCustomAsrCredential(
       selection?.customAsr?.websocketUrl,
       customAsrWebsocketUrl,
     );
-  const customAsrCanSave = validateVoiceInputCustomAsrWebsocketUrl(customAsrWebsocketUrl) === null
+  const customAsrCanSave = customAsrUrlValidationError === null
     && Boolean(customAsrModel.trim())
     && (!customAsrEndpointRequiresNewKey || Boolean(customAsrApiKey.trim()));
   const credentialRecoveryInVoiceSettings = customAsrSelected
