@@ -1084,7 +1084,7 @@ describe('legacy Ghost plugin recovery', () => {
   it('interrupts plugin recovery when an instance registers before the next plugin move', async () => {
     const root = await tempRoot();
     await writeGhostDir(root, 'cindy-brain', 'first-plugin');
-    await writeGhostDir(root, 'cindy-brain', 'second-plugin');
+    await writeGhostDir(root, 'brain', 'second-plugin');
     let scans = 0;
     const racedDeps = realFsDeps(
       root,
@@ -1115,8 +1115,9 @@ describe('legacy Ghost plugin recovery', () => {
       fs.readFile(path.join(targetRoot, 'first-plugin', 'ghost.json'), 'utf-8'),
     ).resolves.toContain('"id":"first-plugin"');
     await expect(
-      fs.readFile(path.join(root, 'cindy-brain', 'second-plugin', 'ghost.json'), 'utf-8'),
+      fs.readFile(path.join(root, 'brain', 'second-plugin', 'ghost.json'), 'utf-8'),
     ).resolves.toContain('"id":"second-plugin"');
+    await expect(fs.access(path.join(root, 'cindy-brain'))).resolves.toBeUndefined();
     expect(hasLegacyOwnerNamespaceClaim('cloud-a', root)).toBe(false);
   });
 

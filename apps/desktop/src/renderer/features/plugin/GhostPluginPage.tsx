@@ -514,7 +514,7 @@ export function GhostPluginPage() {
         setLegacyRecoveryStatus(status && status.state !== 'none' ? status : null);
       }
     } finally {
-      await refreshMarket();
+      await refreshMarket().catch(() => undefined);
       if (requestId === legacyRecoveryRetryRequestRef.current) {
         setLegacyRecoveryRetrying(false);
       }

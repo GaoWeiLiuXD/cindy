@@ -852,6 +852,27 @@ export async function recoverLegacyGhostPlugins(
     }
   }
   for (const legacyRoot of new Set(movableLegacyGhosts.map((legacy) => legacy.root))) {
+    if (options.shouldAbort?.()) {
+      failed = true;
+      break;
+    }
+    let cleanupPids: number[];
+    try {
+      cleanupPids = await findConcurrentLiveInstancePids(deps, userDataDir);
+    } catch (error) {
+      failed = true;
+      log.warn('legacy ghost recovery kept old root: registry unreadable before cleanup', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      break;
+    }
+    if (cleanupPids.length > 0) {
+      failed = true;
+      log.info('legacy ghost recovery kept old root: instance started before cleanup', {
+        racedPids: cleanupPids,
+      });
+      break;
+    }
     try {
       await deps.rmdir(legacyRoot);
     } catch (error) {

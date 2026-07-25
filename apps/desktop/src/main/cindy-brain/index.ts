@@ -394,9 +394,14 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
       const ghosts = getGhostManager().list();
       for (const ghost of ghosts) {
         const previousDir = existingGhostDirs.get(ghost.manifest.id);
+        const relocatedExistingGhost =
+          movedGhostIds.has(ghost.manifest.id) ||
+          (previousDir !== undefined &&
+            path.resolve(previousDir) !== path.resolve(ghost.dir));
+        if (relocatedExistingGhost) ensureGhostProtocolRegistered(ghost);
         if (
-          builtinReconcileSucceeded &&
-          (previousDir === undefined || movedGhostIds.has(ghost.manifest.id))
+          (relocatedExistingGhost && stoppedActiveGhosts.has(ghost.manifest.id)) ||
+          (builtinReconcileSucceeded && previousDir === undefined)
         ) {
           spawnIfResident(ghost);
         }
