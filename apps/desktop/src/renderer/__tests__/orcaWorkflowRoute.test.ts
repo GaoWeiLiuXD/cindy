@@ -179,8 +179,10 @@ describe('OrcaWorkflowRoute source invariants', () => {
       'onKeyDown: blockDisabledKeyboardActivation',
     );
     expect(collaborationModeToggleSource).toContain(
-      "if (event.key === 'Enter' || event.key === ' ') event.preventDefault();",
+      "if (event.key !== 'Enter' && event.key !== ' ') return;",
     );
+    expect(collaborationModeToggleSource).toContain('onClick: onDisabledActivate');
+    expect(collaborationModeToggleSource).toContain('if (!event.repeat) onDisabledActivate?.();');
   });
 
   it('keeps the active collaboration tooltip free of policy-disabled reasons', () => {
@@ -192,6 +194,16 @@ describe('OrcaWorkflowRoute source invariants', () => {
     expect(sessionViewSource).toContain(
       "                                  : undefined\n" +
         "                              : undefined,",
+    );
+  });
+
+  it('retries an unavailable policy from the disabled collaboration control', () => {
+    expect(sessionViewSource).toContain('onDisabledActivate: collabPolicy.unavailable');
+    expect(sessionViewSource).toContain('void collabPolicy.refresh().then((policy) => {');
+    expect(sessionViewSource).toContain('if (policy.enabled && !policy.unavailable) {');
+    expect(chatInputSource).toContain(
+      '!disabled && collaboration.disabled\n' +
+        '                        ? collaboration.disabledReason',
     );
   });
 

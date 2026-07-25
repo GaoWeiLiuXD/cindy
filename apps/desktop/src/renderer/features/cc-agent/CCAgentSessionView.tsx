@@ -3222,6 +3222,16 @@ export function CCAgentSessionView({
                             if (enableBusy) return;
                             setCreateWorkerOpen(true);
                           },
+                          onDisabledActivate: collabPolicy.unavailable
+                            ? () => {
+                                if (enableBusy) return;
+                                void collabPolicy.refresh().then((policy) => {
+                                  if (policy.enabled && !policy.unavailable) {
+                                    setCreateWorkerOpen(true);
+                                  }
+                                });
+                              }
+                            : undefined,
                           disabled:
                             !collabEnabled &&
                             (collabPolicy.loading || !collabPolicy.enabled),

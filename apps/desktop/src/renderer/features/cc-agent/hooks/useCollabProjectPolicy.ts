@@ -22,6 +22,11 @@ export interface CollabProjectPolicy {
   }>;
 }
 
+type PolicyResult = {
+  enabled: boolean;
+  unavailable: boolean;
+};
+
 /**
  * Reads the effective project-scoped collab plugin state for renderer gating.
  * Main IPC authorization remains authoritative for every create request.
@@ -42,36 +47,52 @@ export function useCollabProjectPolicy(
     unavailable: false,
   });
   const requestIdRef = useRef(0);
-  const refresh = useCallback(async () => {
+  const latestRefreshPromiseRef = useRef<Promise<PolicyResult> | null>(null);
+  const refresh = useCallback((): Promise<PolicyResult> => {
     const requestId = ++requestIdRef.current;
     if (!requestedWorkingDir) {
       setState({ workingDir: null, enabled: false, unavailable: false });
-      return { enabled: false, unavailable: false };
+      const result = Promise.resolve({ enabled: false, unavailable: false });
+      latestRefreshPromiseRef.current = result;
+      return result;
     }
 
-    setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: false });
-    try {
-      const next = await window.electronAPI.maker.plugins.getState('collab', requestedWorkingDir);
-      const result = { enabled: next.effectiveEnabled, unavailable: false };
-      if (requestId === requestIdRef.current) {
+    let requestPromise!: Promise<PolicyResult>;
+    requestPromise = (async () => {
+      setState((previous) =>
+        previous.workingDir === requestedWorkingDir
+          ? { ...previous, unavailable: false }
+          : { workingDir: requestedWorkingDir, enabled: null, unavailable: false },
+      );
+      try {
+        const next = await window.electronAPI.maker.plugins.getState('collab', requestedWorkingDir);
+        const result = { enabled: next.effectiveEnabled, unavailable: false };
+        if (requestId !== requestIdRef.current) {
+          const latest = latestRefreshPromiseRef.current;
+          return latest && latest !== requestPromise ? latest : result;
+        }
         setState({
           workingDir: requestedWorkingDir,
           enabled: result.enabled,
           unavailable: false,
         });
-      }
-      return result;
-    } catch (err) {
-      log.warn('failed to read project collab policy', {
-        workingDir: requestedWorkingDir,
-        err,
-      });
-      const result = { enabled: false, unavailable: true };
-      if (requestId === requestIdRef.current) {
+        return result;
+      } catch (err) {
+        log.warn('failed to read project collab policy', {
+          workingDir: requestedWorkingDir,
+          err,
+        });
+        const result = { enabled: false, unavailable: true };
+        if (requestId !== requestIdRef.current) {
+          const latest = latestRefreshPromiseRef.current;
+          return latest && latest !== requestPromise ? latest : result;
+        }
         setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: true });
+        return result;
       }
-      return result;
-    }
+    })();
+    latestRefreshPromiseRef.current = requestPromise;
+    return requestPromise;
   }, [requestedWorkingDir]);
 
   useEffect(() => {

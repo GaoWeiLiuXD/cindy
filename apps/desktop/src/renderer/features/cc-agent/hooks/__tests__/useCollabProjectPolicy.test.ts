@@ -10,6 +10,14 @@ vi.mock('@/lib/logger', () => ({
   }),
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('useCollabProjectPolicy', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -87,6 +95,71 @@ describe('useCollabProjectPolicy', () => {
     });
     await waitFor(() => expect(result.current.enabled).toBe(true));
     expect(getState).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves the resolved policy while a refresh is pending', async () => {
+    const pending = deferred<{ effectiveEnabled: boolean }>();
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ effectiveEnabled: true })
+      .mockReturnValueOnce(pending.promise);
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result } = renderHook(() => useCollabProjectPolicy('C:\\projects\\cindy', true));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    let refreshPromise!: ReturnType<typeof result.current.refresh>;
+    act(() => {
+      refreshPromise = result.current.refresh();
+    });
+    expect(result.current.enabled).toBe(true);
+    expect(result.current.loading).toBe(false);
+
+    pending.resolve({ effectiveEnabled: false });
+    await act(async () => {
+      await refreshPromise;
+    });
+    expect(result.current.enabled).toBe(false);
+  });
+
+  it('makes an older concurrent refresh resolve with the latest policy result', async () => {
+    const older = deferred<{ effectiveEnabled: boolean }>();
+    const latest = deferred<{ effectiveEnabled: boolean }>();
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ effectiveEnabled: true })
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(latest.promise);
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result } = renderHook(() => useCollabProjectPolicy('C:\\projects\\cindy', true));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    let olderRefresh!: ReturnType<typeof result.current.refresh>;
+    let latestRefresh!: ReturnType<typeof result.current.refresh>;
+    act(() => {
+      olderRefresh = result.current.refresh();
+      latestRefresh = result.current.refresh();
+    });
+
+    let latestResult!: Awaited<typeof latestRefresh>;
+    await act(async () => {
+      latest.resolve({ effectiveEnabled: false });
+      latestResult = await latestRefresh;
+    });
+    expect(latestResult).toEqual({ enabled: false, unavailable: false });
+
+    let olderResult!: Awaited<typeof olderRefresh>;
+    await act(async () => {
+      older.resolve({ effectiveEnabled: true });
+      olderResult = await olderRefresh;
+    });
+    expect(olderResult).toEqual({ enabled: false, unavailable: false });
+    expect(result.current.enabled).toBe(false);
   });
 
   it('does not keep global refresh listeners for ineligible sessions', async () => {

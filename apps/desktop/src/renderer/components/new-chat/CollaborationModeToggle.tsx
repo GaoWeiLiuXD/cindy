@@ -28,6 +28,7 @@ interface Props {
   worker: CollabWorkerKind;
   onChange: (next: { enabled: boolean; worker: CollabWorkerKind }) => void;
   onOpenDetails?: () => void;
+  onDisabledActivate?: () => void;
   disabled?: boolean;
   disabledReason?: string;
   /** 窄容器下把 pill 字号压一档,默认 false。 */
@@ -58,6 +59,7 @@ export function CollaborationModeToggle({
   worker,
   onChange,
   onOpenDetails,
+  onDisabledActivate,
   disabled,
   disabledReason,
   dense = false,
@@ -75,7 +77,9 @@ export function CollaborationModeToggle({
   const iconSize = iconOnly ? 14 : 11;
   const effectiveDisabledReason = disabled ? disabledReason : undefined;
   const blockDisabledKeyboardActivation = (event: KeyboardEvent<HTMLSpanElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') event.preventDefault();
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (!event.repeat) onDisabledActivate?.();
   };
   const disabledWrapperProps = (label: string) =>
     disabled
@@ -84,6 +88,7 @@ export function CollaborationModeToggle({
           tabIndex: 0,
           'aria-disabled': true,
           'aria-label': disabledReason ?? label,
+          onClick: onDisabledActivate,
           onKeyDown: blockDisabledKeyboardActivation,
         }
       : {};
@@ -104,7 +109,7 @@ export function CollaborationModeToggle({
       <Tip text={effectiveDisabledReason ?? t('newChat.collaboration.stopHint')} side="top">
         <span
           {...disabledWrapperProps(t('newChat.collaboration.toggleOnAria'))}
-          className="inline-flex"
+          className={cn('inline-flex', onDisabledActivate && 'cursor-pointer')}
         >
           <button
             type="button"
@@ -122,6 +127,7 @@ export function CollaborationModeToggle({
               'hover:bg-[var(--model-trigger-hover)]',
               pillSizeCn,
               disabled && 'cursor-not-allowed opacity-50',
+              disabled && onDisabledActivate && 'pointer-events-none',
             )}
           >
             <UsersRound size={iconSize} className="shrink-0" />
@@ -141,7 +147,7 @@ export function CollaborationModeToggle({
       >
         <span
           {...disabledWrapperProps(t('newChat.collaboration.toggleOffAria'))}
-          className="inline-flex"
+          className={cn('inline-flex', onDisabledActivate && 'cursor-pointer')}
         >
           <button
             type="button"
@@ -158,6 +164,7 @@ export function CollaborationModeToggle({
               'hover:bg-[var(--model-trigger-hover)]',
               pillSizeCn,
               disabled && 'cursor-not-allowed opacity-50',
+              disabled && onDisabledActivate && 'pointer-events-none',
             )}
           >
             <UsersRound size={iconSize} className="shrink-0" />
@@ -177,7 +184,7 @@ export function CollaborationModeToggle({
         >
           <span
             {...disabledWrapperProps(t('newChat.collaboration.toggleOffAria'))}
-            className="inline-flex"
+            className={cn('inline-flex', onDisabledActivate && 'cursor-pointer')}
           >
             <button
               type="button"
@@ -193,6 +200,7 @@ export function CollaborationModeToggle({
                 'hover:bg-[var(--model-trigger-hover)]',
                 pillSizeCn,
                 disabled && 'cursor-not-allowed opacity-50',
+                disabled && onDisabledActivate && 'pointer-events-none',
               )}
             >
               <UsersRound size={iconSize} className="shrink-0" />

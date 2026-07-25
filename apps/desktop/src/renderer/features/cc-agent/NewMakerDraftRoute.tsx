@@ -1186,7 +1186,7 @@ export function NewMakerDraftRoute() {
   };
 
   // ─── Send 拦截:vendorAuthGate → createSession → send / background worktree ──
-  // 同步 return false 阻止 ChatInput 立即清空输入(异步流程未必成功)。
+  // 异步流程未接受发送时 resolve false，让 ChatInput 保留当前草稿。
   const handleSend = useCallback(
     async (
       message: string,
