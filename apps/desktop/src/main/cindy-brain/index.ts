@@ -197,7 +197,17 @@ import { getDbClient } from '../localDb/client/current.js';
 import * as localDbSchema from '../localDb/schema.js';
 import { eq } from 'drizzle-orm';
 import { requireAppCapability } from '../appCapabilities.js';
-import { hasLegacyOwnerNamespaceClaim } from '../ownerNamespaceMigration.js';
+import {
+  getLegacyGhostRecoveryStatus,
+  hasLegacyOwnerNamespaceClaim,
+  recoverLegacyGhostPlugins,
+} from '../ownerNamespaceMigration.js';
+import {
+  LEGACY_GHOST_RECOVERY_RETRY_CHANNEL,
+  LEGACY_GHOST_RECOVERY_STATUS_CHANNEL,
+  createLegacyGhostRecoveryIpcHandlers,
+} from './legacyGhostRecoveryIpc.js';
+import type { LegacyGhostRecoveryStatus } from '../../shared/legacyGhostRecovery.js';
 
 /**
  * 意识仓库的进程级单例 + IPC 注册。
@@ -276,6 +286,98 @@ function beginGhostMutation(expectedOwner?: ActiveAppSession): () => void {
     }
   }
   return ghostMutationCoordinator.acquire();
+}
+
+function isSameAppSession(a: ActiveAppSession, b: ActiveAppSession): boolean {
+  return a.mode === b.mode && a.dataOwnerId === b.dataOwnerId && a.generation === b.generation;
+}
+
+function currentLegacyGhostMigrationSession(): {
+  mode: ActiveAppSession['mode'];
+  dataOwnerId: string | null;
+  user: { id: string } | null;
+} {
+  const session = getActiveAppSession();
+  return {
+    mode: session.mode,
+    dataOwnerId: session.dataOwnerId,
+    user: session.mode === 'cloud' && session.dataOwnerId ? { id: session.dataOwnerId } : null,
+  };
+}
+
+function getLegacyGhostRecoveryStatusForActiveSession(): LegacyGhostRecoveryStatus {
+  return getLegacyGhostRecoveryStatus(
+    currentLegacyGhostMigrationSession(),
+    undefined,
+    isAppSessionBoundaryPending(),
+  );
+}
+
+async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRecoveryStatus> {
+  const expectedOwner = captureGhostMutationOwner();
+  if (expectedOwner.mode !== 'cloud' || !expectedOwner.dataOwnerId) {
+    return getLegacyGhostRecoveryStatusForActiveSession();
+  }
+  const initialStatus = getLegacyGhostRecoveryStatusForActiveSession();
+  if (!initialStatus.canRetry) return initialStatus;
+
+  const releaseMutation = beginGhostMutation(expectedOwner);
+  try {
+    const shouldAbort = (): boolean =>
+      isAppSessionBoundaryPending() || !isSameAppSession(expectedOwner, getActiveAppSession());
+    if (shouldAbort()) return getLegacyGhostRecoveryStatusForActiveSession();
+    const authorizedStatus = getLegacyGhostRecoveryStatusForActiveSession();
+    if (!authorizedStatus.canRetry) return authorizedStatus;
+
+    const existingGhostDirs = new Map(
+      getGhostManager()
+        .list()
+        .map((ghost) => [ghost.manifest.id, ghost.dir]),
+    );
+    const result = await recoverLegacyGhostPlugins(
+      {
+        mode: 'cloud',
+        dataOwnerId: expectedOwner.dataOwnerId,
+        user: { id: expectedOwner.dataOwnerId },
+      },
+      undefined,
+      { shouldAbort },
+    );
+    if (shouldAbort()) return getLegacyGhostRecoveryStatusForActiveSession();
+    if (result.moved > 0) {
+      brainRootCache = null;
+      const restoredBeforeReconcile = getGhostManager().list();
+      const movedGhostIds = new Set<string>();
+      for (const ghost of restoredBeforeReconcile) {
+        const previousDir = existingGhostDirs.get(ghost.manifest.id);
+        if (
+          previousDir !== undefined &&
+          path.resolve(previousDir) !== path.resolve(ghost.dir)
+        ) {
+          movedGhostIds.add(ghost.manifest.id);
+          getGhostRuntime().stop(ghost.manifest.id);
+          getGhostNodeRuntimeBroker().stop(ghost.manifest.id);
+        }
+      }
+      const builtinReconcileSucceeded =
+        await scheduleBuiltinReconcile('legacy-recovery');
+      if (shouldAbort()) return getLegacyGhostRecoveryStatusForActiveSession();
+      const ghosts = getGhostManager().list();
+      for (const ghost of ghosts) {
+        const previousDir = existingGhostDirs.get(ghost.manifest.id);
+        if (
+          builtinReconcileSucceeded &&
+          (previousDir === undefined || movedGhostIds.has(ghost.manifest.id))
+        ) {
+          spawnIfResident(ghost);
+        }
+      }
+      broadcastGhostsChanged(ghosts);
+    }
+    return getLegacyGhostRecoveryStatusForActiveSession();
+  } finally {
+    releaseMutation();
+  }
 }
 
 /** Wait until all owner-bound Ghost filesystem mutations have finished. */
@@ -365,15 +467,27 @@ function currentProvisionIdentity(): ProvisionIdentity | null {
  */
 let builtinReconcileChain: Promise<void> = Promise.resolve();
 
-function scheduleBuiltinReconcile(reason: string): void {
-  builtinReconcileChain = builtinReconcileChain
-    .then(() => reconcileBuiltinGhosts(reason))
+function scheduleBuiltinReconcile(reason: string): Promise<boolean> {
+  const scheduled = builtinReconcileChain
     .catch((err) => {
-      log.warn('builtin ghost reconcile error', {
-        reason,
+      log.warn('builtin ghost activation error; reconcile chain resumed', {
         error: err instanceof Error ? err.message : String(err),
       });
+    })
+    .then(async () => {
+      try {
+        await reconcileBuiltinGhosts(reason);
+        return true;
+      } catch (err) {
+        log.warn('builtin ghost reconcile error', {
+          reason,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      }
     });
+  builtinReconcileChain = scheduled.then(() => undefined);
+  return scheduled;
 }
 
 /**
@@ -2347,6 +2461,15 @@ export function registerGhostIpc(): void {
   // 启动即对账一次 skill 槽链接:上次会话崩溃/异常退出留下的悬空链接、
   // 换账号后的期望态变化,都在这里自愈(后续变更由 ghosts:changed 广播驱动)。
   scheduleGhostSkillReconcile();
+  const legacyRecoveryIpc = createLegacyGhostRecoveryIpcHandlers({
+    assertTrusted: assertTrustedAppRendererEvent,
+    invalid: (message) => throwIpcError('INVALID_PARAMS', message),
+    failure: () => throwIpcError('INTERNAL', 'Legacy Plugin recovery failed.'),
+    getStatus: getLegacyGhostRecoveryStatusForActiveSession,
+    retry: retryLegacyGhostRecoveryForActiveSession,
+  });
+  ipcMain.handle(LEGACY_GHOST_RECOVERY_STATUS_CHANNEL, legacyRecoveryIpc.status);
+  ipcMain.handle(LEGACY_GHOST_RECOVERY_RETRY_CHANNEL, legacyRecoveryIpc.retry);
   setGhostSandboxDevToolsDisabled(app.isPackaged);
   setGhostAppContextProvider(currentGhostAppContext);
   // 面板唤醒电子脑(cindy-ghost://<id>/wake 供片分支):面板零桥,唤醒经它
@@ -2741,7 +2864,7 @@ export function registerGhostIpc(): void {
   };
 
   void app.whenReady().then(() => {
-    scheduleBuiltinReconcile('startup');
+    void scheduleBuiltinReconcile('startup');
     builtinReconcileChain = builtinReconcileChain.then(
       activateGhostsAndMigrateLegacyAccounts,
     );
@@ -2750,7 +2873,7 @@ export function registerGhostIpc(): void {
       // Even when provisioning itself is a no-op, the renderer and agent
       // roster must immediately reflect the new session capability set.
       broadcastGhostsChanged(manager.list());
-      scheduleBuiltinReconcile('auth-change');
+      void scheduleBuiltinReconcile('auth-change');
       builtinReconcileChain = builtinReconcileChain.then(
         activateGhostsAndMigrateLegacyAccounts,
       );
@@ -3274,7 +3397,7 @@ export function registerGhostIpc(): void {
       throwIpcError('NOT_FOUND', `意识 ${id} 不是内置种子`);
     }
     clearBuiltinTombstone(brainRootDir(), id, log);
-    scheduleBuiltinReconcile('restore');
+    void scheduleBuiltinReconcile('restore');
     await builtinReconcileChain; // 等本轮装完再返回,renderer 拿到结果时列表已就位
     return { ok: true };
   });

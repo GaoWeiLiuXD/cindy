@@ -49,6 +49,7 @@ import type {
   PluginMarketItem,
   PluginMarketSnapshot,
 } from '../../../shared/pluginMarket';
+import type { LegacyGhostRecoveryStatus } from '../../../shared/legacyGhostRecovery';
 import {
   toGhostPluginDetail,
   toGhostPluginListItem,
@@ -106,6 +107,10 @@ export function GhostPluginPage() {
   const { user, mode, dataOwnerId } = useAuth();
   const showEnterprise = user?.membershipKind === 'org';
   const ghosts = useInstalledGhosts();
+  const installedGhostIdsKey = ghosts
+    .map((ghost) => ghost.manifest.id)
+    .sort()
+    .join('\0');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [installedExpanded, setInstalledExpanded] = useState(false);
@@ -135,6 +140,11 @@ export function GhostPluginPage() {
   );
   const marketRefreshRequestRef = useRef(0);
   const marketDetailRequestRef = useRef(0);
+  const legacyRecoveryStatusRequestRef = useRef(0);
+  const legacyRecoveryRetryRequestRef = useRef(0);
+  const [legacyRecoveryStatus, setLegacyRecoveryStatus] =
+    useState<LegacyGhostRecoveryStatus | null>(null);
+  const [legacyRecoveryRetrying, setLegacyRecoveryRetrying] = useState(false);
   const refreshMarket = useCallback(async (preserveOnError = false) => {
     const requestId = ++marketRefreshRequestRef.current;
     try {
@@ -169,7 +179,7 @@ export function GhostPluginPage() {
     setMarketBusyId(null);
     marketDetailRequestRef.current += 1;
     void refreshMarket();
-  }, [refreshMarket, mode, dataOwnerId]);
+  }, [refreshMarket, mode, dataOwnerId, installedGhostIdsKey]);
   const activeSessionWorkingDir = useSyncExternalStore(
     subscribeToLastWorkingDir,
     getLastWorkingDir,
@@ -221,6 +231,29 @@ export function GhostPluginPage() {
       }),
     [],
   );
+  useEffect(() => {
+    legacyRecoveryStatusRequestRef.current += 1;
+    legacyRecoveryRetryRequestRef.current += 1;
+    setLegacyRecoveryRetrying(false);
+  }, [dataOwnerId, mode]);
+  useEffect(() => {
+    const requestId = ++legacyRecoveryStatusRequestRef.current;
+    if (mode !== 'cloud' || !dataOwnerId) {
+      setLegacyRecoveryStatus(null);
+      return;
+    }
+    void window.electronAPI.ghosts
+      .legacyRecoveryStatus()
+      .then((status) => {
+        if (requestId !== legacyRecoveryStatusRequestRef.current) return;
+        setLegacyRecoveryStatus(status.state === 'none' ? null : status);
+      })
+      .catch(() => {
+        if (requestId === legacyRecoveryStatusRequestRef.current) {
+          setLegacyRecoveryStatus(null);
+        }
+      });
+  }, [dataOwnerId, ghosts, mode]);
   // /plugins?ghost=<id> 深链:直接打开该插件详情(配置就绪弹窗等入口复用;
   // 读后即清参数,避免从详情返回列表后又被同一参数拉回详情)。
   useEffect(() => {
@@ -457,6 +490,28 @@ export function GhostPluginPage() {
     if (!picked || 'canceled' in picked) return;
     await confirmAndInstallGhost(picked.filePath, { t, confirm, confirmWithCheckbox });
   }, [confirm, confirmWithCheckbox, t]);
+
+  const handleRetryLegacyRecovery = useCallback(async () => {
+    legacyRecoveryStatusRequestRef.current += 1;
+    const requestId = ++legacyRecoveryRetryRequestRef.current;
+    setLegacyRecoveryRetrying(true);
+    try {
+      const status = await window.electronAPI.ghosts.retryLegacyRecovery();
+      if (requestId === legacyRecoveryRetryRequestRef.current) {
+        setLegacyRecoveryStatus(status.state === 'none' ? null : status);
+      }
+    } catch {
+      const status = await window.electronAPI.ghosts.legacyRecoveryStatus().catch(() => null);
+      if (requestId === legacyRecoveryRetryRequestRef.current) {
+        setLegacyRecoveryStatus(status && status.state !== 'none' ? status : null);
+      }
+    } finally {
+      await refreshMarket();
+      if (requestId === legacyRecoveryRetryRequestRef.current) {
+        setLegacyRecoveryRetrying(false);
+      }
+    }
+  }, [refreshMarket]);
 
   const handleCreateWithCindy = useCallback(() => {
     saveComposerDraft(NEW_MAKER_DRAFT_KEY, {
@@ -840,6 +895,14 @@ export function GhostPluginPage() {
               </p>
             ) : null}
 
+            {legacyRecoveryStatus ? (
+              <LegacyGhostRecoveryNotice
+                status={legacyRecoveryStatus}
+                retrying={legacyRecoveryRetrying}
+                onRetry={() => void handleRetryLegacyRecovery()}
+              />
+            ) : null}
+
             {items.length > 0 || availableMarketItems.length > 0 ? (
               <div className={cn('plugin-motion-stagger', PLUGIN_MANAGEMENT_CARD_GRID_CLASS)}>
                 {items.map((item) => (
@@ -869,7 +932,7 @@ export function GhostPluginPage() {
                   />
                 ))}
               </div>
-            ) : (
+            ) : !legacyRecoveryStatus ? (
               <div className="rounded-xl border-[0.5px] border-[var(--border-default)] px-5 py-10 text-center">
                 <p className="text-13 text-[var(--text-secondary)]">
                   {installedItems.length === 0 && marketItems.length === 0
@@ -882,11 +945,57 @@ export function GhostPluginPage() {
                   </p>
                 ) : null}
               </div>
-            )}
+            ) : null}
           </section>
         </PluginManagementPage>
       </main>
     </PluginManagementLayout>
+  );
+}
+
+export function LegacyGhostRecoveryNotice({
+  status,
+  retrying,
+  onRetry,
+}: {
+  status: LegacyGhostRecoveryStatus;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  const messageKey =
+    status.state === 'claimed-by-other-owner'
+      ? 'settings.ghosts.legacyRecovery.claimedByOtherOwner'
+      : status.state === 'partial'
+        ? status.canRetry
+          ? 'settings.ghosts.legacyRecovery.partial'
+          : 'settings.ghosts.legacyRecovery.partialBlocked'
+        : 'settings.ghosts.legacyRecovery.deferred';
+  return (
+    <div className="rounded-xl border-[0.5px] border-[var(--border-default)] bg-[var(--surface-elevated)] px-5 py-6 text-left">
+      <p className="text-14 font-medium text-[var(--text-primary)]">
+        {t('settings.ghosts.legacyRecovery.title')}
+      </p>
+      <p className="mt-2 text-13 leading-5 text-[var(--text-secondary)]">
+        {t(messageKey, { count: status.legacyPluginCount })}
+      </p>
+      {status.canRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className={cn(
+            'mt-4 inline-flex h-9 items-center rounded-full border border-[var(--border-default)] px-4 text-12 font-medium text-[var(--text-primary)]',
+            'transition-[background-color,border-color,opacity,transform] duration-150 hover:bg-[var(--surface-hover-soft)] active:scale-[0.98]',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-wait disabled:opacity-55 disabled:active:scale-100',
+          )}
+        >
+          {retrying
+            ? t('settings.ghosts.legacyRecovery.retrying')
+            : t('settings.ghosts.legacyRecovery.retry')}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
