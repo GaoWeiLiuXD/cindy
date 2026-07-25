@@ -116,9 +116,17 @@ export function useCollabProjectPolicy(
     };
   }, [refresh]);
 
-  const current = state.workingDir === requestedWorkingDir ? state.enabled : null;
+  const current =
+    requestedWorkingDir == null
+      ? false
+      : state.workingDir === requestedWorkingDir
+        ? state.enabled
+        : null;
   const unavailable =
-    state.workingDir === requestedWorkingDir && current === null && state.unavailable;
+    requestedWorkingDir != null &&
+    state.workingDir === requestedWorkingDir &&
+    current === null &&
+    state.unavailable;
   return {
     enabled: current === true,
     loading: current === null && !unavailable,

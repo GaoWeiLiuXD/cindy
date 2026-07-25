@@ -214,6 +214,11 @@ describe('useCollabProjectPolicy', () => {
     await waitFor(() => expect(result.current.enabled).toBe(true));
 
     rerender({ eligible: false });
+    expect(result.current).toMatchObject({
+      enabled: false,
+      loading: false,
+      unavailable: false,
+    });
     act(() => {
       window.dispatchEvent(new Event('focus'));
       document.dispatchEvent(new Event('visibilitychange'));
