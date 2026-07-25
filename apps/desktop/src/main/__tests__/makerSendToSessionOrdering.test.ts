@@ -100,6 +100,23 @@ describe('sendToSession ordering', () => {
     expect(lifecycleDispatchBlock).not.toContain('.send({');
   });
 
+  it('prefers live workspace metadata when applying the lead collaboration policy gate', () => {
+    const policyGuardBlock = extractBetween(
+      source,
+      'async function assertLeadCollabProjectEnabled',
+      'type SendToSessionDispatchSession',
+    );
+
+    expect(policyGuardBlock).toContain(
+      "const liveWorkspaceKind = (lead as { workspaceKind?: unknown } | undefined)?.workspaceKind;",
+    );
+    expect(policyGuardBlock).toContain(
+      "liveWorkspaceKind === 'project' || liveWorkspaceKind === 'dialogue'",
+    );
+    expect(policyGuardBlock).toContain(' : leadRow?.workspaceKind;');
+    expectOrder(policyGuardBlock, 'const liveWorkspaceKind =', 'assertCollabProjectEnabled(');
+  });
+
   it('keeps non-composer direct sends from inheriting armed plan mode', () => {
     const createWorkerReadyBlock = extractBetween(
       source,

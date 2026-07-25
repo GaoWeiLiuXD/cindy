@@ -4119,13 +4119,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
       typeof rawWorkingDir === 'string'
         ? normalizeWorkingDirForStorage(rawWorkingDir) ?? rawWorkingDir
         : rawWorkingDir;
+    const liveWorkspaceKind = (lead as { workspaceKind?: unknown } | undefined)?.workspaceKind;
+    const workspaceKind =
+      liveWorkspaceKind === 'project' || liveWorkspaceKind === 'dialogue'
+        ? liveWorkspaceKind
+        : leadRow?.workspaceKind;
     assertCollabProjectEnabled(
       {
         workingDir:
           typeof normalizedWorkingDir === 'string'
             ? getManagedWorktreeBasePath(normalizedWorkingDir) ?? normalizedWorkingDir
             : normalizedWorkingDir,
-        workspaceKind: leadRow?.workspaceKind,
+        workspaceKind,
         remoteHostId: lead?.remoteHostId ?? leadRow?.remoteHostId,
       },
       (pluginId, workingDir) => getPluginRegistry().isEnabled(pluginId, workingDir),
