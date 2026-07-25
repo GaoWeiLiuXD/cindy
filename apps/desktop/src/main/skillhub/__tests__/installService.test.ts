@@ -149,10 +149,6 @@ async function setupInstallDownload(skillName: string, zipBuf: Uint8Array) {
 }
 
 describe('skillhub/installService', () => {
-  afterAll(() => {
-    fs.rmSync(TEST_ROOT, { recursive: true, force: true });
-  });
-
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();

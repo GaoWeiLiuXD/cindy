@@ -111,6 +111,10 @@ export function GhostPluginPage() {
     .map((ghost) => ghost.manifest.id)
     .sort()
     .join('\0');
+  const installedGhostLocationsKey = ghosts
+    .map((ghost) => `${ghost.manifest.id}\0${ghost.dir}`)
+    .sort()
+    .join('\0');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [installedExpanded, setInstalledExpanded] = useState(false);
@@ -261,7 +265,7 @@ export function GhostPluginPage() {
           setLegacyRecoveryStatus(null);
         }
       });
-  }, [dataOwnerId, installedGhostIdsKey, mode]);
+  }, [dataOwnerId, installedGhostLocationsKey, mode]);
   // /plugins?ghost=<id> 深链:直接打开该插件详情(配置就绪弹窗等入口复用;
   // 读后即清参数,避免从详情返回列表后又被同一参数拉回详情)。
   useEffect(() => {

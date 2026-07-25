@@ -769,6 +769,17 @@ export async function recoverLegacyGhostPlugins(
       }
     }
   }
+  const targetRootWasMissing = (await pathType(deps, targetRoot)) === 'missing';
+  await deps.mkdir(targetRoot);
+  if (!hasSafeRecoveryTargetChainSync(userDataDir, targetRoot)) {
+    const result: OwnerNamespaceMigrationResult = {
+      status: 'partial',
+      moved: 0,
+      conflicts: conflicts + movableLegacyGhosts.length,
+    };
+    recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
+    return result;
+  }
   const blockedRoots = new Set<string>();
   for (const legacyRoot of new Set(movableLegacyGhosts.map((legacy) => legacy.root))) {
     const sourceState = path.join(legacyRoot, BUILTIN_PROVISIONING_STATE_FILE);
@@ -954,6 +965,28 @@ export async function recoverLegacyGhostPlugins(
         log.warn('legacy ghost recovery could not remove an empty root', {
           error: error instanceof Error ? error.message : String(error),
         });
+      }
+    }
+  }
+  if (targetRootWasMissing && moved === 0 && !provisioningStateMoved) {
+    let canRemoveTargetRoot = false;
+    try {
+      canRemoveTargetRoot =
+        (await findConcurrentLiveInstancePids(deps, userDataDir)).length === 0;
+    } catch (error) {
+      log.warn('legacy ghost recovery kept empty target: instance registry unreadable', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (canRemoveTargetRoot && hasSafeRecoveryTargetChainSync(userDataDir, targetRoot)) {
+      try {
+        await deps.rmdir(targetRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOTEMPTY' && !isMissing(error)) {
+          log.warn('legacy ghost recovery could not remove empty target root', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
   }

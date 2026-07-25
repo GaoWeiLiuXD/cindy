@@ -1,4 +1,3 @@
-import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -864,6 +863,55 @@ describe('legacy Ghost plugin recovery', () => {
     ).resolves.toContain('seeded-plugin');
   });
 
+  it('keeps moved provisioning state when a peer appears before rollback', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    const ownerKey = dataOwnerStorageKey(ownerId);
+    await writeGhostDir(root, 'brain', 'seeded-plugin');
+    await writeDevInstanceRecord(root, 4242);
+    const sourceState = path.join(root, 'brain', '.builtin-provisioning.json');
+    const targetState = path.join(
+      root,
+      'owners',
+      ownerKey,
+      'cindy-brain',
+      '.builtin-provisioning.json',
+    );
+    await fs.writeFile(
+      sourceState,
+      JSON.stringify({ removed: [], seeded: ['seeded-plugin'] }),
+    );
+    let boundaryPending = false;
+    let peerStarted = false;
+    const deps = realFsDeps(
+      root,
+      { isPidAlive: (pid) => peerStarted && pid === 4242 },
+      {
+        rename: async (source: string, target: string) => {
+          await fs.rename(source, target);
+          if (source === sourceState && target === targetState) {
+            boundaryPending = true;
+            peerStarted = true;
+          }
+        },
+      },
+    );
+
+    const result = await recoverLegacyGhostPlugins(
+      { mode: 'cloud', dataOwnerId: ownerId, user: { id: ownerId } },
+      deps,
+      { shouldAbort: () => boundaryPending },
+    );
+
+    expect(result).toMatchObject({
+      status: 'partial',
+      moved: 0,
+      provisioningStateMoved: true,
+    });
+    await expect(fs.access(sourceState)).rejects.toThrow();
+    await expect(fs.readFile(targetState, 'utf-8')).resolves.toContain('seeded-plugin');
+  });
+
   it('reports a provisioning-state move even when the plugin rename fails', async () => {
     const root = await tempRoot();
     const ownerId = 'cloud-a';
@@ -931,6 +979,40 @@ describe('legacy Ghost plugin recovery', () => {
     await expect(fs.readFile(path.join(root, 'dialogues', 'session.json'), 'utf-8')).resolves.toBe(
       'legacy-dialogue',
     );
+  });
+
+  it('removes a newly created empty target when every plugin rename fails', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    const ownerKey = dataOwnerStorageKey(ownerId);
+    await writeGhostDirAtPath(
+      path.join(root, 'owners', ownerKey, 'brain', 'legacy-plugin'),
+      'legacy-plugin',
+    );
+    const deps = realFsDeps(
+      root,
+      {},
+      {
+        rename: () =>
+          Promise.reject(Object.assign(new Error('rename denied'), { code: 'EACCES' })),
+      },
+    );
+
+    await expect(
+      recoverLegacyGhostPlugins(
+        { mode: 'cloud', dataOwnerId: ownerId, user: { id: ownerId } },
+        deps,
+      ),
+    ).resolves.toMatchObject({ status: 'partial', moved: 0 });
+    await expect(
+      fs.access(path.join(root, 'owners', ownerKey, 'cindy-brain')),
+    ).rejects.toThrow();
+    await expect(
+      fs.readFile(
+        path.join(root, 'owners', ownerKey, 'brain', 'legacy-plugin', 'ghost.json'),
+        'utf-8',
+      ),
+    ).resolves.toContain('"id":"legacy-plugin"');
   });
 
   it('does not overwrite an existing scoped plugin', async () => {
