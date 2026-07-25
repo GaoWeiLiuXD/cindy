@@ -11,14 +11,17 @@ const source = readFileSync(
 describe('BuiltinToolsSection working directory scope', () => {
   it('groups managed worktrees locally without changing the shared active cwd', () => {
     expect(source).toContain(
-      "import { normalizeWorkingDirForGrouping } from '../../../shared/workingDir';",
+      "import { normalizeWorkingDirForProjectSettings } from '../../../shared/workingDir';",
     );
     expect(source).toContain(
-      'const activeProjectWorkingDir = normalizeWorkingDirForGrouping(workingDir) ?? undefined;',
+      'normalizeWorkingDirForProjectSettings(workingDir) ?? undefined;',
     );
     expect(source).toContain(
-      'normalizeWorkingDirForGrouping(selectedScope === undefined ? workingDir : selectedScope)',
+      'normalizeWorkingDirForProjectSettings(\n' +
+        '      selectedScope === undefined ? workingDir : selectedScope,',
     );
-    expect(source).toContain('const grouped = normalizeWorkingDirForGrouping(p) ?? undefined;');
+    expect(source).toContain(
+      'const projectScope = normalizeWorkingDirForProjectSettings(p) ?? undefined;',
+    );
   });
 });

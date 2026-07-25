@@ -43,7 +43,10 @@ import {
   type AgentInputSessionReferenceContext,
 } from '../../shared/agentInputQueue.js';
 import { getManagedWorktreeBasePath } from '../../shared/managedWorktreePaths.js';
-import { normalizeWorkingDirForStorage } from '../../shared/workingDir.js';
+import {
+  normalizeWorkingDirForProjectSettings,
+  normalizeWorkingDirForStorage,
+} from '../../shared/workingDir.js';
 import { buildTurnUsageDetails } from '../../shared/turnUsageDetails.js';
 import type { DesktopCommandContext } from '../commands/index.js';
 import { getDesktopCommandRegistry } from '../commands/index.js';
@@ -4277,7 +4280,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
       typeof leadRow?.workingDir === 'string' ? leadRow.workingDir : lead?.workDir;
     const normalizedWorkingDir =
       typeof rawWorkingDir === 'string'
-        ? normalizeWorkingDirForStorage(rawWorkingDir) ?? rawWorkingDir
+        ? normalizeWorkingDirForProjectSettings(rawWorkingDir) ?? rawWorkingDir
         : rawWorkingDir;
     const liveWorkspaceKind = (lead as { workspaceKind?: unknown } | undefined)?.workspaceKind;
     const workspaceKind =
@@ -4286,10 +4289,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
         : leadRow?.workspaceKind;
     assertCollabProjectEnabled(
       {
-        workingDir:
-          typeof normalizedWorkingDir === 'string'
-            ? getManagedWorktreeBasePath(normalizedWorkingDir) ?? normalizedWorkingDir
-            : normalizedWorkingDir,
+        workingDir: normalizedWorkingDir,
         workspaceKind,
         remoteHostId: lead?.remoteHostId ?? leadRow?.remoteHostId,
       },
