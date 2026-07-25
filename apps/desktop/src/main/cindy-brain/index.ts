@@ -337,7 +337,14 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
     const existingGhostDirs = new Map(
       existingGhosts.map((ghost) => [ghost.manifest.id, ghost.dir]),
     );
-    const stoppedActiveGhosts = new Map<string, InstalledGhost>();
+    const stoppedActiveGhosts = new Map<
+      string,
+      {
+        ghost: InstalledGhost;
+        browserRuntimeRunning: boolean;
+        nodeRuntimeRunning: boolean;
+      }
+    >();
     const legacySources = listLegacyGhostPluginSources(
       expectedOwner.dataOwnerId,
       app.getPath('userData'),
@@ -345,13 +352,57 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
     for (const source of legacySources) {
       const activeDir = existingGhostDirs.get(source.id);
       if (activeDir !== undefined && path.resolve(activeDir) !== path.resolve(source.dir)) continue;
+      const browserRuntimeRunning = getGhostRuntime().stateOf(source.id) === 'running';
+      const nodeRuntimeRunning = getGhostNodeRuntimeBroker().stateOf(source.id) === 'running';
       getGhostRuntime().stop(source.id);
       getGhostNodeRuntimeBroker().stop(source.id);
       const activeGhost = existingGhostById.get(source.id);
-      if (activeGhost) stoppedActiveGhosts.set(source.id, activeGhost);
+      if (activeGhost) {
+        stoppedActiveGhosts.set(source.id, {
+          ghost: activeGhost,
+          browserRuntimeRunning,
+          nodeRuntimeRunning,
+        });
+      }
     }
     const restartStoppedActiveGhosts = (): void => {
-      for (const ghost of stoppedActiveGhosts.values()) spawnIfResident(ghost);
+      for (const {
+        ghost,
+        browserRuntimeRunning,
+        nodeRuntimeRunning,
+      } of stoppedActiveGhosts.values()) {
+        spawnIfResident(ghost);
+        if (
+          browserRuntimeRunning &&
+          ghost.manifest.launch !== 'resident' &&
+          isGhostAvailableForActiveSession(ghost.manifest.id) &&
+          ghost.enabled
+        ) {
+          void getGhostRuntime()
+            .spawn(ghost)
+            .catch((error) =>
+              log.warn('recovery on-demand ghost spawn error', {
+                id: ghost.manifest.id,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+        }
+        if (
+          nodeRuntimeRunning &&
+          ghost.manifest.node?.lifecycle !== 'resident' &&
+          isGhostAvailableForActiveSession(ghost.manifest.id) &&
+          ghost.enabled
+        ) {
+          void getGhostNodeRuntimeBroker()
+            .startForRecovery(ghost)
+            .catch((error) =>
+              log.warn('recovery on-demand ghost node spawn error', {
+                id: ghost.manifest.id,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+        }
+      }
     };
     let result;
     try {
