@@ -3198,8 +3198,12 @@ export function CCAgentSessionView({
                           disabledReason:
                             !collabEnabled &&
                             !collabPolicy.loading &&
-                            !collabPolicy.enabled
-                              ? t('newChat.collaboration.disabledHint')
+                            (collabPolicy.unavailable || !collabPolicy.enabled)
+                              ? t(
+                                  collabPolicy.unavailable
+                                    ? 'newChat.collaboration.unavailableHint'
+                                    : 'newChat.collaboration.disabledHint',
+                                )
                               : undefined,
                         }
                       : undefined

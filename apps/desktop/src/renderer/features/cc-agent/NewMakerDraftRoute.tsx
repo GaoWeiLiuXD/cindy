@@ -1205,11 +1205,15 @@ export function NewMakerDraftRoute() {
       },
     ): boolean | undefined => {
       if (sendInFlightRef.current) return false;
-      if (
-        effectiveCollab.enabled &&
-        (collabPolicy.loading || collabPolicy.unavailable || !collabPolicy.enabled)
-      ) {
-        toast.warning(t('newChat.collaboration.disabledHint'));
+      if (effectiveCollab.enabled && collabPolicy.loading) return false;
+      if (effectiveCollab.enabled && (collabPolicy.unavailable || !collabPolicy.enabled)) {
+        toast.warning(
+          t(
+            collabPolicy.unavailable
+              ? 'newChat.collaboration.unavailableHint'
+              : 'newChat.collaboration.disabledHint',
+          ),
+        );
         return false;
       }
       // device-link 切设备后,capabilities/providers hook 可能还没 re-render 到新设备快照;
@@ -2258,11 +2262,11 @@ export function NewMakerDraftRoute() {
                                 collabPolicy.unavailable ||
                                 !collabPolicy.enabled),
                             disabledReason:
-                              !collabPolicy.loading &&
-                              !collabPolicy.unavailable &&
-                              !collabPolicy.enabled
-                              ? t('newChat.collaboration.disabledHint')
-                              : undefined,
+                              !collabPolicy.loading && collabPolicy.unavailable
+                                ? t('newChat.collaboration.unavailableHint')
+                                : !collabPolicy.loading && !collabPolicy.enabled
+                                  ? t('newChat.collaboration.disabledHint')
+                                  : undefined,
                           }
                         : undefined
                     }

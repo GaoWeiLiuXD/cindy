@@ -3873,6 +3873,7 @@
       "createWorkerRefreshFailed": "Worker 状态刷新失败，请稍后重试",
       "openHint": "召集 Worker 协作",
       "disabledHint": "当前项目已关闭协同模式，请在项目设置中重新启用",
+      "unavailableHint": "暂时无法确认当前项目的协同设置，请稍后重试",
       "stopHint": "停止协同",
       "stopAria": "停止协同",
       "toggleOnAria": "协同模式已开启,点击停止",
