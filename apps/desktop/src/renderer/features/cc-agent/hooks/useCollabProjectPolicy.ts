@@ -26,6 +26,11 @@ type PolicyResult = {
   unavailable: boolean;
 };
 
+type ProjectRefreshTracker = {
+  latestPromise: Promise<PolicyResult>;
+  inFlight: number;
+};
+
 /**
  * Reads the effective project-scoped collab plugin state for renderer gating.
  * Main IPC authorization remains authoritative for every create request.
@@ -44,8 +49,8 @@ export function useCollabProjectPolicy(
     unavailable: false,
   });
   const requestIdRef = useRef(0);
-  const latestRefreshPromiseByWorkingDirRef = useRef(
-    new Map<string, Promise<PolicyResult>>(),
+  const refreshTrackersByWorkingDirRef = useRef(
+    new Map<string, ProjectRefreshTracker>(),
   );
   const refresh = useCallback((): Promise<PolicyResult> => {
     const requestId = ++requestIdRef.current;
@@ -66,7 +71,7 @@ export function useCollabProjectPolicy(
         const result = { enabled: next.effectiveEnabled, unavailable: false };
         if (requestId !== requestIdRef.current) {
           const latest =
-            latestRefreshPromiseByWorkingDirRef.current.get(requestedWorkingDir);
+            refreshTrackersByWorkingDirRef.current.get(requestedWorkingDir)?.latestPromise;
           return latest && latest !== requestPromise ? latest : result;
         }
         setState({
@@ -83,14 +88,29 @@ export function useCollabProjectPolicy(
         const result = { enabled: false, unavailable: true };
         if (requestId !== requestIdRef.current) {
           const latest =
-            latestRefreshPromiseByWorkingDirRef.current.get(requestedWorkingDir);
+            refreshTrackersByWorkingDirRef.current.get(requestedWorkingDir)?.latestPromise;
           return latest && latest !== requestPromise ? latest : result;
         }
         setState({ workingDir: requestedWorkingDir, enabled: null, unavailable: true });
         return result;
       }
     })();
-    latestRefreshPromiseByWorkingDirRef.current.set(requestedWorkingDir, requestPromise);
+    const tracker = refreshTrackersByWorkingDirRef.current.get(requestedWorkingDir) ?? {
+      latestPromise: requestPromise,
+      inFlight: 0,
+    };
+    tracker.latestPromise = requestPromise;
+    tracker.inFlight += 1;
+    refreshTrackersByWorkingDirRef.current.set(requestedWorkingDir, tracker);
+    void requestPromise.finally(() => {
+      tracker.inFlight -= 1;
+      if (
+        tracker.inFlight === 0 &&
+        refreshTrackersByWorkingDirRef.current.get(requestedWorkingDir) === tracker
+      ) {
+        refreshTrackersByWorkingDirRef.current.delete(requestedWorkingDir);
+      }
+    });
     return requestPromise;
   }, [requestedWorkingDir]);
 
