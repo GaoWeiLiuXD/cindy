@@ -1207,6 +1207,7 @@ export function NewMakerDraftRoute() {
       if (sendInFlightRef.current) return false;
       if (effectiveCollab.enabled && collabPolicy.loading) return false;
       if (effectiveCollab.enabled && (collabPolicy.unavailable || !collabPolicy.enabled)) {
+        if (collabPolicy.unavailable) collabPolicy.refresh();
         toast.warning(
           t(
             collabPolicy.unavailable
@@ -1743,6 +1744,7 @@ export function NewMakerDraftRoute() {
       effectiveCollab.enabled,
       collabPolicy.enabled,
       collabPolicy.loading,
+      collabPolicy.refresh,
       collabPolicy.unavailable,
       effectiveCollab.worker,
       // workerConfig 也要进依赖:只改角色/模型/effort/初始任务(worker 类型不变)时,
@@ -1770,6 +1772,7 @@ export function NewMakerDraftRoute() {
           throw new Error(t('newChat.collaboration.loadingHint'));
         }
         if (collabPolicy.unavailable) {
+          collabPolicy.refresh();
           throw new Error(t('newChat.collaboration.unavailableHint'));
         }
         if (!collabPolicy.enabled) {
@@ -1982,6 +1985,7 @@ export function NewMakerDraftRoute() {
       effectiveCollab,
       collabPolicyEligible,
       collabPolicy.loading,
+      collabPolicy.refresh,
       collabPolicy.unavailable,
       collabPolicy.enabled,
       patchCollab,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { createLogger } from '@/lib/logger';
 import { getManagedWorktreeBasePath } from '../../../../shared/managedWorktreePaths';
@@ -16,6 +16,7 @@ export interface CollabProjectPolicy {
   enabled: boolean;
   loading: boolean;
   unavailable: boolean;
+  refresh: () => void;
 }
 
 /**
@@ -38,18 +39,21 @@ export function useCollabProjectPolicy(
     enabled: requestedWorkingDir == null ? false : null,
     unavailable: false,
   });
+  const refresh = useCallback(() => setRefreshToken((current) => current + 1), []);
 
   useEffect(() => {
-    const refresh = () => setRefreshToken((current) => current + 1);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
     window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('cindy:project-plugin-state-changed', refresh);
     return () => {
       window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', refresh);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('cindy:project-plugin-state-changed', refresh);
     };
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     if (!requestedWorkingDir) {
@@ -92,5 +96,6 @@ export function useCollabProjectPolicy(
     enabled: current === true,
     loading: current === null && !unavailable,
     unavailable,
+    refresh,
   };
 }

@@ -11,7 +11,7 @@
  *
  * 视觉状态固定为 OFF / Popover / ON 三态。
  */
-import { useState, type ReactElement } from 'react';
+import { useState, type KeyboardEvent, type ReactElement } from 'react';
 import { UsersRound, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -74,6 +74,9 @@ export function CollaborationModeToggle({
     : cn('h-[30px] px-2.5', dense ? 'text-[11.5px]' : 'text-[12px]');
   const iconSize = iconOnly ? 14 : 11;
   const effectiveDisabledReason = disabled ? disabledReason : undefined;
+  const blockDisabledKeyboardActivation = (event: KeyboardEvent<HTMLSpanElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') event.preventDefault();
+  };
   const disabledWrapperProps = (label: string) =>
     disabled
       ? {
@@ -81,6 +84,7 @@ export function CollaborationModeToggle({
           tabIndex: 0,
           'aria-disabled': true,
           'aria-label': disabledReason ?? label,
+          onKeyDown: blockDisabledKeyboardActivation,
         }
       : {};
 

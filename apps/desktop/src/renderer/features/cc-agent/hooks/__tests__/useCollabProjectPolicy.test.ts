@@ -46,4 +46,44 @@ describe('useCollabProjectPolicy', () => {
     await waitFor(() => expect(result.current.enabled).toBe(false));
     expect(getState).toHaveBeenCalledTimes(2);
   });
+
+  it('refreshes only when a visibility change brings the document to the foreground', async () => {
+    let visibilityState: DocumentVisibilityState = 'hidden';
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibilityState);
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ effectiveEnabled: true })
+      .mockResolvedValueOnce({ effectiveEnabled: false });
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result } = renderHook(() => useCollabProjectPolicy('C:\\projects\\cindy', true));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    expect(getState).toHaveBeenCalledTimes(1);
+
+    visibilityState = 'visible';
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    await waitFor(() => expect(result.current.enabled).toBe(false));
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows an unavailable policy to be retried without leaving the current window', async () => {
+    const getState = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary IPC failure'))
+      .mockResolvedValueOnce({ effectiveEnabled: true });
+    (window as unknown as { electronAPI: { maker: { plugins: { getState: typeof getState } } } }).electronAPI = {
+      maker: { plugins: { getState } },
+    };
+
+    const { result } = renderHook(() => useCollabProjectPolicy('C:\\projects\\cindy', true));
+    await waitFor(() => expect(result.current.unavailable).toBe(true));
+
+    act(() => result.current.refresh());
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+    expect(getState).toHaveBeenCalledTimes(2);
+  });
 });

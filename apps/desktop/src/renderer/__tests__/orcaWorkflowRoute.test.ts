@@ -175,6 +175,12 @@ describe('OrcaWorkflowRoute source invariants', () => {
     expect(collaborationModeToggleSource.match(/disabledWrapperProps\(/g)).toHaveLength(3);
     expect(collaborationModeToggleSource.match(/aria-hidden=\{disabled \|\| undefined\}/g)).toHaveLength(3);
     expect(collaborationModeToggleSource).toContain("'aria-disabled': true");
+    expect(collaborationModeToggleSource).toContain(
+      'onKeyDown: blockDisabledKeyboardActivation',
+    );
+    expect(collaborationModeToggleSource).toContain(
+      "if (event.key === 'Enter' || event.key === ' ') event.preventDefault();",
+    );
   });
 
   it('keeps the active collaboration tooltip free of policy-disabled reasons', () => {
