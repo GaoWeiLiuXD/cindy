@@ -202,6 +202,7 @@ import {
   getLegacyGhostRecoveryStatus,
   hasLegacyOwnerNamespaceClaim,
   listLegacyGhostPluginSources,
+  listLegacyGhostTombstoneRoots,
   recoverLegacyGhostPlugins,
 } from '../ownerNamespaceMigration.js';
 import {
@@ -308,10 +309,28 @@ function currentLegacyGhostMigrationSession(): {
 }
 
 function getLegacyGhostRecoveryStatusForActiveSession(): LegacyGhostRecoveryStatus {
+  const ownerId = getActiveAppSession().dataOwnerId;
+  const excludedBuiltinIds =
+    ownerId === null
+      ? new Set<string>()
+      : new Set(
+          listLegacyGhostTombstoneRoots(ownerId, app.getPath('userData')).flatMap((root) =>
+            readBuiltinTombstones(root),
+          ),
+        );
+  const reservedBuiltinCommands = new Set(
+    listEligibleBuiltinCommands(
+      builtinSeedRootDirs(),
+      currentProvisionIdentity(),
+      excludedBuiltinIds,
+      log,
+    ),
+  );
   return getLegacyGhostRecoveryStatus(
     currentLegacyGhostMigrationSession(),
     undefined,
     isAppSessionBoundaryPending(),
+    { reservedCommands: reservedBuiltinCommands },
   );
 }
 
@@ -349,7 +368,10 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
       app.getPath('userData'),
     );
     const excludedBuiltinIds = new Set(
-      legacySources.flatMap((source) => readBuiltinTombstones(path.dirname(source.dir))),
+      listLegacyGhostTombstoneRoots(
+        expectedOwner.dataOwnerId,
+        app.getPath('userData'),
+      ).flatMap((root) => readBuiltinTombstones(root)),
     );
     const reservedBuiltinCommands = new Set(
       listEligibleBuiltinCommands(

@@ -9,6 +9,7 @@ import {
   claimLegacyOwnerNamespace,
   getLegacyGhostRecoveryStatus,
   hasLegacyOwnerNamespaceClaim,
+  listLegacyGhostTombstoneRoots,
   recoverLegacyGhostPlugins,
   __testing,
 } from '../ownerNamespaceMigration.js';
@@ -614,6 +615,48 @@ describe('legacy Ghost plugin recovery', () => {
     ).resolves.toContain('"command":"Draw"');
   });
 
+  it('derives retryability from bundled command reservations', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    await writeGhostDirAtPath(
+      path.join(root, 'brain', 'custom-plugin'),
+      'custom-plugin',
+      'Draw',
+    );
+
+    expect(
+      getLegacyGhostRecoveryStatus(
+        { mode: 'cloud', dataOwnerId: ownerId, user: { id: ownerId } },
+        root,
+        false,
+        { reservedCommands: new Set(['draw']) },
+      ),
+    ).toEqual({
+      state: 'partial',
+      legacyPluginCount: 1,
+      canRetry: false,
+    });
+  });
+
+  it('ignores tombstones from a foreign shared root during recovery planning', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    const foreignOwnerKey = dataOwnerStorageKey('cloud-b');
+    const scopedRoot = path.join(root, 'owners', dataOwnerStorageKey(ownerId), 'brain');
+    await writeGhostDir(root, 'brain', 'shared-plugin');
+    await writeGhostDirAtPath(path.join(scopedRoot, 'scoped-plugin'), 'scoped-plugin', 'Draw');
+    await fs.writeFile(
+      path.join(root, __testing.CLAIM_MARKER),
+      JSON.stringify({ version: 1, ownerKey: foreignOwnerKey, complete: true }),
+    );
+    await fs.writeFile(
+      path.join(root, 'brain', '.builtin-provisioning.json'),
+      JSON.stringify({ removed: ['draw'] }),
+    );
+
+    expect(listLegacyGhostTombstoneRoots(ownerId, root)).toEqual([scopedRoot]);
+  });
+
   it('does not restore reserved plugin IDs when packaged recovery protection is enabled', async () => {
     const root = await tempRoot();
     const ownerId = 'cloud-a';
@@ -1094,6 +1137,7 @@ describe('legacy Ghost plugin recovery', () => {
         { mode: 'cloud', dataOwnerId: 'cloud-a', user: { id: 'cloud-a' } },
         root,
         false,
+        {},
         (pid) => pid === 4242,
       ),
     ).toEqual({

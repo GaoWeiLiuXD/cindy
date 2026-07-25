@@ -407,6 +407,37 @@ export function listLegacyGhostPluginSources(
   return listLegacyGhostDirs(userDataDir, ownerKey).map(({ id, dir }) => ({ id, dir }));
 }
 
+/**
+ * Return only legacy roots whose provisioning state and owner claim can move
+ * into the active owner namespace. Tombstones from a foreign or blocked root
+ * must not suppress built-ins that will be reconciled for the active owner.
+ */
+export function listLegacyGhostTombstoneRoots(
+  ownerId: string,
+  userDataDir = app.getPath('userData'),
+): string[] {
+  const ownerKey = dataOwnerStorageKey(ownerId);
+  const targetRoot = path.join(userDataDir, 'owners', ownerKey, 'cindy-brain');
+  const sharedLegacyGhosts = listSharedLegacyGhostDirs(userDataDir);
+  const scopedLegacyGhosts = listOwnerScopedLegacyGhostDirs(userDataDir, ownerKey);
+  const markerRead = readMarkerSync(userDataDir);
+  const sharedRecoveryBlocked =
+    sharedLegacyGhosts.length > 0 &&
+    (markerRead.invalid ||
+      (markerRead.marker !== null && markerRead.marker.ownerKey !== ownerKey));
+  const eligible = sharedRecoveryBlocked
+    ? scopedLegacyGhosts
+    : [...sharedLegacyGhosts, ...scopedLegacyGhosts];
+  const blockedRoots = new Set(
+    eligible
+      .map((legacy) => legacy.root)
+      .filter((legacyRoot) => hasBlockingProvisioningStateSync(legacyRoot, targetRoot)),
+  );
+  return [...new Set(eligible.map((legacy) => legacy.root))].filter(
+    (legacyRoot) => !blockedRoots.has(legacyRoot),
+  );
+}
+
 function hasSafeRecoveryTargetChainSync(userDataDir: string, targetRoot: string): boolean {
   const relative = path.relative(userDataDir, targetRoot);
   if (
@@ -452,6 +483,7 @@ export function getLegacyGhostRecoveryStatus(
   session: MigrationSessionState,
   userDataDir?: string,
   boundaryPending = false,
+  options: { reservedCommands?: ReadonlySet<string> } = {},
   isPidAlive: (pid: number) => boolean = isPidAliveDefault,
 ): LegacyGhostRecoveryStatus {
   if (boundaryPending || session.mode !== 'cloud' || !session.dataOwnerId || !session.user) {
@@ -495,6 +527,9 @@ export function getLegacyGhostRecoveryStatus(
       .map((legacy) => legacy.command?.toLowerCase() ?? null)
       .filter((command): command is string => command !== null),
   );
+  for (const command of options.reservedCommands ?? []) {
+    occupiedCommands.add(command.toLowerCase());
+  }
   const blockedRoots = new Set(
     eligibleLegacyGhosts
       .map((legacy) => legacy.root)

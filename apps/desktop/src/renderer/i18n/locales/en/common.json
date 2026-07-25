@@ -2321,7 +2321,7 @@
         "claimedByOtherOwner": "Found {{count}} older plugin directory, but it belongs to the first account that claimed this device data. Switch back to that account to restore it.",
         "claimedByOtherOwner_one": "Found {{count}} older plugin directory, but it belongs to the first account that claimed this device data. Switch back to that account to restore it.",
         "claimedByOtherOwner_other": "Found {{count}} older plugin directories, but it belongs to the first account that claimed this device data. Switch back to that account to restore it.",
-        "retry": "Retry restore",
+        "retry": "Retry restoring",
         "retrying": "Restoring…"
       },
       "disabledTag": "Disabled",
