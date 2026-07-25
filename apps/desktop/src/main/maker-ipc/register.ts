@@ -149,6 +149,7 @@ import {
   writeMemorySetting,
 } from '../maker-host/memory-settings-store.js';
 import { GLOBAL_PLUGIN_IDS } from '../maker-host/plugins/types.js';
+import { assertCollabProjectEnabled } from './collabProjectPolicy.js';
 import type { GitSnapshotCoordinator } from '../git-snapshot/gitSnapshotCoordinator.js';
 import {
   getRemoteNewMakerDefaults,
@@ -4079,6 +4080,17 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions 
     dispatched: boolean;
     dispatchOutcome?: CollabDispatchOutcome;
   }> {
+    const lead = maker.getSession(leadSessionId);
+    const leadRow = await getSessionRowSnapshot(leadSessionId);
+    assertCollabProjectEnabled(
+      {
+        workingDir:
+          typeof lead?.workDir === 'string' ? lead.workDir : leadRow?.workingDir,
+        workspaceKind: leadRow?.workspaceKind,
+        remoteHostId: lead?.remoteHostId ?? leadRow?.remoteHostId,
+      },
+      (pluginId, workingDir) => getPluginRegistry().isEnabled(pluginId, workingDir),
+    );
     const result = await orcaLifecycleService.enableTeam({
       leadSessionId,
       workerAgent: opts.workerAgent,

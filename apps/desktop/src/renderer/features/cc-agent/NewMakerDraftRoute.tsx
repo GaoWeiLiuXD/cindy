@@ -103,6 +103,7 @@ import { useRefreshWorktrees } from '@/contexts/WorktreeContext';
 import { crossAgentConvertService } from '@/lib/crossAgentConvertService';
 import { useCrossAgentMigrationDialog } from '@/hooks/useCrossAgentConvertPrompt';
 import { getCollaborationStartErrorMessage } from './collaborationErrors';
+import { useCollabProjectPolicy } from './hooks/useCollabProjectPolicy';
 import { CrossAgentConvertDialog } from '@/components/ui/cross-agent-convert-dialog';
 import type { MakerVendor, Session } from '@/lib/ccAgent.types';
 import { remoteProjectsStore } from '@/features/device-link/remoteProjectsStore';
@@ -427,8 +428,13 @@ export function NewMakerDraftRoute() {
   const showProviderOnboardingCard = providerOnboarding.visible && !isDeviceLinkDraft;
   const effectiveExtraDirs = draft.extraDirs;
   const effectiveCollab = collab;
+  const collabPolicyEligible =
+    effectiveWorkingDir != null &&
+    effectiveRemoteHostId == null &&
+    effectiveDeviceLinkDeviceId == null;
+  const collabPolicy = useCollabProjectPolicy(effectiveWorkingDir, collabPolicyEligible);
   const effectiveCollabEnabled =
-    effectiveCollab.enabled && effectiveWorkingDir != null && effectiveRemoteHostId == null;
+    effectiveCollab.enabled && collabPolicyEligible && collabPolicy.enabled;
   const projectPickerOptions = useProjectPickerOptions();
   const createAgentModeLabel =
     getProjectPickerDisplayName(effectiveWorkingDir, projectPickerOptions) ??
@@ -452,6 +458,22 @@ export function NewMakerDraftRoute() {
     setRightSidebarSessionId?.(draftRightSidebar.sessionId);
     return () => setRightSidebarSessionId?.(null);
   }, [draftRightSidebar.sessionId, setRightSidebarSessionId]);
+
+  useEffect(() => {
+    if (
+      effectiveCollab.enabled &&
+      !collabPolicy.loading &&
+      !collabPolicy.unavailable &&
+      !collabPolicy.enabled
+    ) {
+      patchCollab({ enabled: false });
+    }
+  }, [
+    collabPolicy.enabled,
+    collabPolicy.loading,
+    collabPolicy.unavailable,
+    effectiveCollab.enabled,
+  ]);
 
   useEffect(() => {
     const draftSessionId = draftRightSidebar.sessionId;
@@ -1183,6 +1205,13 @@ export function NewMakerDraftRoute() {
       },
     ): boolean | undefined => {
       if (sendInFlightRef.current) return false;
+      if (
+        effectiveCollab.enabled &&
+        (collabPolicy.loading || collabPolicy.unavailable || !collabPolicy.enabled)
+      ) {
+        toast.warning(t('newChat.collaboration.disabledHint'));
+        return false;
+      }
       // device-link 切设备后,capabilities/providers hook 可能还没 re-render 到新设备快照;
       // 此时 effectiveFastMode / supportsFastMode / sendProviderId 仍基于旧设备。
       if (isDeviceLinkDraft && (capabilitiesLoading || deviceProvidersLoading)) return false;
@@ -1707,6 +1736,10 @@ export function NewMakerDraftRoute() {
       effectivePlanMode,
       patchActivePrefs,
       effectiveCollabEnabled,
+      effectiveCollab.enabled,
+      collabPolicy.enabled,
+      collabPolicy.loading,
+      collabPolicy.unavailable,
       effectiveCollab.worker,
       // workerConfig 也要进依赖:只改角色/模型/effort/初始任务(worker 类型不变)时,
       // 少了它 handleSend 会闭包吃旧的 effectiveCollab,起 Worker 用错配置(codex P2)。
@@ -2127,9 +2160,7 @@ export function NewMakerDraftRoute() {
                       className="shrink-0 text-[var(--create-agent-control-icon)]"
                     />
                     <span className="min-w-0 truncate">
-                      {effectiveCollab.enabled
-                        ? t('newChat.collaboration.pillLabel')
-                        : createAgentModeLabel}
+                      {createAgentModeLabel}
                     </span>
                     <ChevronDown
                       size={12}
@@ -2215,14 +2246,23 @@ export function NewMakerDraftRoute() {
                     // 走它而非简单 worker popover。ON 态点击 onChange(enabled:false) 关闭协同。
                     // createSession 已在 effectiveCollabEnabled 时用 workerConfig 拉起 Worker。
                     collaboration={
-                      effectiveWorkingDir != null &&
-                      effectiveRemoteHostId == null &&
-                      effectiveDeviceLinkDeviceId == null
+                      collabPolicyEligible
                         ? {
                             enabled: effectiveCollab.enabled,
                             worker: effectiveCollab.worker,
                             onChange: (next) => patchCollab(next),
                             onOpenDetails: () => setCreateWorkerOpen(true),
+                            disabled:
+                              !effectiveCollab.enabled &&
+                              (collabPolicy.loading ||
+                                collabPolicy.unavailable ||
+                                !collabPolicy.enabled),
+                            disabledReason:
+                              !collabPolicy.loading &&
+                              !collabPolicy.unavailable &&
+                              !collabPolicy.enabled
+                              ? t('newChat.collaboration.disabledHint')
+                              : undefined,
                           }
                         : undefined
                     }

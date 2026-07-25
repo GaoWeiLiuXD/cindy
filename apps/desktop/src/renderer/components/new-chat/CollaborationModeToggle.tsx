@@ -29,6 +29,7 @@ interface Props {
   onChange: (next: { enabled: boolean; worker: CollabWorkerKind }) => void;
   onOpenDetails?: () => void;
   disabled?: boolean;
+  disabledReason?: string;
   /** 窄容器下把 pill 字号压一档,默认 false。 */
   dense?: boolean;
   /** 只渲染 UsersRound 图标,不渲染 "协同" 文案,默认 false。 */
@@ -58,6 +59,7 @@ export function CollaborationModeToggle({
   onChange,
   onOpenDetails,
   disabled,
+  disabledReason,
   dense = false,
   iconOnly = false,
 }: Props) {
@@ -85,7 +87,7 @@ export function CollaborationModeToggle({
   // ON 态:pill 本身就是"停止协同"的触发器
   if (enabled) {
     return (
-      <Tip text={t('newChat.collaboration.stopHint')} side="top">
+      <Tip text={disabledReason ?? t('newChat.collaboration.stopHint')} side="top">
         <button
           type="button"
           disabled={disabled}
@@ -114,7 +116,7 @@ export function CollaborationModeToggle({
   if (onOpenDetails) {
     return (
       <Tip
-        text={iconOnly ? t('newChat.collaboration.pillLabel') : null}
+        text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
         side="top"
       >
         <button
@@ -144,7 +146,7 @@ export function CollaborationModeToggle({
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Tip
-          text={iconOnly ? t('newChat.collaboration.pillLabel') : null}
+          text={disabledReason ?? (iconOnly ? t('newChat.collaboration.pillLabel') : null)}
           side="top"
         >
           <button

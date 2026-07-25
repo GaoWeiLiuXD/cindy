@@ -149,6 +149,7 @@ import {
 } from '@/cindy-brain/ghostMediaHandover';
 import { isGlobalDropIntercepted } from '@/lib/globalDropIntercept';
 import { getCollaborationStartErrorMessage } from './collaborationErrors';
+import { useCollabProjectPolicy } from './hooks/useCollabProjectPolicy';
 import { shouldFallbackVendorModel } from './lib/vendorModelFallback';
 import { createSessionRefreshSequence } from './lib/sessionRefreshSequence';
 import { createSessionSnapshotPatchBuffer } from './lib/sessionSnapshotPatchBuffer';
@@ -1669,12 +1670,13 @@ export function CCAgentSessionView({
   // 针对 Lead session 接入了 OrcaSplitView toggle 布局,普通 session 必须能从
   // ChatInput 工具行启用协同变成 Lead,否则 doc 模式下首次开启入口完全没有。
   // 工具行同时传 denseToolbar=true,协同 pill 自动收成 icon-only,窄 rail 视觉 OK。
-  const allowCollabToggle =
-    !orcaMode &&
+  const collabPolicyEligible =
     session?.orcaRole !== 'worker' &&
     session?.remoteHostId == null &&
     session?.workspaceKind === 'project' &&
     !!session?.workingDir;
+  const collabPolicy = useCollabProjectPolicy(session?.workingDir, collabPolicyEligible);
+  const allowCollabToggle = !orcaMode && collabPolicyEligible;
   // 把 sessionId 抽出来给 useEffect 用 (linter 偏好稳定的标量依赖)
   const collabSessionId = sessionId;
   useEffect(() => {
@@ -3190,6 +3192,15 @@ export function CCAgentSessionView({
                             if (enableBusy) return;
                             setCreateWorkerOpen(true);
                           },
+                          disabled:
+                            !collabEnabled &&
+                            (collabPolicy.loading || !collabPolicy.enabled),
+                          disabledReason:
+                            !collabEnabled &&
+                            !collabPolicy.loading &&
+                            !collabPolicy.enabled
+                              ? t('newChat.collaboration.disabledHint')
+                              : undefined,
                         }
                       : undefined
                   }
