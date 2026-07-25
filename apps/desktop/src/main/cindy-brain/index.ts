@@ -338,14 +338,12 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
     const existingGhostDirs = new Map(
       existingGhosts.map((ghost) => [ghost.manifest.id, ghost.dir]),
     );
-    const stoppedActiveGhosts = new Map<
-      string,
-      {
-        ghost: InstalledGhost;
-        browserRuntimeRunning: boolean;
-        nodeRuntimeRunning: boolean;
-      }
-    >();
+    type StoppedActiveGhost = {
+      ghost: InstalledGhost;
+      browserRuntimeRunning: boolean;
+      nodeRuntimeRunning: boolean;
+    };
+    const stoppedActiveGhosts = new Map<string, StoppedActiveGhost>();
     const legacySources = listLegacyGhostPluginSources(
       expectedOwner.dataOwnerId,
       app.getPath('userData'),
@@ -377,43 +375,45 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
         });
       }
     }
+    const restoreGhostRuntimes = (
+      ghost: InstalledGhost,
+      stopped: StoppedActiveGhost,
+    ): void => {
+      spawnIfResident(ghost);
+      if (
+        stopped.browserRuntimeRunning &&
+        ghost.manifest.launch !== 'resident' &&
+        isGhostAvailableForActiveSession(ghost.manifest.id) &&
+        ghost.enabled
+      ) {
+        void getGhostRuntime()
+          .spawn(ghost)
+          .catch((error) =>
+            log.warn('recovery on-demand ghost spawn error', {
+              id: ghost.manifest.id,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
+      if (
+        stopped.nodeRuntimeRunning &&
+        ghost.manifest.node?.lifecycle !== 'resident' &&
+        isGhostAvailableForActiveSession(ghost.manifest.id) &&
+        ghost.enabled
+      ) {
+        void getGhostNodeRuntimeBroker()
+          .startForRecovery(ghost)
+          .catch((error) =>
+            log.warn('recovery on-demand ghost node spawn error', {
+              id: ghost.manifest.id,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+      }
+    };
     const restartStoppedActiveGhosts = (): void => {
-      for (const {
-        ghost,
-        browserRuntimeRunning,
-        nodeRuntimeRunning,
-      } of stoppedActiveGhosts.values()) {
-        spawnIfResident(ghost);
-        if (
-          browserRuntimeRunning &&
-          ghost.manifest.launch !== 'resident' &&
-          isGhostAvailableForActiveSession(ghost.manifest.id) &&
-          ghost.enabled
-        ) {
-          void getGhostRuntime()
-            .spawn(ghost)
-            .catch((error) =>
-              log.warn('recovery on-demand ghost spawn error', {
-                id: ghost.manifest.id,
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            );
-        }
-        if (
-          nodeRuntimeRunning &&
-          ghost.manifest.node?.lifecycle !== 'resident' &&
-          isGhostAvailableForActiveSession(ghost.manifest.id) &&
-          ghost.enabled
-        ) {
-          void getGhostNodeRuntimeBroker()
-            .startForRecovery(ghost)
-            .catch((error) =>
-              log.warn('recovery on-demand ghost node spawn error', {
-                id: ghost.manifest.id,
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            );
-        }
+      for (const stopped of stoppedActiveGhosts.values()) {
+        restoreGhostRuntimes(stopped.ghost, stopped);
       }
     };
     let result;
@@ -425,7 +425,11 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
           user: { id: expectedOwner.dataOwnerId },
         },
         undefined,
-        { shouldAbort, reservedCommands: reservedBuiltinCommands },
+        {
+          shouldAbort,
+          reservedCommands: reservedBuiltinCommands,
+          rejectReservedIds: app.isPackaged,
+        },
       );
     } catch (error) {
       if (!shouldAbort()) restartStoppedActiveGhosts();
@@ -452,6 +456,7 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
         }
       }
       const builtinReconcileSucceeded =
+        result.deferredReason !== 'concurrent-live-instances' &&
         await scheduleBuiltinReconcile('legacy-recovery');
       if (shouldAbort()) return getLegacyGhostRecoveryStatusForActiveSession();
       const ghosts = getGhostManager().list();
@@ -462,10 +467,10 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
           (previousDir !== undefined &&
             path.resolve(previousDir) !== path.resolve(ghost.dir));
         if (relocatedExistingGhost) ensureGhostProtocolRegistered(ghost);
-        if (
-          (relocatedExistingGhost && stoppedActiveGhosts.has(ghost.manifest.id)) ||
-          (builtinReconcileSucceeded && previousDir === undefined)
-        ) {
+        const stopped = stoppedActiveGhosts.get(ghost.manifest.id);
+        if (relocatedExistingGhost && stopped) {
+          restoreGhostRuntimes(ghost, stopped);
+        } else if (builtinReconcileSucceeded && previousDir === undefined) {
           spawnIfResident(ghost);
         }
       }

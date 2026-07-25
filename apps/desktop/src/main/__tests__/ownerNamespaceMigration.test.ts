@@ -614,6 +614,23 @@ describe('legacy Ghost plugin recovery', () => {
     ).resolves.toContain('"command":"Draw"');
   });
 
+  it('does not restore reserved plugin IDs when packaged recovery protection is enabled', async () => {
+    const root = await tempRoot();
+    const ownerId = 'cloud-a';
+    await writeGhostDir(root, 'brain', 'cindy-untrusted');
+
+    await expect(
+      recoverLegacyGhostPlugins(
+        { mode: 'cloud', dataOwnerId: ownerId, user: { id: ownerId } },
+        realFsDeps(root),
+        { rejectReservedIds: true },
+      ),
+    ).resolves.toMatchObject({ status: 'partial', moved: 0, conflicts: 1 });
+    await expect(
+      fs.readFile(path.join(root, 'brain', 'cindy-untrusted', 'ghost.json'), 'utf-8'),
+    ).resolves.toContain('"id":"cindy-untrusted"');
+  });
+
   it('moves builtin provisioning state with plugins before reconciliation', async () => {
     const root = await tempRoot();
     const ownerId = 'cloud-a';
@@ -1131,7 +1148,12 @@ describe('legacy Ghost plugin recovery', () => {
     );
 
     const targetRoot = path.join(root, 'owners', dataOwnerStorageKey('cloud-a'), 'cindy-brain');
-    expect(result).toMatchObject({ status: 'partial', moved: 1, conflicts: 0 });
+    expect(result).toMatchObject({
+      status: 'partial',
+      moved: 1,
+      conflicts: 0,
+      deferredReason: 'concurrent-live-instances',
+    });
     await expect(
       fs.readFile(path.join(targetRoot, 'first-plugin', 'ghost.json'), 'utf-8'),
     ).resolves.toContain('"id":"first-plugin"');

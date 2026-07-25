@@ -271,6 +271,19 @@ describe('LegacyGhostRecoveryNotice', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'settings.ghosts.legacyRecovery.retry' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('settings.ghosts.legacyRecovery.partial')).toBeTruthy();
+  });
+
+  it('renders nothing for the none state', () => {
+    const { container } = render(
+      <LegacyGhostRecoveryNotice
+        status={{ state: 'none', legacyPluginCount: 0, canRetry: false }}
+        retrying={false}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(container.firstChild).toBeNull();
   });
 
   it('does not offer retry for data claimed by another owner', () => {

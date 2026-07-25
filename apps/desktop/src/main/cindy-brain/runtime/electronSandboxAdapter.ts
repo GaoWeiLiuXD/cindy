@@ -205,7 +205,7 @@ export function setGhostConnectionsHandler(handler: GhostConnectionsProtocolHand
 
 /** 该分区是否已挂过协议 handler(session 分区随 app 生命周期,挂一次即可)。 */
 const partitionRegistered = new Set<string>();
-const partitionGhost = new Map<string, InstalledGhost>();
+const partitionGhost = new Map<string, { dir: string; entry: string }>();
 
 /**
  * 确保某意识分区上的 cindy-ghost:// 协议 handler 就位(幂等)。
@@ -225,7 +225,10 @@ const GHOST_HTML_CSP =
   "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:";
 
 function registerGhostProtocol(partition: string, ghost: InstalledGhost): void {
-  partitionGhost.set(partition, ghost);
+  partitionGhost.set(partition, {
+    dir: ghost.dir,
+    entry: ghost.manifest.entry,
+  });
   if (partitionRegistered.has(partition)) return;
   // 注意:登记发生在全部挂载成功之后(函数末尾)——session.fromPartition 在
   // app ready 前会 throw,若先登记后挂载,失败分区会被永久标记"已注册"而
@@ -369,7 +372,7 @@ function registerGhostProtocol(partition: string, ghost: InstalledGhost): void {
         });
       }
       if (url.pathname === GHOST_BOOT_PATH || url.pathname === '/') {
-        const entry = partitionGhost.get(partition)?.manifest.entry;
+        const entry = partitionGhost.get(partition)?.entry;
         if (!entry) return new Response(null, { status: 404 });
         return new Response(ghostBootHtml(entry), {
           status: 200,

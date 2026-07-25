@@ -7,6 +7,7 @@ import { dataOwnerStorageKey, type AppSessionMode } from './appSessionState.js';
 import { createLogger } from './logger.js';
 import {
   GHOST_MANIFEST_FILE,
+  isOfficialGhostId,
   validateGhostManifest,
 } from '../shared/ghost.js';
 import {
@@ -531,6 +532,7 @@ export async function recoverLegacyGhostPlugins(
   options: {
     shouldAbort?: () => boolean;
     reservedCommands?: ReadonlySet<string>;
+    rejectReservedIds?: boolean;
   } = {},
 ): Promise<OwnerNamespaceMigrationResult> {
   const ownerId = verifiedCloudOwner(state);
@@ -579,6 +581,10 @@ export async function recoverLegacyGhostPlugins(
   let movableLegacyGhosts: ReturnType<typeof listLegacyGhostDirs> = [];
   let conflicts = sharedRecoveryBlocked ? sharedLegacyGhosts.length : 0;
   for (const legacy of [...eligibleSharedGhosts, ...scopedLegacyGhosts]) {
+    if (options.rejectReservedIds && isOfficialGhostId(legacy.id)) {
+      conflicts += 1;
+      continue;
+    }
     if ((await pathType(deps, path.join(targetRoot, legacy.id))) === 'missing') {
       movableLegacyGhosts.push(legacy);
     } else {
@@ -638,6 +644,7 @@ export async function recoverLegacyGhostPlugins(
   let moved = 0;
   let provisioningStateMoved = false;
   let failed = false;
+  let concurrentRecoveryInterrupted = false;
   if (!hasSafeRecoveryTargetChainSync(userDataDir, targetRoot)) {
     const result: OwnerNamespaceMigrationResult = {
       status: 'partial',
@@ -761,6 +768,7 @@ export async function recoverLegacyGhostPlugins(
     } catch (error) {
       blockedRoots.add(legacyRoot);
       failed = true;
+      concurrentRecoveryInterrupted = true;
       log.warn('legacy ghost recovery blocked: instance registry unreadable before state move', {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -769,6 +777,7 @@ export async function recoverLegacyGhostPlugins(
     if (racedPids.length > 0) {
       blockedRoots.add(legacyRoot);
       failed = true;
+      concurrentRecoveryInterrupted = true;
       log.info('legacy ghost recovery blocked: instance started before state move', {
         racedPids,
       });
@@ -782,14 +791,34 @@ export async function recoverLegacyGhostPlugins(
     try {
       await deps.rename(sourceState, targetState);
       if (options.shouldAbort?.()) {
+        let rollbackAllowed = false;
         try {
-          await deps.rename(targetState, sourceState);
-        } catch (rollbackError) {
-          provisioningStateMoved = true;
-          log.warn('legacy ghost recovery could not roll back provisioning state', {
-            error:
-              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          const rollbackPeers = await findConcurrentLiveInstancePids(deps, userDataDir);
+          rollbackAllowed = rollbackPeers.length === 0;
+          if (!rollbackAllowed) {
+            concurrentRecoveryInterrupted = true;
+            log.info('legacy ghost recovery skipped provisioning rollback: instance started', {
+              racedPids: rollbackPeers,
+            });
+          }
+        } catch (error) {
+          concurrentRecoveryInterrupted = true;
+          log.warn('legacy ghost recovery skipped provisioning rollback: registry unreadable', {
+            error: error instanceof Error ? error.message : String(error),
           });
+        }
+        if (rollbackAllowed) {
+          try {
+            await deps.rename(targetState, sourceState);
+          } catch (rollbackError) {
+            provisioningStateMoved = true;
+            log.warn('legacy ghost recovery could not roll back provisioning state', {
+              error:
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            });
+          }
+        } else {
+          provisioningStateMoved = true;
         }
         blockedRoots.add(legacyRoot);
         failed = true;
@@ -828,6 +857,7 @@ export async function recoverLegacyGhostPlugins(
       racedPids = await findConcurrentLiveInstancePids(deps, userDataDir);
     } catch (error) {
       failed = true;
+      concurrentRecoveryInterrupted = true;
       log.warn('legacy ghost recovery interrupted: registry unreadable mid-recovery', {
         id: legacy.id,
         error: error instanceof Error ? error.message : String(error),
@@ -836,6 +866,7 @@ export async function recoverLegacyGhostPlugins(
     }
     if (racedPids.length > 0) {
       failed = true;
+      concurrentRecoveryInterrupted = true;
       log.info('legacy ghost recovery interrupted: instance started mid-recovery', {
         id: legacy.id,
         racedPids,
@@ -867,6 +898,7 @@ export async function recoverLegacyGhostPlugins(
       cleanupPids = await findConcurrentLiveInstancePids(deps, userDataDir);
     } catch (error) {
       failed = true;
+      concurrentRecoveryInterrupted = true;
       log.warn('legacy ghost recovery kept old root: registry unreadable before cleanup', {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -874,6 +906,7 @@ export async function recoverLegacyGhostPlugins(
     }
     if (cleanupPids.length > 0) {
       failed = true;
+      concurrentRecoveryInterrupted = true;
       log.info('legacy ghost recovery kept old root: instance started before cleanup', {
         racedPids: cleanupPids,
       });
@@ -894,6 +927,9 @@ export async function recoverLegacyGhostPlugins(
     moved,
     conflicts,
     ...(provisioningStateMoved ? { provisioningStateMoved: true } : {}),
+    ...(concurrentRecoveryInterrupted
+      ? { deferredReason: 'concurrent-live-instances' as const }
+      : {}),
   };
   recordLegacyGhostMigrationResult(ownerId, result, userDataDir);
   return result;

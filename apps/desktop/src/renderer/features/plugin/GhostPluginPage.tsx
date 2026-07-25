@@ -514,9 +514,11 @@ export function GhostPluginPage() {
         setLegacyRecoveryStatus(status && status.state !== 'none' ? status : null);
       }
     } finally {
-      await refreshMarket().catch(() => undefined);
       if (requestId === legacyRecoveryRetryRequestRef.current) {
-        setLegacyRecoveryRetrying(false);
+        await refreshMarket().catch(() => undefined);
+        if (requestId === legacyRecoveryRetryRequestRef.current) {
+          setLegacyRecoveryRetrying(false);
+        }
       }
     }
   }, [refreshMarket]);
@@ -971,10 +973,11 @@ export function LegacyGhostRecoveryNotice({
   onRetry: () => void;
 }) {
   const { t } = useTranslation();
+  if (status.state === 'none') return null;
   const messageKey =
     status.state === 'claimed-by-other-owner'
       ? 'settings.ghosts.legacyRecovery.claimedByOtherOwner'
-      : status.state === 'partial'
+      : status.state === 'partial' || status.canRetry
         ? status.canRetry
           ? 'settings.ghosts.legacyRecovery.partial'
           : 'settings.ghosts.legacyRecovery.partialBlocked'
