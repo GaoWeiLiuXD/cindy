@@ -765,6 +765,20 @@ export async function recoverLegacyGhostPlugins(
     }
     try {
       await deps.rename(sourceState, targetState);
+      if (options.shouldAbort?.()) {
+        try {
+          await deps.rename(targetState, sourceState);
+        } catch (rollbackError) {
+          provisioningStateMoved = true;
+          log.warn('legacy ghost recovery could not roll back provisioning state', {
+            error:
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          });
+        }
+        blockedRoots.add(legacyRoot);
+        failed = true;
+        continue;
+      }
       provisioningStateMoved = true;
     } catch (error) {
       blockedRoots.add(legacyRoot);

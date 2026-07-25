@@ -140,6 +140,7 @@ export function GhostPluginPage() {
   );
   const marketRefreshRequestRef = useRef(0);
   const marketDetailRequestRef = useRef(0);
+  const installedGhostIdsKeyRef = useRef(installedGhostIdsKey);
   const legacyRecoveryStatusRequestRef = useRef(0);
   const legacyRecoveryRetryRequestRef = useRef(0);
   const [legacyRecoveryStatus, setLegacyRecoveryStatus] =
@@ -179,7 +180,12 @@ export function GhostPluginPage() {
     setMarketBusyId(null);
     marketDetailRequestRef.current += 1;
     void refreshMarket();
-  }, [refreshMarket, mode, dataOwnerId, installedGhostIdsKey]);
+  }, [refreshMarket, mode, dataOwnerId]);
+  useEffect(() => {
+    if (installedGhostIdsKeyRef.current === installedGhostIdsKey) return;
+    installedGhostIdsKeyRef.current = installedGhostIdsKey;
+    void refreshMarket(true);
+  }, [installedGhostIdsKey, refreshMarket]);
   const activeSessionWorkingDir = useSyncExternalStore(
     subscribeToLastWorkingDir,
     getLastWorkingDir,

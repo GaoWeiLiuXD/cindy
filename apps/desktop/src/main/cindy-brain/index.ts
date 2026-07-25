@@ -330,11 +330,14 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
     const authorizedStatus = getLegacyGhostRecoveryStatusForActiveSession();
     if (!authorizedStatus.canRetry) return authorizedStatus;
 
-    const existingGhostDirs = new Map(
-      getGhostManager()
-        .list()
-        .map((ghost) => [ghost.manifest.id, ghost.dir]),
+    const existingGhosts = getGhostManager().list();
+    const existingGhostById = new Map(
+      existingGhosts.map((ghost) => [ghost.manifest.id, ghost]),
     );
+    const existingGhostDirs = new Map(
+      existingGhosts.map((ghost) => [ghost.manifest.id, ghost.dir]),
+    );
+    const stoppedActiveGhosts = new Map<string, InstalledGhost>();
     const legacySources = listLegacyGhostPluginSources(
       expectedOwner.dataOwnerId,
       app.getPath('userData'),
@@ -344,17 +347,32 @@ async function retryLegacyGhostRecoveryForActiveSession(): Promise<LegacyGhostRe
       if (activeDir !== undefined && path.resolve(activeDir) !== path.resolve(source.dir)) continue;
       getGhostRuntime().stop(source.id);
       getGhostNodeRuntimeBroker().stop(source.id);
+      const activeGhost = existingGhostById.get(source.id);
+      if (activeGhost) stoppedActiveGhosts.set(source.id, activeGhost);
     }
-    const result = await recoverLegacyGhostPlugins(
-      {
-        mode: 'cloud',
-        dataOwnerId: expectedOwner.dataOwnerId,
-        user: { id: expectedOwner.dataOwnerId },
-      },
-      undefined,
-      { shouldAbort },
-    );
+    const restartStoppedActiveGhosts = (): void => {
+      for (const ghost of stoppedActiveGhosts.values()) spawnIfResident(ghost);
+    };
+    let result;
+    try {
+      result = await recoverLegacyGhostPlugins(
+        {
+          mode: 'cloud',
+          dataOwnerId: expectedOwner.dataOwnerId,
+          user: { id: expectedOwner.dataOwnerId },
+        },
+        undefined,
+        { shouldAbort },
+      );
+    } catch (error) {
+      if (!shouldAbort()) restartStoppedActiveGhosts();
+      throw error;
+    }
     if (shouldAbort()) return getLegacyGhostRecoveryStatusForActiveSession();
+    if (result.moved === 0 && !result.provisioningStateMoved) {
+      restartStoppedActiveGhosts();
+      return getLegacyGhostRecoveryStatusForActiveSession();
+    }
     if (result.moved > 0 || result.provisioningStateMoved) {
       brainRootCache = null;
       const restoredBeforeReconcile = getGhostManager().list();
