@@ -164,7 +164,7 @@ describe('CallbackListener(xAI loopback 回调)', () => {
     await expect(codePromise).rejects.toThrow('Invalid state parameter');
   });
 
-  it('登录结果落定后重试回调直接回执,不覆盖首个响应', async () => {
+  it('exchange 进行中的重试回调挂起同候,succeed() 后与首个一起收到 200', async () => {
     const codePromise = listener.waitForCode('state-5');
 
     const firstGet = send('GET', '/callback?code=first&state=state-5', {
@@ -172,18 +172,63 @@ describe('CallbackListener(xAI loopback 回调)', () => {
     });
     await expect(codePromise).resolves.toBe('first');
 
-    // token 交换进行中(首个响应仍被 hold),页面重试 fetch —— 立即回执,不悬空。
-    const retry = await send('GET', '/callback?code=first&state=state-5', {
+    // token 交换进行中,页面重试 fetch —— 不能提前拿到 200(交换随后可能失败),
+    // 必须与首个连接一起等 succeed()/fail() 收口。
+    const retry = send('GET', '/callback?code=first&state=state-5', {
       origin: XAI_ORIGIN,
     });
-    expect(retry.status).toBe(200);
-    expect(retry.headers['access-control-allow-origin']).toBe(XAI_ORIGIN);
+    await expectStillPending(retry);
 
-    // 首个响应仍由 succeed() 正常收口。
     listener.succeed();
-    const first = await firstGet;
-    expect(first.status).toBe(200);
-    expect(first.body).toContain('html');
+    const [first, second] = await Promise.all([firstGet, retry]);
+    for (const r of [first, second]) {
+      expect(r.status).toBe(200);
+      expect(r.headers['access-control-allow-origin']).toBe(XAI_ORIGIN);
+      expect(r.body).toContain('html');
+    }
+
+    // 成功收口后的迟到回调直接重放成功回执。
+    const late = await send('GET', '/callback?code=first&state=state-5', {
+      origin: XAI_ORIGIN,
+    });
+    expect(late.status).toBe(200);
+  });
+
+  it('exchange 失败后挂起的重试与首个一起收到 500,迟到回调重放 400', async () => {
+    const codePromise = listener.waitForCode('state-5b');
+    const firstGet = send('GET', '/callback?code=bad&state=state-5b', {
+      origin: XAI_ORIGIN,
+    });
+    await expect(codePromise).resolves.toBe('bad');
+    const retry = send('GET', '/callback?code=bad&state=state-5b', {
+      origin: XAI_ORIGIN,
+    });
+    await expectStillPending(retry);
+
+    listener.fail('exchange exploded');
+    const [first, second] = await Promise.all([firstGet, retry]);
+    expect(first.status).toBe(500);
+    expect(second.status).toBe(500);
+
+    const late = await send('GET', '/callback?code=bad&state=state-5b', {
+      origin: XAI_ORIGIN,
+    });
+    expect(late.status).toBe(400);
+  });
+
+  it('error 终态后的重试回调重放 4xx,不得误报成功', async () => {
+    const codePromise = listener.waitForCode('state-5c');
+    codePromise.catch(() => undefined);
+    const first = await send('GET', '/callback?error=access_denied', {
+      origin: XAI_ORIGIN,
+    });
+    expect(first.status).toBe(400);
+
+    const retry = await send('GET', '/callback?error=access_denied', {
+      origin: XAI_ORIGIN,
+    });
+    expect(retry.status).toBe(400);
+    expect(retry.headers['access-control-allow-origin']).toBe(XAI_ORIGIN);
   });
 
   it('非白名单 origin 的响应不带 CORS 放行头', async () => {

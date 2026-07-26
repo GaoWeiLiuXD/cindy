@@ -248,11 +248,15 @@ export function xaiCallbackCorsHeaders(origin: string | undefined): Record<strin
 export class CallbackListener {
   private server: Server;
   private expectedState = '';
-  private pendingRes: ServerResponse | null = null;
-  private pendingCors: Record<string, string> = {};
+  /** code 已收到、等待 token exchange 收口的全部连接(consent 页可能重试 fetch)。 */
+  private pending: Array<{ res: ServerResponse; cors: Record<string, string> }> = [];
   private callbackLang: OAuthResultPageLang = 'en';
-  /** 首个终态回调(code / error / state 不匹配)之后置位,防后续重试覆盖登录结果。 */
-  private settled = false;
+  /**
+   * 首个终态回调(code / error / state 不匹配)之后的登录结果状态机;重放/迟到的
+   * 回调必须按它回执 —— 失败终态回 4xx、exchange 进行中挂起同候,不能一律 200,
+   * 否则 consent 页会把失败/未定的登录误读成成功。
+   */
+  private outcome: 'exchanging' | 'success' | 'failed' | null = null;
   private resolve: ((code: string) => void) | null = null;
   private reject: ((err: Error) => void) | null = null;
 
@@ -314,11 +318,17 @@ export class CallbackListener {
     const state = parsed.searchParams.get('state') ?? undefined;
     const oauthError =
       parsed.searchParams.get('error_description') ?? parsed.searchParams.get('error') ?? undefined;
-    // 已有终态结果后网页侧可能重试 fetch(超时重发/用户手动访问)—— 不再改写
-    // pendingRes / 登录结果,直接回执,避免首个响应悬空、结果被二次回调覆盖。
-    if (this.settled) {
-      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', ...cors });
-      res.end('OK');
+    // 已有终态结果后网页侧可能重试 fetch(超时重发/用户手动访问)—— 不改写登录结果,
+    // 按状态机回执:成功 200 / 失败 400;exchange 未收口时挂起同候(与首个连接一起在
+    // succeed()/fail() 回执),不能提前发 200 —— exchange 随后失败会让页面白显成功。
+    if (this.outcome !== null) {
+      if (this.outcome === 'exchanging') {
+        this.pending.push({ res, cors });
+        return;
+      }
+      const replayStatus = this.outcome === 'success' ? 200 : 400;
+      res.writeHead(replayStatus, { 'content-type': 'text/plain; charset=utf-8', ...cors });
+      res.end(this.outcome === 'success' ? 'OK' : 'login failed');
       return;
     }
     if (!code) {
@@ -337,7 +347,7 @@ export class CallbackListener {
         );
         return;
       }
-      this.settled = true;
+      this.outcome = 'failed';
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
       res.end(
         renderOAuthResultPage({
@@ -353,7 +363,7 @@ export class CallbackListener {
       return;
     }
     if (state !== this.expectedState) {
-      this.settled = true;
+      this.outcome = 'failed';
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
       res.end(
         renderOAuthResultPage({
@@ -367,59 +377,60 @@ export class CallbackListener {
       this.reject?.(new Error('Invalid state parameter'));
       return;
     }
-    this.settled = true;
-    this.pendingRes = res;
-    this.pendingCors = cors;
+    this.outcome = 'exchanging';
+    this.pending.push({ res, cors });
     this.resolve?.(code);
   }
 
   succeed(): void {
-    if (!this.pendingRes) return;
+    this.outcome = 'success';
+    const held = this.pending;
+    this.pending = [];
     const copy = getProviderOAuthResultCopy(this.callbackLang, 'xAI', BRAND_NAME);
-    // 回执必须带上收 code 那次请求的 CORS 头:没有它,consent 页的 fetch 读不到
-    // 响应,页面停在「等待检测」;302 导航场景 cors 为空对象,无影响。
-    this.pendingRes.writeHead(200, {
-      'content-type': 'text/html; charset=utf-8',
-      ...this.pendingCors,
-    });
-    this.pendingRes.end(
-      renderOAuthResultPage({
-        htmlLang: OAUTH_RESULT_HTML_LANG[this.callbackLang],
-        variant: 'success',
-        title: copy.successTitle,
-        body: copy.successBody,
-        action: buildOAuthReturnAction(this.callbackLang, 'xai-oauth', BRAND_NAME),
-      }),
-    );
-    this.pendingRes = null;
-  }
-
-  fail(detail?: string): void {
-    if (!this.pendingRes) return;
-    try {
-      const copy = getProviderOAuthResultCopy(this.callbackLang, 'xAI', BRAND_NAME);
-      this.pendingRes.writeHead(500, {
-        'content-type': 'text/html; charset=utf-8',
-        ...this.pendingCors,
-      });
-      this.pendingRes.end(
+    for (const { res, cors } of held) {
+      // 回执必须带上对应请求的 CORS 头:没有它,consent 页的 fetch 读不到响应,
+      // 页面停在「等待检测」;302 导航场景 cors 为空对象,无影响。
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...cors });
+      res.end(
         renderOAuthResultPage({
           htmlLang: OAUTH_RESULT_HTML_LANG[this.callbackLang],
-          variant: 'error',
-          title: copy.errorTitle,
-          body: copy.exchangeFailedBody,
-          detail,
+          variant: 'success',
+          title: copy.successTitle,
+          body: copy.successBody,
           action: buildOAuthReturnAction(this.callbackLang, 'xai-oauth', BRAND_NAME),
         }),
       );
-    } catch {
-      /* 回执通道已关闭,登录结果仍由调用链决定 */
     }
-    this.pendingRes = null;
+  }
+
+  fail(detail?: string): void {
+    // exchange 失败也是失败终态;code 尚未收到(pending 为空)时不改写 outcome,
+    // 留给 onRequest 的分支自行定性。
+    if (this.outcome === 'exchanging') this.outcome = 'failed';
+    const held = this.pending;
+    this.pending = [];
+    for (const { res, cors } of held) {
+      try {
+        const copy = getProviderOAuthResultCopy(this.callbackLang, 'xAI', BRAND_NAME);
+        res.writeHead(500, { 'content-type': 'text/html; charset=utf-8', ...cors });
+        res.end(
+          renderOAuthResultPage({
+            htmlLang: OAUTH_RESULT_HTML_LANG[this.callbackLang],
+            variant: 'error',
+            title: copy.errorTitle,
+            body: copy.exchangeFailedBody,
+            detail,
+            action: buildOAuthReturnAction(this.callbackLang, 'xai-oauth', BRAND_NAME),
+          }),
+        );
+      } catch {
+        /* 回执通道已关闭,登录结果仍由调用链决定 */
+      }
+    }
   }
 
   close(): void {
-    if (this.pendingRes) {
+    if (this.pending.length > 0) {
       this.fail();
     }
     try {
