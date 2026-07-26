@@ -350,6 +350,43 @@ describe('RealtimeAsrWebSocketProvider helpers', () => {
     }
   });
 
+  it('does not install a prewarm whose credential lookup finishes after invalidation', async () => {
+    const server = new WebSocketServer({ port: 0 });
+    let connectionCount = 0;
+    server.on('connection', () => {
+      connectionCount += 1;
+    });
+    let resolveAccessToken: ((value: string) => void) | undefined;
+    const accessTokenProvider = vi.fn(() => new Promise<string>((resolve) => {
+      resolveAccessToken = resolve;
+    }));
+
+    try {
+      invalidatePrewarmedRealtimeAsrWebSocketSession();
+      await waitFor(() => server.address() !== null);
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected local test server address.');
+
+      const prewarm = prewarmRealtimeAsrWebSocketSession({
+        accessTokenProvider,
+        credentialCacheKey: 'old-credential-revision',
+        realtimeUrl: `ws://127.0.0.1:${address.port}/v1/realtime`,
+        model: 'gpt-realtime-whisper',
+      });
+      await waitFor(() => accessTokenProvider.mock.calls.length === 1);
+
+      invalidatePrewarmedRealtimeAsrWebSocketSession();
+      resolveAccessToken?.('old-key');
+      await prewarm;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(connectionCount).toBe(0);
+    } finally {
+      resolveAccessToken?.('old-key');
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('does not reopen a socket after stop while recovery is connecting', async () => {
     let handshakeCount = 0;
     const server = new WebSocketServer({

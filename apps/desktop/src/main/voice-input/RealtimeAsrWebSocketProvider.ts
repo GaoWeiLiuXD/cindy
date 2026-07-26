@@ -454,6 +454,16 @@ function createWarmRealtimeSession(
         rejectOnce(error);
       };
 
+      if (generation !== warmRealtimeSessionGeneration) {
+        settled = true;
+        cleanup();
+        socket.on('error', () => undefined);
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
+        resolve();
+        return;
+      }
       warmRealtimeSession = {
         socket,
         connectionKey: connection.connectionKey,

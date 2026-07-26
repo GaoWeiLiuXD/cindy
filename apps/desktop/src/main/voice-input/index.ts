@@ -1,5 +1,4 @@
 import { app, ipcMain, shell, systemPreferences } from 'electron';
-import { createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 
 import {
@@ -133,7 +132,7 @@ import {
 } from './voiceInputCustomAsrPersistence.js';
 
 const log = createLogger('voice-input');
-const customAsrCredentialCacheHmacKey = randomBytes(32);
+let customAsrCredentialRevision = 0;
 
 // The built-in realtime voice path is a Cindy service, not a hidden BYOK
 // consumer. A voice-server outage must never spend the user's general model
@@ -995,7 +994,7 @@ function buildCustomRealtimeAsrProviderOptions(
   return {
     accessTokenProvider: () => Promise.resolve(apiKey),
     credentialCacheKey: apiKey
-      ? createHmac('sha256', customAsrCredentialCacheHmacKey).update(apiKey).digest('hex')
+      ? `custom-asr-${customAsrCredentialRevision}`
       : '',
     model: config.model,
     realtimeUrl: resolveVoiceInputCustomAsrWebsocketUrl(config),
@@ -1792,6 +1791,7 @@ export function registerVoiceInputIpc(): void {
         throwIpcError('INTERNAL', 'Failed to save voice input model selection.');
       }
       if (customAsrSecretUpdate.action !== 'none') {
+        customAsrCredentialRevision += 1;
         invalidatePrewarmedRealtimeAsrWebSocketSession();
       }
       markVoiceInputModelSelectionApplied('ipc-set', selection);
