@@ -198,10 +198,12 @@ export function selectVisibleModels(params: {
   excludeChatBridgedCodex?: boolean;
 }): ModelDescriptor[] {
   const { agentKind, deviceId, providers, deviceCcModels, deviceCodexModels, excludeSubscriptionDirect, excludeChatBridgedCodex } = params;
-  const drop = (list: ModelDescriptor[]): ModelDescriptor[] => {
-    // 对话模型过滤对 device-link 路径同样生效(被控端拍平清单一样可能混入非对话模型;
-    // 本机路径已在 deriveModelsFromProviders 内过滤,这里再过一遍幂等无害)。
-    const conversational = list.filter((m) => isConversationModel(m));
+  const drop = (list: ModelDescriptor[], fromDevicePath: boolean): ModelDescriptor[] => {
+    // 对话过滤只作用 device-link 拍平路径:本机路径在 deriveModelsFromProviders 内已带
+    // provider 上下文过滤(user 源豁免),此处**无上下文**的二次过滤会把豁免过的自定义
+    // 对话模型(如 'my-image-analysis-chat')重新误杀(codex review)。device 拍平清单
+    // 无 provider 可用,退化启发式是该路径的已记录边界。
+    const conversational = fromDevicePath ? list.filter((m) => isConversationModel(m)) : list;
     return excludeSubscriptionDirect
       ? conversational.filter((m) => !isSubscriptionDirectModel(m.id))
       : conversational;
@@ -209,8 +211,8 @@ export function selectVisibleModels(params: {
   const codexDeriveOpts = excludeChatBridgedCodex
     ? { excludeProvider: isChatBridgedCodexProvider }
     : undefined;
-  const cc = drop(deviceId ? deviceCcModels : deriveModelsFromProviders(providers, 'claude-code'));
-  const codex = drop(deviceId ? deviceCodexModels : deriveModelsFromProviders(providers, 'codex', codexDeriveOpts));
+  const cc = drop(deviceId ? deviceCcModels : deriveModelsFromProviders(providers, 'claude-code'), !!deviceId);
+  const codex = drop(deviceId ? deviceCodexModels : deriveModelsFromProviders(providers, 'codex', codexDeriveOpts), !!deviceId);
   if (agentKind === 'claude-code') return cc;
   if (agentKind === 'codex') return codex;
   const merged = [...cc];

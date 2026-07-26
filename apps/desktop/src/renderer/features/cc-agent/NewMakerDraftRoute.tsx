@@ -149,7 +149,7 @@ import {
   useProjectPickerOptions,
 } from '@/hooks/useProjectPickerOptions';
 import { resolveFastSupported, deriveModelsFromProviders } from '@/lib/providerModels';
-import { effectiveSourceIdForModel, getModel, sessionModelSupportsFastMode, connectedProvidersForAgent } from '@cindy/model-providers';
+import { effectiveSourceIdForModel, getModel, isConversationModel, providerOffersModel, sessionModelSupportsFastMode, connectedProvidersForAgent } from '@cindy/model-providers';
 import { isSubscriptionDirectModel } from '../../../shared/subscriptionModels';
 import {
   resolveDeviceLinkDraftDefaults,
@@ -803,8 +803,27 @@ export function NewMakerDraftRoute() {
     if (isDeviceLinkDraft && deviceLinkInitial) {
       return { model: deviceLinkInitial.model, effort: deviceLinkInitial.effort };
     }
+    // 持久化草稿模型对照对话过滤归一(P2):过滤上线前存过媒体模型(如 gpt-image-2)时,
+    // picker 已列不出它,但草稿值原样送 createSession 会建出「看不到选中行却在跑非对话
+    // 模型」的会话(codex review)。仅当目录确认该 id 由某源提供**且全部提供源都判非
+    // 对话**时才回落清单首个 —— 不在目录的 id(自定义漂移/断连)交由既有链处理,不越权。
+    if (chatPrefs.model) {
+      const offering = localProviders.filter((p) =>
+        providerOffersModel(p, chatPrefs.model, capabilityAgentKind),
+      );
+      const conversational =
+        offering.length === 0 ||
+        offering.some((p) => {
+          const m = p.models[capabilityAgentKind]?.find((x) => x.id === chatPrefs.model);
+          return m !== undefined && isConversationModel(m, p);
+        });
+      if (!conversational) {
+        const fallback = deriveModelsFromProviders(localProviders, capabilityAgentKind)[0]?.id;
+        if (fallback) return { model: fallback, effort: localDraftEffort };
+      }
+    }
     return { model: chatPrefs.model, effort: localDraftEffort };
-  }, [isDeviceLinkDraft, deviceLinkInitial, chatPrefs.model, localDraftEffort]);
+  }, [isDeviceLinkDraft, deviceLinkInitial, chatPrefs.model, localDraftEffort, localProviders, capabilityAgentKind]);
 
   // 远程草稿的权限档 / 来源同样取镜像 holder;本地走 chatPrefs。
   const chatInitialPermissionMode = isDeviceLinkDraft
