@@ -8,8 +8,8 @@
  * ("api_key" / "mivo_api_key")指代存储键名,随供应商增多容易散落、写错。本模块
  * 把「providerId → safeStorage 存储键名」收敛成唯一映射:
  *   - main 端经 providerSecretStore 读写;
- *   - renderer 端只对显式允许的键走通用 safeStorage IPC；main-only 键不得
- *     通过 generic bridge 读取、覆盖或删除。
+ *   - renderer 端默认通过通用 safeStorage IPC 访问键；明确列出的 main-only 键除外，不得通过 generic bridge
+ *     读取、覆盖或删除。动态 custom provider / MCP 键也依赖这一兼容策略。
  *
  * 新增供应商:在 ProviderSecretId 加 id、在 STORAGE_KEYS 加映射即可。
  *   - xd / mivo 沿用历史键名,避免迁移已有用户本机已存的 key;

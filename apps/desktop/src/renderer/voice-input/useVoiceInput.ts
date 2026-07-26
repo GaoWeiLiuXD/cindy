@@ -1196,13 +1196,18 @@ export function useVoiceInput(
       return;
     }
     if (!guards.readiness.ok) {
-      const readinessError = guards.readiness.failureReason === 'custom-asr-config-missing'
-        ? t('settings.voiceInput.serviceSource.credentialError.customAsrConfigMissing')
-        : guards.readiness.failureReason === 'custom-asr-key-missing'
-          ? t('settings.voiceInput.serviceSource.credentialError.customAsrKeyMissing')
-          : guards.readiness.failureReason === 'codex-realtime-unsupported'
-            ? t('settings.voiceInput.serviceSource.credentialError.codexRealtimeUnsupported')
-            : (guards.readiness.error ?? 'Voice input is not configured.');
+      let readinessError = guards.readiness.error ?? 'Voice input is not configured.';
+      switch (guards.readiness.failureReason) {
+        case 'custom-asr-config-missing':
+          readinessError = t('settings.voiceInput.serviceSource.credentialError.customAsrConfigMissing');
+          break;
+        case 'custom-asr-key-missing':
+          readinessError = t('settings.voiceInput.serviceSource.credentialError.customAsrKeyMissing');
+          break;
+        case 'codex-realtime-unsupported':
+          readinessError = t('settings.voiceInput.serviceSource.credentialError.codexRealtimeUnsupported');
+          break;
+      }
       const authErrorReason = guards.readiness.authErrorReason;
       if (guards.readiness.auth === 'codex' && authErrorReason && isCodexSessionExpiredError(authErrorReason)) {
         promptCodexSessionExpired(authErrorReason);
