@@ -17,6 +17,7 @@ import {
   groupModelsForDisplay,
   groupOf,
   isBudgetModel,
+  isConversationModel,
   isSubscriptionDirectModel,
   modelBadges,
 } from '../classification.js';
@@ -180,5 +181,26 @@ describe('formatContextWindow(下沉自 ModelSelector,输出逐字一致)', () =
   });
   it('<1000 原样', () => {
     expect(formatContextWindow(512)).toBe('512');
+  });
+});
+
+describe('isConversationModel — 对话选择面统一过滤(P2)', () => {
+  it('对话厂商组 → true(含折扣组与订阅直连前缀)', () => {
+    expect(isConversationModel({ id: 'claude-opus-5' })).toBe(true);
+    expect(isConversationModel({ id: 'gpt-5.5' })).toBe(true);
+    expect(isConversationModel({ id: 'codex/gpt-5.5' })).toBe(true);
+    expect(isConversationModel({ id: 'chatgpt/gpt-5.5' })).toBe(true);
+    expect(isConversationModel({ id: 'qwen3-max' })).toBe(true);
+  });
+  it('非对话类型 → false(ASR/生图/视频/向量/other,IM bot 线上实撞的混入项)', () => {
+    expect(isConversationModel({ id: 'gpt-4o-transcribe' })).toBe(false);
+    expect(isConversationModel({ id: 'gpt-image-2' })).toBe(false);
+    expect(isConversationModel({ id: 'seedance-2-pro' })).toBe(false);
+    expect(isConversationModel({ id: 'voyage/voyage-3' })).toBe(false);
+    expect(isConversationModel({ id: 'ai-gateway-doc' })).toBe(false);
+  });
+  it('group 数据优先:目录标了非对话组的常规 id 同样剔除', () => {
+    expect(isConversationModel({ id: 'whatever-model', group: 'audio' })).toBe(false);
+    expect(isConversationModel({ id: 'gpt-weird-name', group: 'gpt' })).toBe(true);
   });
 });

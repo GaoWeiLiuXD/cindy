@@ -103,6 +103,26 @@ export function groupOf(model: { id: string; group?: string }): ModelCategory {
   return categorize(model.id);
 }
 
+/** 非对话类型组:网关多返回的图像/语音/视频/向量等,不能当 agent 用,只配在管理界面分类展示。 */
+const NON_CONVERSATION_CATEGORIES: ReadonlySet<ModelCategory> = new Set([
+  'image',
+  'audio',
+  'video',
+  'embedding',
+  'other',
+]);
+
+/**
+ * 是否「对话模型」(能当 agent 跑会话)—— groupOf 数据优先 + 前缀兜底的统一判定。
+ * 供**对话模型选择面**(会话 picker / IM 默认 / worker / hook 偏好等)统一剔除
+ * 非对话模型:服务端目录缺 defaultEnabled 标记时,ASR / 生图 / 向量模型会混进
+ * 清单(2026-07 IM bot 线上实撞),客户端选择面不依赖服务端数据质量自保。
+ * **管理界面(设置 → 供应商模型列表)不要用它过滤** —— 那里就该列出全部目录项供启停。
+ */
+export function isConversationModel(model: { id: string; group?: string }): boolean {
+  return !NON_CONVERSATION_CATEGORIES.has(groupOf(model));
+}
+
 /** groupModelsForDisplay 的最小模型形状(只需 id + 可选 group / sortOrder)。 */
 export interface DisplayModel {
   id: string;

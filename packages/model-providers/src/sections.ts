@@ -39,6 +39,8 @@ export interface SectionModel {
   contextWindow: number;
   /** 展示图标 id(AI Gateway / 目录设定,见 CatalogModel.icon);缺省回落来源供应商标。 */
   icon?: string;
+  /** 目录分组 id(P2 起透传):折扣版判定与对话模型过滤的数据优先依据。 */
+  group?: string;
 }
 
 export interface ProviderSection {
@@ -162,6 +164,7 @@ export function buildProviderSections(args: {
       if (m.effortDisplayNames !== undefined) sm.effortDisplayNames = m.effortDisplayNames;
       if (m.supportsFastMode !== undefined) sm.supportsFastMode = m.supportsFastMode;
       if (m.icon !== undefined) sm.icon = m.icon;
+      if (m.group !== undefined) sm.group = m.group;
       return sm;
     }),
   }));

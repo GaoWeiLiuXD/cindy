@@ -201,10 +201,28 @@ describe('parity: buildProviderSections 薄壳 vs 历史实现', () => {
     { providers: fixtureProviders(), agent: 'claude-code', isVisible: () => true },
   ];
 
-  it('全用例深等(含顺序与字段存在性)', () => {
+  it('全用例深等(含顺序与字段存在性;group 为 P2 有意新增,剥除后与历史逐字节)', () => {
     for (const args of cases) {
-      expect(buildProviderSections(args)).toEqual(legacyBuildProviderSections(args));
+      const stripped = buildProviderSections(args).map((sec) => ({
+        ...sec,
+        models: sec.models.map(({ group: _group, ...rest }) => rest),
+      }));
+      expect(stripped).toEqual(legacyBuildProviderSections(args));
     }
+  });
+
+  // P2 有意 additive:SectionModel 透传目录 group(折扣版判定与对话过滤的数据优先依据),
+  // 历史参照物保持原文不动,新字段单独锁。
+  it('SectionModel 透传目录 group(P2 新增)', () => {
+    const sections = buildProviderSections({
+      providers: fixtureProviders().filter((p) => p.connected),
+      agent: 'codex',
+      isVisible: () => true,
+    });
+    const budget = sections.flatMap((s) => s.models).find((m) => m.id === 'codex/gpt-5.5');
+    expect(budget?.group).toBe('gpt-budget');
+    const plain = sections.flatMap((s) => s.models).find((m) => m.id === 'gpt-5.5');
+    expect(plain?.group).toBeUndefined();
   });
 });
 

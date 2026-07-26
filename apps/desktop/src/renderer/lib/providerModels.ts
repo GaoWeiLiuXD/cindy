@@ -12,11 +12,12 @@
  */
 
 import {
+  deriveModelList,
+  isConversationModel,
   providerOffersModel,
-  providersForAgent,
   sessionModelSupportsFastMode,
   type AgentKind,
-  type CatalogModel,
+  type ModelListEntry,
   type ProviderView,
 } from '@cindy/model-providers';
 
@@ -25,9 +26,14 @@ import {
 import type { AgentCapabilities, ModelDescriptor } from '@/hooks/useAgentCapabilities';
 import { isSubscriptionDirectModel } from '../../shared/subscriptionModels';
 
-/** CatalogModel → renderer ModelDescriptor（name→displayName；group/sortOrder 不在 renderer 型里——
- *  picker 的分组走 categorize(id 前缀)，与既有内置模型一致）。 */
-function toDescriptor(m: CatalogModel): ModelDescriptor {
+/**
+ * 标准派生条目 → renderer ModelDescriptor(name→displayName)。P2 起补透传
+ * group / sortOrder(此前丢失,折扣版分组只能靠前缀兜底)与 sourceAccess
+ * (flat 清单订阅徽章的真实溯源 —— 此前 flat 模式标签消失)。
+ * **显式逐字段投影**:标准条目是带溯源字段的拷贝,禁止整对象 spread 过 wire
+ * (见 visibleModelUnion 的物理差异警告)。
+ */
+function toDescriptor(m: ModelListEntry): ModelDescriptor {
   const d: ModelDescriptor = {
     id: m.id,
     displayName: m.name,
@@ -38,6 +44,9 @@ function toDescriptor(m: CatalogModel): ModelDescriptor {
   if (m.description !== undefined) d.description = m.description;
   if (m.effortDisplayNames !== undefined) d.effortDisplayNames = m.effortDisplayNames;
   if (m.supportsFastMode !== undefined) d.supportsFastMode = m.supportsFastMode;
+  if (m.group !== undefined) d.group = m.group;
+  if (m.sortOrder !== undefined) d.sortOrder = m.sortOrder;
+  if (m.sourceAccess !== undefined) d.sourceAccess = m.sourceAccess;
   return d;
 }
 
@@ -117,17 +126,20 @@ export function deriveModelsFromProviders(
   agent: AgentKind,
   opts?: { excludeProvider?: (provider: ProviderView) => boolean },
 ): ModelDescriptor[] {
-  const seen = new Set<string>();
-  const out: ModelDescriptor[] = [];
-  for (const provider of providersForAgent(providers, agent)) {
-    if (opts?.excludeProvider?.(provider)) continue;
-    for (const m of provider.models[agent] ?? []) {
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
-      out.push(toDescriptor(m));
-    }
-  }
-  return out;
+  // P2: 内部改标准派生(deriveModelList)。口径逐项对应原实现:providersForAgent =
+  // providerScope 'all-for-agent',first-wins 去重,excludeProvider 不占 seen,无可见性过滤。
+  // **统一对话模型过滤(P2 有意的可见变化)**:本函数是对话选择面(会话 picker / IM 默认 /
+  // SSH 草稿)的本机派生唯一入口 —— 服务端目录缺 defaultEnabled 时 ASR/生图/向量模型
+  // 会混进清单(IM bot 线上实撞),这里按 isConversationModel 统一剔除,不依赖服务端
+  // 数据质量。设置 → 供应商模型管理列表不走本函数,仍列全部目录项。
+  return deriveModelList({
+    providers,
+    agent,
+    providerScope: 'all-for-agent',
+    dedupe: 'first-wins',
+    excludeModel: (m) => !isConversationModel(m),
+    ...(opts?.excludeProvider ? { excludeProvider: opts.excludeProvider } : {}),
+  }).map(toDescriptor);
 }
 
 /**
@@ -167,8 +179,14 @@ export function selectVisibleModels(params: {
   excludeChatBridgedCodex?: boolean;
 }): ModelDescriptor[] {
   const { agentKind, deviceId, providers, deviceCcModels, deviceCodexModels, excludeSubscriptionDirect, excludeChatBridgedCodex } = params;
-  const drop = (list: ModelDescriptor[]): ModelDescriptor[] =>
-    excludeSubscriptionDirect ? list.filter((m) => !isSubscriptionDirectModel(m.id)) : list;
+  const drop = (list: ModelDescriptor[]): ModelDescriptor[] => {
+    // 对话模型过滤对 device-link 路径同样生效(被控端拍平清单一样可能混入非对话模型;
+    // 本机路径已在 deriveModelsFromProviders 内过滤,这里再过一遍幂等无害)。
+    const conversational = list.filter((m) => isConversationModel(m));
+    return excludeSubscriptionDirect
+      ? conversational.filter((m) => !isSubscriptionDirectModel(m.id))
+      : conversational;
+  };
   const codexDeriveOpts = excludeChatBridgedCodex
     ? { excludeProvider: isChatBridgedCodexProvider }
     : undefined;

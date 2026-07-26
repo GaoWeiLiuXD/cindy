@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 
 import { createLogger } from '@/lib/logger';
 import type { Effort, PermissionMode } from '@/lib/userPreferences.types';
+import type { ProviderAccess } from '@cindy/model-providers';
 
 const log = createLogger('useAgentCapabilities');
 
@@ -32,6 +33,14 @@ export interface ModelDescriptor {
   effortDisplayNames?: Partial<Record<Effort, string>>;
   defaultEffort: Effort | null;
   supportsFastMode?: boolean;
+  /** 目录展示排序(P2 起经标准派生透传;缺省按目录序)。 */
+  sortOrder?: number;
+  /**
+   * flat 清单溯源的来源 access(P2 起由标准派生 deriveModelList 附带):flat 模式没有
+   * provider 上下文,订阅徽章靠它;分段模式徽章只看段 provider,不读本字段。
+   * device-link 被控端拍平清单无此字段 → 不显示徽章(诚实降级)。
+   */
+  sourceAccess?: ProviderAccess;
 }
 
 export interface EffortDescriptor {

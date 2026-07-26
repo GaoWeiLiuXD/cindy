@@ -45,12 +45,17 @@ import { useDeviceLinkModelMirrorVersion } from '@/state/deviceLinkModelMirror';
 import {
   connectedProvidersForAgent,
   effectiveSourceIdForModel,
+  formatContextWindow,
   getModel,
+  isBudgetModel as isBudgetModelStd,
+  isConversationModel,
+  modelBadges,
   modelSupportsFastMode,
   providerOffersModel,
   resolveModelIconKind,
   sourcesForModel,
   visibleModelUnion,
+  type ProviderAccess,
   type ProviderView,
 } from '@cindy/model-providers';
 import { getModelPriceQuote } from '../../../shared/modelPriceQuote';
@@ -195,18 +200,8 @@ export function ModelIconMark({
   );
 }
 
-// 上下文窗口 tokens → 紧凑展示("1M" / "272K" / "8192")。
-function formatContextWindow(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    const m = tokens / 1_000_000;
-    return `${Number.isInteger(m) ? m : Number(m.toFixed(1))}M`;
-  }
-  if (tokens >= 1000) {
-    const k = tokens / 1000;
-    return `${Number.isInteger(k) ? k : Number(k.toFixed(0))}K`;
-  }
-  return String(tokens);
-}
+// 上下文窗口紧凑展示已下沉 @cindy/model-providers 的 formatContextWindow(P1 原样迁移,
+// 输出逐字一致;P2 删本地副本改 import)。
 
 // 单栏列表里每行 / Edit 配置列消费的最小模型形状(SectionModel 与 renderer ModelDescriptor 都满足)。
 interface RowModel {
@@ -220,6 +215,13 @@ interface RowModel {
   supportsFastMode?: boolean;
   /** 展示图标 id(AI Gateway / 目录设定,SectionModel.icon);flat 列表的 ModelDescriptor 无此字段。 */
   icon?: string;
+  /** 目录分组(折扣版判定数据优先;缺省前缀兜底,见 modelBadges/isBudgetModel)。 */
+  group?: string;
+  /**
+   * flat 清单溯源的来源 access(标准派生附带,P2 起):flat 行订阅徽章的真实依据。
+   * 分段模式行无此字段(徽章只看段 provider);device-link 旧被控端拍平清单也无 → 不显示。
+   */
+  sourceAccess?: ProviderAccess;
 }
 
 type Translate = (key: string, options?: { defaultValue?: string }) => string;
@@ -728,7 +730,7 @@ function ModelSelectorContentView({
     //  · device-link 老被控端不认 maker:provider:list(invoke reject)→ device providers 为空 → flat 兜底;
     //  · providers 拉取中的瞬态窗口;· 本机 0 来源已由上方 emptyState 引导卡先行接管。
     if (connected.length === 0) return null;
-    return buildProviderSections({
+    const built = buildProviderSections({
       providers: connected,
       agent: currentAgentKind,
       selectedModelId: modelId,
@@ -749,6 +751,12 @@ function ModelSelectorContentView({
           },
       query,
     });
+    // 对话选择面统一剔除非对话模型(P2 有意变化,与 flat 的 deriveModelsFromProviders 同
+    // 口径):服务端目录缺 defaultEnabled 时,ASR/生图/向量模型会混进供应商段(claude-code
+    // 清单尾部实撞)。设置 → 供应商模型管理列表不走此处,仍列全部。
+    return built
+      .map((sec) => ({ ...sec, models: sec.models.filter((m) => isConversationModel(m)) }))
+      .filter((sec) => sec.models.length > 0);
     // visibilityVersion 仅作刷新触发器(设置页改显示开关后强制重算);deviceId 切换需重算分段。
   }, [
     sourcesEnabled,
@@ -1124,8 +1132,13 @@ function ModelSelectorContentView({
   const renderModelItem = (provider: ProviderView | null, model: RowModel) => {
     const providerId = provider?.id ?? null;
     const isSelected = isSelectedRow(providerId, model.id);
-    const isBudgetModel = model.id.startsWith('codex/');
-    const isSubscriptionModel = provider?.access?.kind === 'subscription';
+    // 徽章唯一口径(P2 切标准 modelBadges):分段模式只看段 provider 的 access;flat 模式
+    // (provider null)读标准派生附带的 sourceAccess —— flat 订阅标签由此恢复(此前
+    // provider 恒 null 导致订阅判定失效,用户实测误以为订阅绑定坏了)。
+    const { budget: isBudgetModel, subscription: isSubscriptionModel } = modelBadges(
+      model,
+      provider,
+    );
     const disabled = modelDisabledOf(model.id);
     const rowEffort = rowEffortOf(providerId, model);
     const rowFastOn = fastOnOf(providerId, model);
@@ -1705,7 +1718,11 @@ export function ModelSelector({
         : t('newChat.modelSelector.trigger.aria', { model: displayLabel });
   // 多实例同屏(IM 目录偏好)时前置「字段名 · 行别名」,读屏才能区分行与行。
   const ariaLabel = ariaContext ? `${ariaContext}:${baseAriaLabel}` : baseAriaLabel;
-  const isBudget = modelId.startsWith('codex/');
+  // 折扣版判定走标准 isBudgetModel(group 数据优先,缺 group 时前缀兜底 = 原行为)。
+  const isBudget = isBudgetModelStd({
+    id: modelId,
+    ...(currentModel?.group !== undefined ? { group: currentModel.group } : {}),
+  });
   const isFieldTrigger = triggerVariant === 'field';
   const isCreateAgentVariant = visualVariant === 'create-agent';
   const isCompactToolbar = compactToolbar && isCreateAgentVariant;

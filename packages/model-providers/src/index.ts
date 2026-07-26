@@ -94,6 +94,7 @@ export {
   groupOf,
   groupModelsForDisplay,
   isBudgetModel,
+  isConversationModel,
   modelBadges,
   formatContextWindow,
 } from './classification.js';
