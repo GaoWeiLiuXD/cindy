@@ -26,6 +26,7 @@ import {
   desktopCodexAuthAdapter,
   readOwnerScopedXdGatewayKey,
 } from '../maker-host/auth-adapters.js';
+import { getActiveAppSession } from '../appSessionState.js';
 import { claudeUpstreamEndpoint } from '../maker-host/runtime-configs.js';
 import { throwIpcError } from '../utils/ipcValidate.js';
 import {
@@ -134,7 +135,7 @@ import {
   VOICE_INPUT_TEST_CONNECTION_CHANNEL,
   type VoiceInputConnectionTestResult,
 } from '../../shared/voiceInputConnectionTest.js';
-import { runVoiceInputConnectionTest } from './voiceInputConnectionTest.js';
+import { runSerializedVoiceInputConnectionTest } from './voiceInputConnectionTest.js';
 
 const log = createLogger('voice-input');
 let customAsrCredentialRevision = 0;
@@ -996,10 +997,11 @@ function buildCustomRealtimeAsrProviderOptions(
   const profile = getVoiceInputAsrProfile('custom-realtime-asr');
   const openAiProtocol = config.protocol === 'openai-realtime';
   const apiKey = getProviderSecretStore().get('voice-asr');
+  const ownerIdentity = getActiveAppSession().dataOwnerId ?? 'local';
   return {
     accessTokenProvider: () => Promise.resolve(apiKey),
     credentialCacheKey: apiKey
-      ? `custom-asr-${customAsrCredentialRevision}`
+      ? `custom-asr-${ownerIdentity}-${customAsrCredentialRevision}`
       : '',
     model: config.model,
     realtimeUrl: resolveVoiceInputCustomAsrWebsocketUrl(config),
@@ -1791,7 +1793,7 @@ export function registerVoiceInputIpc(): void {
         };
       }
 
-      return runVoiceInputConnectionTest({
+      return runSerializedVoiceInputConnectionTest({
         provider,
         providerModel,
         createProvider: () => createVoiceInputProvider(provider, undefined),

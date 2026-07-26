@@ -365,9 +365,23 @@ function createWarmRealtimeSession(
         cleanup();
       };
       const close = (): void => {
-        cleanup();
+        if (!settled) {
+          settled = true;
+          if (warmRealtimeSession?.socket === socket) warmRealtimeSession = null;
+          clearKeepAlive();
+          clearTimeout(timer);
+          socket.off('open', onOpen);
+          socket.off('message', onMessage);
+          socket.off('pong', onPong);
+          reject(new Error('prewarm realtime session invalidated'));
+        } else {
+          clearKeepAlive();
+          clearTimeout(timer);
+        }
         if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
           socket.close();
+        } else {
+          cleanup();
         }
       };
       const rejectOnce = (error: Error): void => {
@@ -464,7 +478,7 @@ function createWarmRealtimeSession(
         resolve();
         return;
       }
-      warmRealtimeSession = {
+      const nextWarmSession: WarmRealtimeSession = {
         socket,
         connectionKey: connection.connectionKey,
         credentialCacheKey,
@@ -483,6 +497,11 @@ function createWarmRealtimeSession(
       socket.on('pong', onPong);
       socket.on('close', onClose);
       socket.on('error', onError);
+      if (generation !== warmRealtimeSessionGeneration) {
+        close();
+        return;
+      }
+      warmRealtimeSession = nextWarmSession;
     });
   })().catch((error) => {
     log.debug('prewarm realtime session unavailable', {

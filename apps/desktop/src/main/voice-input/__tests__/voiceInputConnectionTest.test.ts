@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   classifyVoiceInputConnectionTestError,
   runVoiceInputConnectionTest,
+  runSerializedVoiceInputConnectionTest,
 } from '../voiceInputConnectionTest.js';
 
 function providerWith(options?: {
@@ -74,5 +75,37 @@ describe('voice input connection test', () => {
     });
     expect(onError).toHaveBeenCalledWith(upstreamError);
     expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('serializes concurrent connection probes in Main', async () => {
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstStart = vi.fn(async () => {
+      await firstStarted;
+    });
+    const secondStart = vi.fn(async () => undefined);
+    const firstCreate = vi.fn(async () => providerWith({ start: firstStart }));
+    const secondCreate = vi.fn(async () => providerWith({ start: secondStart }));
+
+    const first = runSerializedVoiceInputConnectionTest({
+      provider: 'litellm-gpt-realtime-whisper',
+      providerModel: 'gpt-realtime-whisper',
+      createProvider: firstCreate,
+    });
+    await vi.waitFor(() => expect(firstStart).toHaveBeenCalledOnce());
+    const second = runSerializedVoiceInputConnectionTest({
+      provider: 'litellm-gpt-realtime-whisper',
+      providerModel: 'gpt-realtime-whisper',
+      createProvider: secondCreate,
+    });
+
+    await Promise.resolve();
+    expect(secondCreate).not.toHaveBeenCalled();
+    releaseFirst();
+    await first;
+    await second;
+    expect(secondCreate).toHaveBeenCalledOnce();
   });
 });

@@ -6,6 +6,30 @@ import type {
 } from '../../shared/voiceInputConnectionTest.js';
 import type { VoiceInputProviderKind } from '../../shared/voiceInputAsrProfiles.js';
 
+export type VoiceInputConnectionTestOptions = {
+  provider: VoiceInputProviderKind;
+  providerModel: string;
+  createProvider: () => Promise<AsrProvider>;
+  onError?: (error: unknown) => void;
+};
+
+let serializedConnectionTestChain: Promise<void> = Promise.resolve();
+
+/**
+ * Serialize connection probes in Main so a compromised renderer cannot create
+ * an unbounded number of simultaneous outbound WebSocket handshakes.
+ */
+export function runSerializedVoiceInputConnectionTest(
+  options: VoiceInputConnectionTestOptions,
+): Promise<VoiceInputConnectionTestResult> {
+  const next = serializedConnectionTestChain.then(() => runVoiceInputConnectionTest(options));
+  serializedConnectionTestChain = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 export function classifyVoiceInputConnectionTestError(
   error: unknown,
 ): VoiceInputConnectionTestFailureReason {
@@ -57,12 +81,9 @@ export function classifyVoiceInputConnectionTestError(
   return 'service-error';
 }
 
-export async function runVoiceInputConnectionTest(options: {
-  provider: VoiceInputProviderKind;
-  providerModel: string;
-  createProvider: () => Promise<AsrProvider>;
-  onError?: (error: unknown) => void;
-}): Promise<VoiceInputConnectionTestResult> {
+export async function runVoiceInputConnectionTest(
+  options: VoiceInputConnectionTestOptions,
+): Promise<VoiceInputConnectionTestResult> {
   let provider: AsrProvider | undefined;
   try {
     provider = await options.createProvider();

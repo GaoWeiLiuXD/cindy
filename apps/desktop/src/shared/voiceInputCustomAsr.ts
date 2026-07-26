@@ -70,7 +70,8 @@ export function validateVoiceInputCustomAsrWebsocketUrl(value: string): string |
     return 'customAsr.websocketUrl must not contain credentials';
   }
   const containsCredentialQuery = [...parsedUrl.searchParams.keys()].some((key) => (
-    /^(?:api[-_]?key|x[-_]?api[-_]?key|access[-_]?token|token|authorization|auth|bearer|credential|secret|key)$/i.test(key)
+    /^(?:api[-_]?key|x[-_]?api[-_]?key|access[-_]?token|token|authorization|auth|bearer|credential|secret|key|password|passcode|sig|signature)$/i.test(key)
+    || /^x-amz-/i.test(key)
   ));
   if (containsCredentialQuery) {
     return 'customAsr.websocketUrl must not contain credentials in query parameters';

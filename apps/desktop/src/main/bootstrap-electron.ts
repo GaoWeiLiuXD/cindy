@@ -3170,8 +3170,9 @@ const registerIpcHandlers = () => {
 
   ipcMain.handle(
     'safe-storage-store',
-    async (_event: Electron.IpcMainInvokeEvent, key: string, value: string): Promise<boolean> => {
+    async (event: Electron.IpcMainInvokeEvent, key: string, value: string): Promise<boolean> => {
       try {
+        assertTrustedAppRendererEvent(event);
         if (!isValidRendererKey(key)) return false;
         const filepath = resolveSafeStorageFilepath(key);
         if (!filepath) return false;
@@ -3218,8 +3219,9 @@ const registerIpcHandlers = () => {
 
   ipcMain.handle(
     'safe-storage-read',
-    async (_event: Electron.IpcMainInvokeEvent, key: string): Promise<string | null> => {
+    async (event: Electron.IpcMainInvokeEvent, key: string): Promise<string | null> => {
       try {
+        assertTrustedAppRendererEvent(event);
         if (!isValidRendererKey(key)) return null;
         const filepath = resolveSafeStorageFilepath(key);
         if (!filepath) return null;
@@ -3238,10 +3240,11 @@ const registerIpcHandlers = () => {
   ipcMain.handle(
     'safe-storage-remove',
     async (
-      _event: Electron.IpcMainInvokeEvent,
+      event: Electron.IpcMainInvokeEvent,
       key: string,
     ): Promise<{ success: boolean; error?: string }> => {
       try {
+        assertTrustedAppRendererEvent(event);
         if (!isValidRendererKey(key)) {
           return { success: false, error: 'invalid key' };
         }
