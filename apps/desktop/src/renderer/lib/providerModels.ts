@@ -133,12 +133,18 @@ export function deriveModelsFromProviders(
   // SSH 草稿)的本机派生唯一入口 —— 服务端目录缺 defaultEnabled 时 ASR/生图/向量模型
   // 会混进清单(IM bot 线上实撞),这里按 isConversationModel 统一剔除,不依赖服务端
   // 数据质量。设置 → 供应商模型管理列表不走本函数,仍列全部目录项。
+  // 徽章路由解析池必须先应用 excludeProvider(SSH 排除 chat-bridged Codex 等):
+  // 否则同模型多来源时,徽章可能反映被选择面排除的来源,与清单实际保留的来源不一致
+  // (Greptile 复审)。
+  const routingPool = opts?.excludeProvider
+    ? providers.filter((p) => !opts.excludeProvider!(p))
+    : providers;
   return deriveModelList({
     providers,
     agent,
     providerScope: 'all-for-agent',
     dedupe: 'first-wins',
-    excludeModel: (m) => !isConversationModel(m),
+    excludeModel: (m, p) => !isConversationModel(m, p),
     ...(opts?.excludeProvider ? { excludeProvider: opts.excludeProvider } : {}),
   }).map((entry) => {
     const d = toDescriptor(entry);
@@ -147,8 +153,8 @@ export function deriveModelsFromProviders(
     // 或与 nativeDefaultSourceId 的路由选择不一致 —— 按首见取 access 会让徽章说谎
     // (显示订阅实际走 managed,或反之;Greptile + codex P1)。解析不到已连接来源(全部
     // 断开)→ 不带 access,徽章诚实不显示。
-    const routedId = effectiveSourceIdForModel([...providers], null, entry.id, agent);
-    const routed = routedId !== null ? providers.find((p) => p.id === routedId) : undefined;
+    const routedId = effectiveSourceIdForModel([...routingPool], null, entry.id, agent);
+    const routed = routedId !== null ? routingPool.find((p) => p.id === routedId) : undefined;
     if (routed?.access !== undefined) d.sourceAccess = routed.access;
     else delete d.sourceAccess;
     return d;

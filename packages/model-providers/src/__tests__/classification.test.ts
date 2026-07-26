@@ -205,12 +205,27 @@ describe('isConversationModel — 对话选择面统一过滤(P2)', () => {
   });
 });
 
-describe('isConversationModel — 自定义供应商豁免(codex review)', () => {
-  it("custom:* 分组恒视为对话:用户显式配置的 agent 模型不受 id 命名启发式误伤", () => {
-    expect(isConversationModel({ id: 'my-image-analysis-chat', group: 'custom:my-prov' })).toBe(true);
-    expect(isConversationModel({ id: 'vendor/audio-assistant', group: 'custom:p2' })).toBe(true);
+describe('isConversationModel — 自定义供应商豁免(codex review 两轮)', () => {
+  it('provider.source === "user" 恒视为对话:显式配置的 agent 模型不受 id 启发式误伤', () => {
+    expect(
+      isConversationModel({ id: 'my-image-analysis-chat', group: 'custom:my-prov' }, { source: 'user' }),
+    ).toBe(true);
+    expect(
+      isConversationModel({ id: 'vendor/audio-assistant', group: 'custom:p2' }, { source: 'user' }),
+    ).toBe(true);
   });
-  it('同名 id 无 custom 分组时仍按启发式剔除(目录源约定可靠)', () => {
+  // 豁免判据不能是 group 'custom:*' 字符串:XD 网关无 group 条目的回落 group 恰好是
+  // 'custom:xd'(active-catalog),字符串豁免会把要过滤的网关媒体模型全放行(codex 实锤)。
+  it("内置源(builtin)的 'custom:xd' 回落分组不豁免:网关媒体条目仍被剔除", () => {
+    expect(isConversationModel({ id: 'gpt-image-2', group: 'custom:xd' }, { source: 'builtin' })).toBe(false);
+    expect(
+      isConversationModel({ id: 'gpt-4o-transcribe', group: 'custom:xd' }, { source: 'builtin' }),
+    ).toBe(false);
+    // 无 group 的网关媒体条目同样剔除
+    expect(isConversationModel({ id: 'gpt-image-2' }, { source: 'builtin' })).toBe(false);
+  });
+  it('无 provider 上下文退化纯启发式(device-link 拍平清单边界)', () => {
     expect(isConversationModel({ id: 'my-image-analysis-chat' })).toBe(false);
+    expect(isConversationModel({ id: 'claude-opus-5' })).toBe(true);
   });
 });

@@ -119,11 +119,18 @@ const NON_CONVERSATION_CATEGORIES: ReadonlySet<ModelCategory> = new Set([
  * 清单(2026-07 IM bot 线上实撞),客户端选择面不依赖服务端数据质量自保。
  * **管理界面(设置 → 供应商模型列表)不要用它过滤** —— 那里就该列出全部目录项供启停。
  */
-export function isConversationModel(model: { id: string; group?: string }): boolean {
-  // 自定义供应商模型(buildUserProvider 的 group 'custom:<providerId>')恒视为对话:
-  // 它们是用户显式配置给 agent 运行时的,id 命名不受目录约定约束('my-image-analysis-chat'
-  // 含 image 不代表生图)—— 前缀启发式只对目录源可靠(codex review)。
-  if (model.group?.startsWith('custom:')) return true;
+export function isConversationModel(
+  model: { id: string; group?: string },
+  provider?: { source?: 'builtin' | 'user' } | null,
+): boolean {
+  // 用户自定义供应商(ProviderView.source === 'user')的模型恒视为对话:它们是用户显式
+  // 配置给 agent 运行时的,id 命名不受目录约定约束('my-image-analysis-chat' 含 image
+  // 不代表生图)。**豁免判据必须是 provider.source,不能是 group 'custom:*' 字符串**:
+  // XD 网关无 group 条目的回落 group 恰好也是 'custom:xd'(active-catalog.ts),按字符串
+  // 豁免会把本函数最初要过滤的网关媒体模型全部放行(codex review 二轮实锤)。
+  // 无 provider 上下文(device-link 拍平清单等)时退化为纯启发式 —— 被控端自定义模型
+  // 若撞媒体样命名会被误伤,边界记录于此,待 device 协议带 source 后收口。
+  if (provider?.source === 'user') return true;
   return !NON_CONVERSATION_CATEGORIES.has(groupOf(model));
 }
 

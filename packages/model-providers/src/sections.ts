@@ -127,7 +127,7 @@ export function visibleModelUnion(
     providerScope: 'connected-for-agent',
     isVisible,
     dedupe: 'first-wins',
-    excludeModel: (m) => !isConversationModel(m),
+    excludeModel: (m, p) => !isConversationModel(m, p),
   });
 }
 
@@ -151,7 +151,7 @@ export function buildProviderSections(args: {
     providerScope: 'as-given',
     isVisible: (providerId, model) => args.isVisible(providerId, model.id),
     // 对话选择面统一过滤(P2,与 visibleModelUnion 同口径,见其注释)。
-    excludeModel: (m) => !isConversationModel(m),
+    excludeModel: (m, p) => !isConversationModel(m, p),
     ...(args.selectedModelId !== undefined &&
     args.selectedProviderId !== undefined &&
     args.selectedProviderId !== null
