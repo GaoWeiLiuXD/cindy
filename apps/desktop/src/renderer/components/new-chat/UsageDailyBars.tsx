@@ -20,9 +20,8 @@ import {
 } from '@/lib/usageFormat';
 import type { UsageHistoryModelDay } from '@/hooks/useUsageHistory';
 import { usageModelKey, usageRankColor, usageRankOf } from './usagePalette';
-import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
 import {
-  regionalCurrencyForRegion,
+  DEFAULT_USAGE_CURRENCY,
   type MoneyCurrency,
   type MoneyKind,
   type RegionalMoney,
@@ -80,7 +79,7 @@ export function UsageDailyBars({
   const currency: MoneyCurrency =
     days[0]?.money.currency ??
     modelDaily[0]?.money.currency ??
-    regionalCurrencyForRegion(CURRENT_CINDY_REGION);
+    DEFAULT_USAGE_CURRENCY;
   const money = (
     amount: number,
     approximate: boolean,

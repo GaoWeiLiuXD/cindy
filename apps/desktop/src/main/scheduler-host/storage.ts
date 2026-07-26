@@ -30,15 +30,14 @@ import {
   scheduleRunCreateToRow,
   scheduleRunPatchToRow,
 } from '../localDb/mapper';
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   addRegionalMoney,
   asValueEstimateMoney,
+  DEFAULT_USAGE_CURRENCY,
+  legacyUsdMoney,
   normalizeRegionalMoney,
-  regionalCurrencyForRegion,
-  regionalizeLegacyUsd,
   type RegionalMoney,
-  zeroRegionalMoney,
+  zeroUsageMoney,
 } from '../../shared/regionalMoney.js';
 
 export type SchedulerDrizzleDb = BetterSQLite3Database<typeof schema>;
@@ -106,7 +105,7 @@ function emptyScheduleTurnCostState(): ScheduleTurnCostState {
 
 function addCompatibleRegionalMoney(
   values: readonly RegionalMoney[],
-  currency: RegionalMoney['currency'] = regionalCurrencyForRegion(CURRENT_CINDY_REGION),
+  currency: RegionalMoney['currency'] = DEFAULT_USAGE_CURRENCY,
 ): RegionalMoney | null {
   const compatible = values.filter((value) => value.currency === currency);
   return compatible.length > 0 ? addRegionalMoney(compatible) : null;
@@ -224,7 +223,7 @@ function turnCostFromAgentMeta(agentMeta: string | null): {
       typeof parsed.turnCostUsd === 'number' &&
       Number.isFinite(parsed.turnCostUsd) &&
       parsed.turnCostUsd > 0
-        ? regionalizeLegacyUsd(parsed.turnCostUsd, CURRENT_CINDY_REGION)
+        ? legacyUsdMoney(parsed.turnCostUsd)
         : undefined;
     const money = structured ?? legacy;
     if (!money || money.amount <= 0) {
@@ -526,12 +525,12 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
             addCompatibleRegionalMoney(
               costValues,
               run.costMoney?.currency,
-            ) ?? zeroRegionalMoney(CURRENT_CINDY_REGION),
+            ) ?? zeroUsageMoney(),
           estimatedValueMoney:
             addCompatibleRegionalMoney(
               estimatedValues,
               run.estimatedValueMoney?.currency,
-            ) ?? zeroRegionalMoney(CURRENT_CINDY_REGION, 'value-estimate'),
+            ) ?? zeroUsageMoney('value-estimate'),
           costAttribution: 'exact',
         };
       }
@@ -542,10 +541,10 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         ...run,
         costMoney:
           addCompatibleRegionalMoney(persisted.costValues) ??
-          zeroRegionalMoney(CURRENT_CINDY_REGION),
+          zeroUsageMoney(),
         estimatedValueMoney:
           addCompatibleRegionalMoney(persisted.estimatedValues) ??
-          zeroRegionalMoney(CURRENT_CINDY_REGION, 'value-estimate'),
+          zeroUsageMoney('value-estimate'),
         costAttribution: 'exact',
       };
     });
@@ -885,7 +884,7 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
       entry.sessionIds.add(session.id);
       const cost = Number(session.totalCostUsd ?? 0);
       if (Number.isFinite(cost) && cost > 0) {
-        const projectedLegacyCost = regionalizeLegacyUsd(cost, CURRENT_CINDY_REGION);
+        const projectedLegacyCost = legacyUsdMoney(cost);
         const alreadyCountedMessageCost = legacyMessageCostBySessionId.get(session.id) ?? 0;
         const legacyCost = Math.max(0, projectedLegacyCost.amount - alreadyCountedMessageCost);
         const legacyMoney: RegionalMoney = {
@@ -907,10 +906,10 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
     return [...bySchedule.entries()].map(([scheduleId, summary]) => {
       const totalMoney =
         addCompatibleRegionalMoney(summary.costValues) ??
-        zeroRegionalMoney(CURRENT_CINDY_REGION);
+        zeroUsageMoney();
       const totalEstimatedValueMoney =
         addCompatibleRegionalMoney(summary.estimatedValueValues) ??
-        zeroRegionalMoney(CURRENT_CINDY_REGION, 'value-estimate');
+        zeroUsageMoney('value-estimate');
       return {
         scheduleId,
         totalMoney,
@@ -926,10 +925,10 @@ export class DrizzleScheduleStorage implements ScheduleStorage {
         sessions: [...summary.sessionCosts.entries()].map(([sessionId, costs]) => {
           const money =
             addCompatibleRegionalMoney(costs.costValues) ??
-            zeroRegionalMoney(CURRENT_CINDY_REGION);
+            zeroUsageMoney();
           const estimatedMoney =
             addCompatibleRegionalMoney(costs.estimatedValueValues) ??
-            zeroRegionalMoney(CURRENT_CINDY_REGION, 'value-estimate');
+            zeroUsageMoney('value-estimate');
           return {
             sessionId,
             totalMoney: money,

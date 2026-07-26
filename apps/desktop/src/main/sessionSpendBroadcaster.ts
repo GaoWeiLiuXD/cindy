@@ -25,12 +25,10 @@ import { sessions } from './localDb/schema';
 import { getDbClient } from './localDb/client/current';
 import { createLogger } from './logger';
 import { tapWindowBroadcast } from './device-link/broadcast-tap.js';
-import { CURRENT_CINDY_REGION } from '../shared/brandRegion.js';
 import {
   addRegionalMoney,
+  legacyUsdMoney,
   normalizeRegionalMoney,
-  regionalCurrencyForRegion,
-  regionalizeLegacyUsd,
   type RegionalMoney,
 } from '../shared/regionalMoney.js';
 
@@ -82,10 +80,6 @@ export async function recordSessionTurnSpend(
   if (!sessionId) return;
   const normalized = normalizeRegionalMoney(money);
   if (!normalized || normalized.amount < 1e-10) return;
-  if (normalized.currency !== regionalCurrencyForRegion(CURRENT_CINDY_REGION)) {
-    log.warn('recordSessionTurnSpend rejected currency mismatch');
-    return;
-  }
   try {
     const db = getDbClient().drizzle;
     const existing = await db
@@ -118,10 +112,7 @@ export async function recordSessionTurnSpend(
       .from(sessions)
       .where(sql`${sessions.id} = ${sessionId}`)
       .get();
-    const legacy = regionalizeLegacyUsd(
-      row?.totalCostUsd ?? 0,
-      CURRENT_CINDY_REGION,
-    );
+    const legacy = legacyUsdMoney(row?.totalCostUsd ?? 0);
     const current = normalizeRegionalMoney({
       amount: row?.totalCostAmount ?? 0,
       currency: row?.totalCostCurrency ?? normalized.currency,

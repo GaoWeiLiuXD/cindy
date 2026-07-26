@@ -1,11 +1,8 @@
-import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
-
 import { getClaudeSubscriptionValueFallbackPrice } from './claudeSubscriptionValue.js';
 import { CODEX_SUBSCRIPTION_VALUE_PRICING } from './codexSubscriptionValue.js';
 import type { ModelAccessGatewayModel } from './modelAccess.js';
 import {
-  gatewayCurrencyForRegion,
-  USD_TO_CNY_FIXED_RATE,
+  gatewayCurrency,
   type ModelPriceQuote,
   type ModelPricingCatalog,
 } from './regionalMoney.js';
@@ -53,7 +50,6 @@ function applyCodexBudgetDiscount(quote: ModelPriceQuote): ModelPriceQuote {
 
 export function gatewayModelPriceQuote(
   model: ModelAccessGatewayModel,
-  region: CindyRegion,
 ): ModelPriceQuote | undefined {
   const modelId = model.id.trim();
   const inputPerMtok = perMtok(model.inputCostPerToken);
@@ -73,10 +69,15 @@ export function gatewayModelPriceQuote(
   }
   // quote 是用量估算用的标准价;costDiscount 只在 effectiveGatewayModelCost 侧应用到
   // cost,UI 展示价一致时取 cost(见 modelPriceFormat),不再并排展示标准价。
+  // 币种以条目声明为准,未声明按 Gateway 原生 USD;不按构建区域改标。
   return applyCodexBudgetDiscount({
     providerId: 'xd',
     modelId,
-    currency: gatewayCurrencyForRegion(region),
+    currency: gatewayCurrency(
+      model.currency === 'CNY' || model.currency === 'USD'
+        ? model.currency
+        : undefined,
+    ),
     source: 'gateway',
     approximate: false,
     inputPerMtok,
@@ -88,11 +89,10 @@ export function gatewayModelPriceQuote(
 
 export function gatewayPricingCatalog(
   models: readonly ModelAccessGatewayModel[],
-  region: CindyRegion,
 ): ModelPricingCatalog {
   const xd: Record<string, ModelPriceQuote> = {};
   for (const model of models) {
-    const quote = gatewayModelPriceQuote(model, region);
+    const quote = gatewayModelPriceQuote(model);
     if (quote) xd[quote.modelId] = quote;
   }
   return Object.keys(xd).length > 0 ? { xd } : {};
@@ -189,28 +189,3 @@ export function subscriptionDirectPriceQuote(
   return undefined;
 }
 
-export function regionalizeModelPriceQuote(
-  quote: ModelPriceQuote,
-  region: CindyRegion,
-): ModelPriceQuote {
-  if (region === 'global' || quote.currency === 'CNY') return quote;
-  return {
-    ...quote,
-    currency: 'CNY',
-    approximate: true,
-    inputPerMtok: quote.inputPerMtok * USD_TO_CNY_FIXED_RATE,
-    outputPerMtok: quote.outputPerMtok * USD_TO_CNY_FIXED_RATE,
-    ...(quote.cacheReadPerMtok !== undefined
-      ? {
-          cacheReadPerMtok:
-            quote.cacheReadPerMtok * USD_TO_CNY_FIXED_RATE,
-        }
-      : {}),
-    ...(quote.cacheCreatePerMtok !== undefined
-      ? {
-          cacheCreatePerMtok:
-            quote.cacheCreatePerMtok * USD_TO_CNY_FIXED_RATE,
-        }
-      : {}),
-  };
-}

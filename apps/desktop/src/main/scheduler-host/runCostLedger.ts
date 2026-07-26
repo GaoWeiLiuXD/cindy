@@ -9,8 +9,7 @@ import { eq, sql } from 'drizzle-orm';
 
 import { getDbClient } from '../localDb/client/current';
 import { scheduleRuns } from '../localDb/schema';
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
-import { normalizeRegionalMoney, regionalizeLegacyUsd } from '../../shared/regionalMoney.js';
+import { legacyUsdMoney, normalizeRegionalMoney } from '../../shared/regionalMoney.js';
 
 interface RunCostEntry {
   runId: string;
@@ -47,7 +46,7 @@ function runCostEntry(meta: Record<string, unknown>): RunCostEntry | null {
   const money =
     normalizeRegionalMoney(meta.turnCost) ??
     (finitePositive(meta.turnCostUsd) > 0
-      ? regionalizeLegacyUsd(finitePositive(meta.turnCostUsd), CURRENT_CINDY_REGION)
+      ? legacyUsdMoney(finitePositive(meta.turnCostUsd))
       : undefined);
   if (!money || money.amount <= 0) return null;
   const isEstimate = meta.turnCostIsEstimate === true || money.kind === 'value-estimate';

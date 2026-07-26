@@ -31,19 +31,15 @@ import {
   type ModelPricingMap,
 } from './modelPricing';
 import { computePriceQuoteTurnMoney } from './turnCostCalculator';
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   getModelPriceQuote,
-  regionalizeModelPriceQuote,
 } from '../../shared/modelPriceQuote.js';
 import {
   addCompatibleRegionalMoney,
   normalizeRegionalMoney,
-  regionalAmountFromUsdReference,
-  regionalCurrencyForRegion,
   type ModelPriceQuote,
   type RegionalMoney,
-  zeroRegionalMoney,
+  zeroUsageMoney,
 } from '../../shared/regionalMoney.js';
 
 const log = createLogger('usageHistory');
@@ -356,17 +352,12 @@ function getSubscriptionValuePriceFor(
   pricing: ModelPricingMap | null,
 ): ModelPriceQuote | undefined {
   if (agentKind === 'codex') {
-    const quote =
+    return (
       getSubscriptionDirectValuePrice(model) ??
-      getCodexSubscriptionValuePrice(model, pricing);
-    return quote
-      ? regionalizeModelPriceQuote(quote, CURRENT_CINDY_REGION)
-      : undefined;
+      getCodexSubscriptionValuePrice(model, pricing)
+    );
   }
-  const quote = getModelPriceQuote(pricing, 'anthropic', model);
-  return quote
-    ? regionalizeModelPriceQuote(quote, CURRENT_CINDY_REGION)
-    : undefined;
+  return getModelPriceQuote(pricing, 'anthropic', model);
 }
 
 async function hydrateFromDisk(expectedOptsKey: string): Promise<UsageHistoryPayload | null> {
@@ -495,17 +486,13 @@ export async function readUsageHistoryWith(
   const spendByDay = new Map(
     allDays.map((row) => [row.day, row.money.amount]),
   );
-  const zeroActual = () => zeroRegionalMoney(CURRENT_CINDY_REGION);
-  const zeroEstimate = () =>
-    zeroRegionalMoney(CURRENT_CINDY_REGION, 'value-estimate');
+  const zeroActual = () => zeroUsageMoney();
+  const zeroEstimate = () => zeroUsageMoney('value-estimate');
   const addOrZero = (
     values: RegionalMoney[],
     kind: 'actual-cost' | 'value-estimate' = 'actual-cost',
   ): RegionalMoney =>
-    addCompatibleRegionalMoney(
-      values,
-      regionalCurrencyForRegion(CURRENT_CINDY_REGION),
-    ) ??
+    addCompatibleRegionalMoney(values) ??
     (kind === 'actual-cost' ? zeroActual() : zeroEstimate());
 
   const heatmapCutoff = shiftDayKey(todayKey, -(windowDays - 1));
@@ -587,10 +574,7 @@ export async function readUsageHistoryWith(
     if (row.money.amount > 0) {
       agg.money =
         agg.money.amount > 0
-          ? (addCompatibleRegionalMoney(
-              [agg.money, row.money],
-              regionalCurrencyForRegion(CURRENT_CINDY_REGION),
-            ) ?? row.money)
+          ? (addCompatibleRegionalMoney([agg.money, row.money]) ?? row.money)
           : row.money;
     }
     agg.inputTokens += row.inputTokens;
@@ -645,14 +629,8 @@ export async function readUsageHistoryWith(
     return tokens(b) - tokens(a);
   });
 
-  const activeDayMin = regionalAmountFromUsdReference(
-    ACTIVE_DAY_MIN_USD,
-    CURRENT_CINDY_REGION,
-  );
-  const anomalyMinToday = regionalAmountFromUsdReference(
-    ANOMALY_MIN_TODAY_USD,
-    CURRENT_CINDY_REGION,
-  );
+  const activeDayMin = ACTIVE_DAY_MIN_USD;
+  const anomalyMinToday = ANOMALY_MIN_TODAY_USD;
   const activeDays = allDays
     .filter((row) => row.money.amount >= activeDayMin)
     .map((row) => row.day);
@@ -677,10 +655,7 @@ export async function readUsageHistoryWith(
   );
   const last30WithEstimatedValue =
     last30EstimatedValue.amount > 0
-      ? (addCompatibleRegionalMoney(
-          [last30, last30EstimatedValue],
-          regionalCurrencyForRegion(CURRENT_CINDY_REGION),
-        ) ?? last30)
+      ? (addCompatibleRegionalMoney([last30, last30EstimatedValue]) ?? last30)
       : last30;
   const anomalyRaw = computeAnomaly(spendByDay, todayKey, {
     activeDayMin,
@@ -768,15 +743,10 @@ export function emptyUsageHistoryPayload(): UsageHistoryPayload {
     models: [],
     streak: { current: 0, longest: 0 },
     totals: {
-      today: zeroRegionalMoney(CURRENT_CINDY_REGION),
-      last30Days: zeroRegionalMoney(CURRENT_CINDY_REGION),
-      last30DaysWithEstimatedValue: zeroRegionalMoney(
-        CURRENT_CINDY_REGION,
-      ),
-      last30DaysEstimatedValue: zeroRegionalMoney(
-        CURRENT_CINDY_REGION,
-        'value-estimate',
-      ),
+      today: zeroUsageMoney(),
+      last30Days: zeroUsageMoney(),
+      last30DaysWithEstimatedValue: zeroUsageMoney(),
+      last30DaysEstimatedValue: zeroUsageMoney('value-estimate'),
       todayTokens: 0,
       last30DaysTokens: 0,
     },

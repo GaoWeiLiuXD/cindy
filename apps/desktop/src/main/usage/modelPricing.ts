@@ -221,7 +221,7 @@ export function replaceGatewayModelPricing(
   models: readonly ModelAccessGatewayModel[],
 ): ModelPricingCatalog {
   const scope = currentScope();
-  const pricing = gatewayPricingCatalog(models, CURRENT_CINDY_REGION);
+  const pricing = gatewayPricingCatalog(models);
   cache = pricing;
   cacheScope = scope;
   cacheAt = Date.now();

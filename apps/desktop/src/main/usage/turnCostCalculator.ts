@@ -2,16 +2,13 @@
  * 单轮费用计算。定价先看实际 billing route，再看模型；模型名不再决定来源。
  */
 
-import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
-
 import {
   getModelPriceQuote,
   providerReferencePriceQuote,
-  regionalizeModelPriceQuote,
 } from '../../shared/modelPriceQuote.js';
 import {
   addRegionalMoney,
-  regionalizeUsd,
+  usdMoney,
   type ModelPriceQuote,
   type ModelPricingCatalog,
   type RegionalMoney,
@@ -42,7 +39,6 @@ export type BillingRoute =
 export interface TurnPricingContext {
   providerId: string | null;
   billingRoute: BillingRoute;
-  region: CindyRegion;
 }
 
 export type TurnCostSource = 'sdk' | 'gateway' | 'sdk-fallback' | 'subscription';
@@ -145,10 +141,7 @@ export function resolveTurnCost(args: {
       getCodexBudgetEffectiveCostMultiplier(model);
     return {
       model,
-      money:
-        fallbackUsd > 0
-          ? regionalizeUsd(fallbackUsd, context.region, 'fixed-fx')
-          : null,
+      money: fallbackUsd > 0 ? usdMoney(fallbackUsd) : null,
       source: 'sdk-fallback',
     };
   }
@@ -157,10 +150,7 @@ export function resolveTurnCost(args: {
     0,
     (sdkCostDelta ?? 0) * getCodexBudgetEffectiveCostMultiplier(model),
   );
-  const money =
-    sdkAmount > 0
-      ? regionalizeUsd(sdkAmount, context.region, 'fixed-fx')
-      : null;
+  const money = sdkAmount > 0 ? usdMoney(sdkAmount) : null;
   return {
     model,
     money,
@@ -218,15 +208,13 @@ export function resolveClaudeTurnCostSinks(
 
 export function estimateClaudeSubscriptionTurnValue(
   perModel: ResolvedModelCost[],
-  region: CindyRegion,
 ): RegionalMoney | null {
   const values: RegionalMoney[] = [];
   for (const item of perModel) {
     if (!isAnthropicModel(item.model) || item.money?.amount) continue;
     const quote = providerReferencePriceQuote('anthropic', item.model);
     if (!quote) continue;
-    const regionalQuote = regionalizeModelPriceQuote(quote, region);
-    const value = computePriceQuoteTurnMoney(item.deltas, regionalQuote);
+    const value = computePriceQuoteTurnMoney(item.deltas, quote);
     if (value && value.amount > 0) values.push(value);
   }
   return values.length > 0 ? addRegionalMoney(values) : null;

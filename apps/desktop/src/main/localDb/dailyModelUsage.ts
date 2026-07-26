@@ -1,11 +1,9 @@
 import { sql } from 'drizzle-orm';
 
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   addRegionalMoney,
+  legacyUsdMoney,
   normalizeRegionalMoney,
-  regionalCurrencyForRegion,
-  regionalizeLegacyUsd,
   type RegionalMoney,
 } from '../../shared/regionalMoney.js';
 import { dailyModelUsage } from './schema.js';
@@ -42,9 +40,6 @@ export async function incrementDailyModelUsage(
   ts: number = Date.now(),
 ): Promise<void> {
   const money = delta.money ? normalizeRegionalMoney(delta.money) : undefined;
-  if (money && money.currency !== regionalCurrencyForRegion(CURRENT_CINDY_REGION)) {
-    throw new Error('daily model usage currency mismatch');
-  }
   const inputTokens = sanitizeTokens(delta.inputTokensDelta);
   const outputTokens = sanitizeTokens(delta.outputTokensDelta);
   const cacheReadTokens = sanitizeTokens(delta.cacheReadTokensDelta);
@@ -134,7 +129,7 @@ export async function getModelUsageSince(
     .where(sql`${dailyModelUsage.day} >= ${sinceDayKey}`)
     .all();
   return rows.map((row) => {
-    const legacy = regionalizeLegacyUsd(row.costUsd, CURRENT_CINDY_REGION);
+    const legacy = legacyUsdMoney(row.costUsd);
     const current =
       row.costCurrency && row.costAmount > 0
         ? normalizeRegionalMoney({

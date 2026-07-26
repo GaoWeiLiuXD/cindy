@@ -1,11 +1,9 @@
 import { sql } from 'drizzle-orm';
 
-import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   addRegionalMoney,
+  legacyUsdMoney,
   normalizeRegionalMoney,
-  regionalCurrencyForRegion,
-  regionalizeLegacyUsd,
   type RegionalMoney,
 } from '../../shared/regionalMoney.js';
 import { dailySpend } from './schema.js';
@@ -25,7 +23,7 @@ function rowMoney(row: {
   costCurrency: 'CNY' | 'USD' | null;
   costIsApproximate: boolean;
 } | undefined): RegionalMoney {
-  const legacy = regionalizeLegacyUsd(row?.costUsd ?? 0, CURRENT_CINDY_REGION);
+  const legacy = legacyUsdMoney(row?.costUsd ?? 0);
   const current =
     row?.costCurrency && row.costAmount > 0
       ? normalizeRegionalMoney({
@@ -66,13 +64,6 @@ export async function incrementDailySpend(
   if (!normalized || normalized.amount < 1e-10) {
     return { day, money: await getSpendForDay(day) };
   }
-  const expectedCurrency = regionalCurrencyForRegion(CURRENT_CINDY_REGION);
-  if (normalized.currency !== expectedCurrency) {
-    throw new Error(
-      `daily spend currency mismatch: ${normalized.currency} != ${expectedCurrency}`,
-    );
-  }
-
   const db = getDbClient().drizzle;
   const existing = await db
     .select({ costCurrency: dailySpend.costCurrency })
