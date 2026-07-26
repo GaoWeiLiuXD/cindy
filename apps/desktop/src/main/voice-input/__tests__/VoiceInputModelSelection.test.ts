@@ -254,6 +254,11 @@ describe('VoiceInputModelSelection', () => {
     }).ok).toBe(true);
     expect(validateVoiceInputCustomAsrConfig({
       protocol: 'openai-realtime',
+      websocketUrl: 'ws://[::1]:8080/asr',
+      model: 'gpt-realtime-whisper',
+    }).ok).toBe(true);
+    expect(validateVoiceInputCustomAsrConfig({
+      protocol: 'openai-realtime',
       websocketUrl: 'ws://asr.example.com/realtime',
       model: 'gpt-realtime-whisper',
     })).toEqual({

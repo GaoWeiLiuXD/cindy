@@ -608,7 +608,10 @@ function VoiceInputServiceSourceCard() {
                 />
               </VoiceInputInlineSettingRow>
               {customAsrUrlInvalid ? (
-                <p className="rounded-[10px] border border-[var(--error-border)] bg-[var(--error-bg)] px-3 py-2 text-12 leading-[1.4] text-[var(--error-fg)]">
+                <p
+                  role="alert"
+                  className="rounded-[10px] border border-[var(--error-border)] bg-[var(--error-bg)] px-3 py-2 text-12 leading-[1.4] text-[var(--error-fg)]"
+                >
                   {t('settings.voiceInput.serviceSource.customAsr.websocketUrl.invalid')}
                 </p>
               ) : null}
