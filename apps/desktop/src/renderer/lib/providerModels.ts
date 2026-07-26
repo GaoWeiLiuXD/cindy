@@ -198,12 +198,26 @@ export function selectVisibleModels(params: {
   excludeChatBridgedCodex?: boolean;
 }): ModelDescriptor[] {
   const { agentKind, deviceId, providers, deviceCcModels, deviceCodexModels, excludeSubscriptionDirect, excludeChatBridgedCodex } = params;
-  const drop = (list: ModelDescriptor[], fromDevicePath: boolean): ModelDescriptor[] => {
+  const drop = (
+    list: ModelDescriptor[],
+    agent: AgentKind,
+    fromDevicePath: boolean,
+  ): ModelDescriptor[] => {
     // 对话过滤只作用 device-link 拍平路径:本机路径在 deriveModelsFromProviders 内已带
-    // provider 上下文过滤(user 源豁免),此处**无上下文**的二次过滤会把豁免过的自定义
-    // 对话模型(如 'my-image-analysis-chat')重新误杀(codex review)。device 拍平清单
-    // 无 provider 可用,退化启发式是该路径的已记录边界。
-    const conversational = fromDevicePath ? list.filter((m) => isConversationModel(m)) : list;
+    // provider 上下文过滤(user 源豁免),此处二次过滤会把豁免过的自定义对话模型重新
+    // 误杀(codex review)。device 场景调用方契约保证 `providers` 即**被控端**供应商目录
+    // (useDeviceProviders),有目录时同样带上下文过滤,被控端自定义对话模型的豁免生效;
+    // 老被控端(不支持 maker:provider:list,目录为空)退化纯启发式 —— 已记录边界。
+    const conversational = fromDevicePath
+      ? list.filter((m) => {
+          const offering = providers.filter((p) => providerOffersModel(p, m.id, agent));
+          if (offering.length === 0) return isConversationModel(m);
+          return offering.some((p) => {
+            const cm = p.models[agent]?.find((x) => x.id === m.id);
+            return cm !== undefined && isConversationModel(cm, p);
+          });
+        })
+      : list;
     return excludeSubscriptionDirect
       ? conversational.filter((m) => !isSubscriptionDirectModel(m.id))
       : conversational;
@@ -211,8 +225,16 @@ export function selectVisibleModels(params: {
   const codexDeriveOpts = excludeChatBridgedCodex
     ? { excludeProvider: isChatBridgedCodexProvider }
     : undefined;
-  const cc = drop(deviceId ? deviceCcModels : deriveModelsFromProviders(providers, 'claude-code'), !!deviceId);
-  const codex = drop(deviceId ? deviceCodexModels : deriveModelsFromProviders(providers, 'codex', codexDeriveOpts), !!deviceId);
+  const cc = drop(
+    deviceId ? deviceCcModels : deriveModelsFromProviders(providers, 'claude-code'),
+    'claude-code',
+    !!deviceId,
+  );
+  const codex = drop(
+    deviceId ? deviceCodexModels : deriveModelsFromProviders(providers, 'codex', codexDeriveOpts),
+    'codex',
+    !!deviceId,
+  );
   if (agentKind === 'claude-code') return cc;
   if (agentKind === 'codex') return codex;
   const merged = [...cc];
