@@ -13,6 +13,7 @@
 import type { AgentKind, CatalogModel, Effort } from './types.js';
 import type { ProviderView } from './registry.js';
 import { deriveModelList, deriveModelSections } from './modelList.js';
+import { isConversationModel } from './classification.js';
 
 /**
  * 单个模型的可见性决策 —— **纯函数,唯一真相**。
@@ -115,12 +116,18 @@ export function visibleModelUnion(
   //   2. 条目带 3 个额外可枚举字段(sourceProviderId / sourceConnected / 可选 sourceAccess),
   //      类型层不可见 —— **禁止把条目整对象 JSON.stringify / spread 进 IPC・协议・持久化**,
   //      过 wire 前必须显式投影字段(现存 5 个消费方已核查合规;键集有测试锁)。
+  // 对话选择面统一过滤(P2):本函数与 buildProviderSections 是「对话模型选择面」的共享
+  // 派生(会话 sections / IM /model 卡 / hook / worker 全走这两个)—— 服务端目录缺
+  // defaultEnabled 时 ASR/生图/向量模型会混入(线上实撞),在此统一剔除,全消费面一次
+  // 覆盖。管理界面(设置 → 供应商模型列表)走 provider.models / deriveModelList 原语,
+  // 不受影响,仍列全部目录项。
   return deriveModelList({
     providers,
     agent,
     providerScope: 'connected-for-agent',
     isVisible,
     dedupe: 'first-wins',
+    excludeModel: (m) => !isConversationModel(m),
   });
 }
 
@@ -143,6 +150,8 @@ export function buildProviderSections(args: {
     agent: args.agent,
     providerScope: 'as-given',
     isVisible: (providerId, model) => args.isVisible(providerId, model.id),
+    // 对话选择面统一过滤(P2,与 visibleModelUnion 同口径,见其注释)。
+    excludeModel: (m) => !isConversationModel(m),
     ...(args.selectedModelId !== undefined &&
     args.selectedProviderId !== undefined &&
     args.selectedProviderId !== null

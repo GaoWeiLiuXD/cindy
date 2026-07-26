@@ -204,3 +204,13 @@ describe('isConversationModel — 对话选择面统一过滤(P2)', () => {
     expect(isConversationModel({ id: 'gpt-weird-name', group: 'gpt' })).toBe(true);
   });
 });
+
+describe('isConversationModel — 自定义供应商豁免(codex review)', () => {
+  it("custom:* 分组恒视为对话:用户显式配置的 agent 模型不受 id 命名启发式误伤", () => {
+    expect(isConversationModel({ id: 'my-image-analysis-chat', group: 'custom:my-prov' })).toBe(true);
+    expect(isConversationModel({ id: 'vendor/audio-assistant', group: 'custom:p2' })).toBe(true);
+  });
+  it('同名 id 无 custom 分组时仍按启发式剔除(目录源约定可靠)', () => {
+    expect(isConversationModel({ id: 'my-image-analysis-chat' })).toBe(false);
+  });
+});

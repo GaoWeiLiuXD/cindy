@@ -48,7 +48,6 @@ import {
   formatContextWindow,
   getModel,
   isBudgetModel as isBudgetModelStd,
-  isConversationModel,
   modelBadges,
   modelSupportsFastMode,
   providerOffersModel,
@@ -730,7 +729,7 @@ function ModelSelectorContentView({
     //  · device-link 老被控端不认 maker:provider:list(invoke reject)→ device providers 为空 → flat 兜底;
     //  · providers 拉取中的瞬态窗口;· 本机 0 来源已由上方 emptyState 引导卡先行接管。
     if (connected.length === 0) return null;
-    const built = buildProviderSections({
+    return buildProviderSections({
       providers: connected,
       agent: currentAgentKind,
       selectedModelId: modelId,
@@ -751,12 +750,8 @@ function ModelSelectorContentView({
           },
       query,
     });
-    // 对话选择面统一剔除非对话模型(P2 有意变化,与 flat 的 deriveModelsFromProviders 同
-    // 口径):服务端目录缺 defaultEnabled 时,ASR/生图/向量模型会混进供应商段(claude-code
-    // 清单尾部实撞)。设置 → 供应商模型管理列表不走此处,仍列全部。
-    return built
-      .map((sec) => ({ ...sec, models: sec.models.filter((m) => isConversationModel(m)) }))
-      .filter((sec) => sec.models.length > 0);
+    // 非对话模型的统一剔除在 buildProviderSections 薄壳内完成(对话选择面共享派生,
+    // 全消费面同口径),此处无需再过滤。
     // visibilityVersion 仅作刷新触发器(设置页改显示开关后强制重算);deviceId 切换需重算分段。
   }, [
     sourcesEnabled,

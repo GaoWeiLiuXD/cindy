@@ -120,6 +120,10 @@ const NON_CONVERSATION_CATEGORIES: ReadonlySet<ModelCategory> = new Set([
  * **管理界面(设置 → 供应商模型列表)不要用它过滤** —— 那里就该列出全部目录项供启停。
  */
 export function isConversationModel(model: { id: string; group?: string }): boolean {
+  // 自定义供应商模型(buildUserProvider 的 group 'custom:<providerId>')恒视为对话:
+  // 它们是用户显式配置给 agent 运行时的,id 命名不受目录约定约束('my-image-analysis-chat'
+  // 含 image 不代表生图)—— 前缀启发式只对目录源可靠(codex review)。
+  if (model.group?.startsWith('custom:')) return true;
   return !NON_CONVERSATION_CATEGORIES.has(groupOf(model));
 }
 

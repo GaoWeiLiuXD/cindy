@@ -13,6 +13,7 @@
 
 import {
   deriveModelList,
+  effectiveSourceIdForModel,
   isConversationModel,
   providerOffersModel,
   sessionModelSupportsFastMode,
@@ -139,7 +140,19 @@ export function deriveModelsFromProviders(
     dedupe: 'first-wins',
     excludeModel: (m) => !isConversationModel(m),
     ...(opts?.excludeProvider ? { excludeProvider: opts.excludeProvider } : {}),
-  }).map(toDescriptor);
+  }).map((entry) => {
+    const d = toDescriptor(entry);
+    // 徽章溯源 = flat 流**实际会路由**的来源(已连接收窄 + native 优先,与选中后
+    // effectiveSourceIdForModel(null) 的解析一致),不是目录首见者:首见供应商可能已断开、
+    // 或与 nativeDefaultSourceId 的路由选择不一致 —— 按首见取 access 会让徽章说谎
+    // (显示订阅实际走 managed,或反之;Greptile + codex P1)。解析不到已连接来源(全部
+    // 断开)→ 不带 access,徽章诚实不显示。
+    const routedId = effectiveSourceIdForModel([...providers], null, entry.id, agent);
+    const routed = routedId !== null ? providers.find((p) => p.id === routedId) : undefined;
+    if (routed?.access !== undefined) d.sourceAccess = routed.access;
+    else delete d.sourceAccess;
+    return d;
+  });
 }
 
 /**

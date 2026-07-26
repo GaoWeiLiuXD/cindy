@@ -385,3 +385,41 @@ describe('deriveModelSections', () => {
     expect(sections[0].models.every((m) => m.sourceProviderId === 'xd')).toBe(true);
   });
 });
+
+describe('对话选择面薄壳统一过滤(P2)', () => {
+  it('visibleModelUnion 剔除非对话模型(hook/worker/IM 卡全消费面同口径)', () => {
+    const provs = [
+      {
+        id: 'gw',
+        name: 'gw',
+        connected: true,
+        agents: ['claude-code'],
+        models: {
+          'claude-code': [
+            { id: 'claude-opus-5', name: 'Opus', contextWindow: 1, efforts: [], defaultEffort: null },
+            { id: 'gpt-4o-transcribe', name: 'ASR', contextWindow: 1, efforts: [], defaultEffort: null },
+          ],
+        },
+      },
+    ] as unknown as ProviderView[];
+    const ids = visibleModelUnion(provs, 'claude-code', () => true).map((m) => m.id);
+    expect(ids).toEqual(['claude-opus-5']);
+  });
+
+  it('buildProviderSections 同样剔除;全段为空时段被丢弃', () => {
+    const provs = [
+      {
+        id: 'gw',
+        name: 'gw',
+        connected: true,
+        agents: ['claude-code'],
+        models: {
+          'claude-code': [
+            { id: 'gpt-image-2', name: 'Img', contextWindow: 1, efforts: [], defaultEffort: null },
+          ],
+        },
+      },
+    ] as unknown as ProviderView[];
+    expect(buildProviderSections({ providers: provs, agent: 'claude-code', isVisible: () => true })).toEqual([]);
+  });
+});

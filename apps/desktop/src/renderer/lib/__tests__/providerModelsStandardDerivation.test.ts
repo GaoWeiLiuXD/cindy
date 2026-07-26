@@ -67,7 +67,10 @@ describe('deriveModelsFromProviders — P2 标准派生切换', () => {
     expect(m.sourceAccess).toEqual({ kind: 'subscription', product: 'Claude.ai' });
   });
 
-  it('first-wins 溯源:同 id 取首见供应商的 sourceAccess', () => {
+  // 徽章溯源 = flat 流实际会路由的来源(effectiveSourceIdForModel(null):已连接收窄 +
+  // native 优先),不是目录首见者 —— anthropic 目录序在前,但 claude-code 的 native 默认
+  // 源是 xd,选中该行后实际经 xd 调用,徽章必须跟路由一致(Greptile+codex P1)。
+  it('徽章溯源跟实际路由:native 优先的 xd 而非目录首见的 anthropic', () => {
     const providers = [
       provider('anthropic', 'claude-code', [catalogModel('claude-opus-5')], {
         access: { kind: 'subscription', product: 'Claude.ai' },
@@ -77,7 +80,32 @@ describe('deriveModelsFromProviders — P2 标准派生切换', () => {
       }),
     ];
     const [m] = deriveModelsFromProviders(providers, 'claude-code');
-    expect(m.sourceAccess).toEqual({ kind: 'subscription', product: 'Claude.ai' });
+    expect(m.sourceAccess).toEqual({ kind: 'managed' });
+  });
+
+  it('徽章溯源:首见订阅源断开、连接的 managed 源实际路由 → 不再显示订阅', () => {
+    const providers = [
+      provider('anthropic', 'claude-code', [catalogModel('claude-opus-5')], {
+        access: { kind: 'subscription', product: 'Claude.ai' },
+        connected: false,
+      }),
+      provider('custom-m', 'claude-code', [catalogModel('claude-opus-5')], {
+        access: { kind: 'managed' },
+      }),
+    ];
+    const [m] = deriveModelsFromProviders(providers, 'claude-code');
+    expect(m.sourceAccess).toEqual({ kind: 'managed' });
+  });
+
+  it('徽章溯源:全部来源断开 → 不带 access,徽章诚实不显示', () => {
+    const providers = [
+      provider('anthropic', 'claude-code', [catalogModel('claude-opus-5')], {
+        access: { kind: 'subscription', product: 'Claude.ai' },
+        connected: false,
+      }),
+    ];
+    const [m] = deriveModelsFromProviders(providers, 'claude-code');
+    expect(m.sourceAccess).toBeUndefined();
   });
 });
 
