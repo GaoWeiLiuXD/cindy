@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>P2 效果预览 — 模型选择器清单/徽章切换(#478)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; padding: 32px; background: #f8f8f6; color: #1f1f1e; display: flex; gap: 32px; flex-wrap: wrap; }
+  body.dark { background: #1f1f1e; color: #f5f5f4; }
+  .panel { width: 340px; border-radius: 12px; border: 1px solid var(--bd); padding: 8px; background: var(--panel); }
+  .light { --panel: #ffffff; --bd: #d7d7d4; --hover: #f0f0ee; --muted: #737373; --badge-bg: #e5e5e5; }
+  .dark-theme { --panel: #2c2c2a; --bd: #3c3c3a; --hover: #3c3c3a; --muted: #a3a3a3; --badge-bg: #3c3c3a; color: #f5f5f4; }
+  h2 { font-size: 14px; margin: 0 0 12px; }
+  .caption { font-size: 12px; color: var(--muted); margin: 4px 0 16px; max-width: 340px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; font-size: 13.5px; }
+  .row.selected { background: var(--hover); font-weight: 500; }
+  .row .eff { color: var(--muted); font-size: 12px; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 9999px; background: var(--badge-bg); color: var(--muted); margin-left: auto; }
+  .badge.sub { color: #417CDD; }
+  .badge.budget { background: linear-gradient(90deg,#7C5CFF,#39A0FF); -webkit-background-clip: text; background-clip: text; color: transparent; border: 1px solid var(--bd); }
+  .gone { text-decoration: line-through; opacity: .45; }
+  .check { margin-left: 6px; color: inherit; }
+  .note { font-size: 11px; color: var(--muted); border-top: 1px solid var(--bd); margin-top: 8px; padding: 8px 12px 2px; }
+</style>
+</head>
+<body>
+  <section>
+    <h2>改动后 · Light(flat 清单)</h2>
+    <p class="caption">① 订阅/折扣徽章恢复,且溯源 = 实际路由来源;② 非对话模型(ASR/生图/向量)统一剔除。</p>
+    <div class="panel light">
+      <div class="row selected">Opus 5 <span class="eff">最高</span><span class="badge sub">订阅</span><span class="check">✓</span></div>
+      <div class="row">Sonnet 5 <span class="eff">高</span></div>
+      <div class="row">GPT-5.6-Sol <span class="eff">高</span><span class="badge budget">特别折扣</span></div>
+      <div class="row">GPT-5.6-Luna <span class="eff">中</span></div>
+      <div class="note">已剔除(改动前会混入):<br><span class="gone">gpt-4o-transcribe(ASR)</span> · <span class="gone">gpt-image-2(生图)</span> · <span class="gone">voyage-3(向量)</span></div>
+    </div>
+  </section>
+  <section>
+    <h2>改动后 · Dark(同一契约)</h2>
+    <p class="caption">列表行/分组/选中态结构不变(DESIGN.md §4),徽章复用既有样式 token,无新视觉元素。</p>
+    <div class="panel dark-theme">
+      <div class="row selected">Opus 5 <span class="eff">最高</span><span class="badge sub">订阅</span><span class="check">✓</span></div>
+      <div class="row">Sonnet 5 <span class="eff">高</span></div>
+      <div class="row">GPT-5.6-Sol <span class="eff">高</span><span class="badge budget">特别折扣</span></div>
+      <div class="row">GPT-5.6-Luna <span class="eff">中</span></div>
+      <div class="note">实机 CDP 走查已覆盖 Light/Dark 的 default/hover/选中态;本页为结构示意。</div>
+    </div>
+  </section>
+</body>
+</html>
