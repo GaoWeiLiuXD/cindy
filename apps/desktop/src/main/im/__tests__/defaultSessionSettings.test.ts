@@ -332,3 +332,53 @@ describe('resolveImSessionDefaults', () => {
     });
   });
 });
+
+// P2:派发口径与对话选择面一致 —— 持久化的非对话模型(过滤上线前存的)必须回落对话模型,
+// 不能因「有来源提供」就照用(codex review:锁住该分支,防未来 categorize/group 标注
+// 变更时无感回归)。
+describe('resolveImSessionDefaults — 非对话模型默认归一(P2)', () => {
+  const withMediaDefault = () => {
+    mocks.readImDefaultSettings.mockReturnValue({
+      agentKind: 'claude-code',
+      agents: {
+        'claude-code': { providerId: null, model: 'gpt-image-2', effort: null },
+        codex: { providerId: null, model: 'codex/gpt-5.5', effort: 'high' },
+      },
+    });
+  };
+  const mediaModel = {
+    id: 'gpt-image-2',
+    displayName: 'Image Gen',
+    contextWindow: 32_000,
+    efforts: [],
+    defaultEffort: null,
+  };
+
+  it('providers 路径:目录提供 gpt-image-2 但判非对话 → 回落首个对话模型', async () => {
+    withMediaDefault();
+    mocks.listProviders.mockResolvedValue([
+      {
+        ...providers[0],
+        models: {
+          'claude-code': [mediaModel, ...claudeModels],
+          codex: codexModels,
+        },
+      },
+    ]);
+    const resolved = await resolveImSessionDefaults(config);
+    expect(resolved.model).not.toBe('gpt-image-2');
+    expect(['claude-opus-4-8', 'claude-sonnet-4-6']).toContain(resolved.model);
+  });
+
+  it('capabilities 回退路径:同样归一,不裸用非对话默认', async () => {
+    withMediaDefault();
+    mocks.listProviders.mockResolvedValue(null);
+    mocks.getCapabilities.mockImplementation((agentKind: string) => ({
+      availableModels:
+        agentKind === 'codex' ? codexModels : [mediaModel, ...claudeModels],
+    }));
+    const resolved = await resolveImSessionDefaults(config);
+    expect(resolved.model).not.toBe('gpt-image-2');
+    expect(['claude-opus-4-8', 'claude-sonnet-4-6']).toContain(resolved.model);
+  });
+});
