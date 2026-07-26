@@ -175,10 +175,13 @@ function hasModel(
       return m !== undefined && isConversationModel(m, p);
     });
   }
-  const capsModel = getMaker()
+  // capabilities 回退路径(listProviders 瞬断)**不做对话过滤**:拍平快照丢失
+  // provider.source,ID 启发式会误杀自定义对话模型(如 'my-image-analysis-chat'),
+  // 与 user 源豁免自相矛盾 —— 数据不足时不猜(与「能力缺失保留显式值」同哲学);
+  // 主路径(providers 可用)已带上下文过滤,降级窗口内维持 P2 前行为(codex review)。
+  return getMaker()
     .getCapabilities(agentKind)
-    .availableModels.find((m) => m.id === modelId);
-  return capsModel !== undefined && isConversationModel(capsModel);
+    .availableModels.some((m) => m.id === modelId);
 }
 
 function firstModel(agentKind: AgentKind, providers: ProviderView[] | null): string | null {
@@ -195,11 +198,8 @@ function firstModel(agentKind: AgentKind, providers: ProviderView[] | null): str
       )[0]?.id ?? null
     );
   }
-  return (
-    getMaker()
-      .getCapabilities(agentKind)
-      .availableModels.find((m) => isConversationModel(m))?.id ?? null
-  );
+  // 与 hasModel 的回退路径同理:拍平快照无 source,不猜,不过滤。
+  return getMaker().getCapabilities(agentKind).availableModels[0]?.id ?? null;
 }
 
 function resolveEffort(

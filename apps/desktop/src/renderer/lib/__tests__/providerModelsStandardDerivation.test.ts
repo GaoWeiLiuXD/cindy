@@ -97,6 +97,33 @@ describe('deriveModelsFromProviders — P2 标准派生切换', () => {
     expect(m.sourceAccess).toEqual({ kind: 'managed' });
   });
 
+  // flat 行的对话性与徽章共用「实际路由源」真相:user 源提供 'gpt-image-2'(自定义对话)
+  // 而 XD 同 id 是媒体模型时,flat 选中只存 model id、会路由到 native 的 XD —— 逐 provider
+  // 豁免会留下「显示可用、实际跑 XD 媒体路由」的行(codex review;自定义源同名模型走分段)。
+  it('对话性按路由源判:user 源同名豁免不敌 native 路由的媒体判定', () => {
+    const providers = [
+      provider('xd', 'claude-code', [catalogModel('gpt-image-2')], {
+        access: { kind: 'managed' },
+        source: 'builtin',
+      }),
+      provider('my-prov', 'claude-code', [catalogModel('gpt-image-2', { group: 'custom:my-prov' })], {
+        source: 'user',
+      }),
+    ];
+    // native(xd)是实际路由源,其条目判媒体 → 该 flat 行剔除
+    expect(deriveModelsFromProviders(providers, 'claude-code')).toEqual([]);
+  });
+
+  it('user 源独占的自定义对话模型:路由源即 user 源,豁免生效保留', () => {
+    const providers = [
+      provider('my-prov', 'claude-code', [catalogModel('my-image-analysis-chat', { group: 'custom:my-prov' })], {
+        source: 'user',
+      }),
+    ];
+    const ids = deriveModelsFromProviders(providers, 'claude-code').map((m) => m.id);
+    expect(ids).toEqual(['my-image-analysis-chat']);
+  });
+
   it('徽章溯源:全部来源断开 → 不带 access,徽章诚实不显示', () => {
     const providers = [
       provider('anthropic', 'claude-code', [catalogModel('claude-opus-5')], {

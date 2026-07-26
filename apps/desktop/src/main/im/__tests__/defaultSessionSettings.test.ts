@@ -370,7 +370,10 @@ describe('resolveImSessionDefaults — 非对话模型默认归一(P2)', () => {
     expect(['claude-opus-4-8', 'claude-sonnet-4-6']).toContain(resolved.model);
   });
 
-  it('capabilities 回退路径:同样归一,不裸用非对话默认', async () => {
+  // capabilities 回退路径(listProviders 瞬断)**不过滤**:拍平快照丢 provider.source,
+  // ID 启发式会误杀自定义对话模型 —— 数据不足不猜,降级窗口维持 P2 前行为;
+  // 主路径(上一用例)已守(codex review 收敛后的最终口径)。
+  it('capabilities 回退路径:数据不足不猜,保留显式默认(降级窗口)', async () => {
     withMediaDefault();
     mocks.listProviders.mockResolvedValue(null);
     mocks.getCapabilities.mockImplementation((agentKind: string) => ({
@@ -378,7 +381,6 @@ describe('resolveImSessionDefaults — 非对话模型默认归一(P2)', () => {
         agentKind === 'codex' ? codexModels : [mediaModel, ...claudeModels],
     }));
     const resolved = await resolveImSessionDefaults(config);
-    expect(resolved.model).not.toBe('gpt-image-2');
-    expect(['claude-opus-4-8', 'claude-sonnet-4-6']).toContain(resolved.model);
+    expect(resolved.model).toBe('gpt-image-2');
   });
 });

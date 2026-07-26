@@ -133,32 +133,41 @@ export function deriveModelsFromProviders(
   // SSH 草稿)的本机派生唯一入口 —— 服务端目录缺 defaultEnabled 时 ASR/生图/向量模型
   // 会混进清单(IM bot 线上实撞),这里按 isConversationModel 统一剔除,不依赖服务端
   // 数据质量。设置 → 供应商模型管理列表不走本函数,仍列全部目录项。
-  // 徽章路由解析池必须先应用 excludeProvider(SSH 排除 chat-bridged Codex 等):
-  // 否则同模型多来源时,徽章可能反映被选择面排除的来源,与清单实际保留的来源不一致
-  // (Greptile 复审)。
+  // 徽章/对话性的解析池必须先应用 excludeProvider(SSH 排除 chat-bridged Codex 等):
+  // 否则同模型多来源时可能反映被选择面排除的来源(Greptile 复审)。
   const routingPool = opts?.excludeProvider
     ? providers.filter((p) => !opts.excludeProvider!(p))
     : providers;
-  return deriveModelList({
+  const out: ModelDescriptor[] = [];
+  for (const entry of deriveModelList({
     providers,
     agent,
     providerScope: 'all-for-agent',
     dedupe: 'first-wins',
-    excludeModel: (m, p) => !isConversationModel(m, p),
     ...(opts?.excludeProvider ? { excludeProvider: opts.excludeProvider } : {}),
-  }).map((entry) => {
-    const d = toDescriptor(entry);
-    // 徽章溯源 = flat 流**实际会路由**的来源(已连接收窄 + native 优先,与选中后
-    // effectiveSourceIdForModel(null) 的解析一致),不是目录首见者:首见供应商可能已断开、
-    // 或与 nativeDefaultSourceId 的路由选择不一致 —— 按首见取 access 会让徽章说谎
-    // (显示订阅实际走 managed,或反之;Greptile + codex P1)。解析不到已连接来源(全部
-    // 断开)→ 不带 access,徽章诚实不显示。
+  })) {
+    // flat 行的「对话性」与「徽章」共用同一真相源:**实际会路由的来源**
+    // (effectiveSourceIdForModel(null):已连接收窄 + native 优先,与选中后的解析一致)。
+    //   - 对话性按路由源的条目判(codex review:user 源提供 'gpt-image-2' 而 XD 同 id 是
+    //     媒体模型时,flat 行选中后只存 model id、会路由到 XD —— 逐 provider 豁免会把
+    //     「显示成可用、实际跑 XD 媒体路由」的行留在清单里;flat 模式无 provider 维度,
+    //     只能按路由真相判,自定义源要用同名模型请走分段模式);
+    //   - 徽章按路由源的 access 取(首见者可能断开/与 native 路由不一致,徽章会说谎);
+    //   - 无已连接路由源(全断开)→ 对话性按条目自身启发式,徽章诚实不显示。
     const routedId = effectiveSourceIdForModel([...routingPool], null, entry.id, agent);
     const routed = routedId !== null ? routingPool.find((p) => p.id === routedId) : undefined;
+    const routedModel = routed?.models[agent]?.find((x) => x.id === entry.id);
+    const conversational =
+      routedModel !== undefined
+        ? isConversationModel(routedModel, routed)
+        : isConversationModel(entry);
+    if (!conversational) continue;
+    const d = toDescriptor(entry);
     if (routed?.access !== undefined) d.sourceAccess = routed.access;
     else delete d.sourceAccess;
-    return d;
-  });
+    out.push(d);
+  }
+  return out;
 }
 
 /**
