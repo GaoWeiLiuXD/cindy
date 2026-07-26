@@ -10,6 +10,7 @@ import type { AgentKind, Effort, PermissionMode } from '@cindy/maker-core';
 import {
   connectedProvidersForAgent,
   getModel,
+  isConversationModel,
   nativeDefaultSourceId,
   providerOffersModel,
   sourcesForModel,
@@ -165,12 +166,19 @@ function hasModel(
   modelId: string,
   providers: ProviderView[] | null,
 ): boolean {
+  // 派发口径与对话选择面一致(P2):过滤上线前持久化的媒体模型 id(如 gpt-image-2)
+  // 不能再当会话默认 —— 选择卡已剔除它,派发不同口径会造成「卡里选不到、会话却在用」
+  // (codex review)。用户自定义供应商模型经 provider.source 豁免,与选择面同规则。
   if (providers) {
-    return sourcesForModel(providers, modelId, agentKind).length > 0;
+    return sourcesForModel(providers, modelId, agentKind).some((p) => {
+      const m = p.models[agentKind]?.find((x) => x.id === modelId);
+      return m !== undefined && isConversationModel(m, p);
+    });
   }
-  return getMaker()
+  const capsModel = getMaker()
     .getCapabilities(agentKind)
-    .availableModels.some((m) => m.id === modelId);
+    .availableModels.find((m) => m.id === modelId);
+  return capsModel !== undefined && isConversationModel(capsModel);
 }
 
 function firstModel(agentKind: AgentKind, providers: ProviderView[] | null): string | null {
@@ -178,11 +186,20 @@ function firstModel(agentKind: AgentKind, providers: ProviderView[] | null): str
     const connected = connectedProvidersForAgent(providers, agentKind);
     const nativeId = nativeDefaultSourceId(connected, agentKind);
     const native = nativeId ? connected.find((p) => p.id === nativeId) : undefined;
-    const nativeModel = native?.models[agentKind]?.[0]?.id;
+    // 兜底同样只取对话模型(与 hasModel / 选择面同口径)。
+    const nativeModel = native?.models[agentKind]?.find((m) => isConversationModel(m, native))?.id;
     if (nativeModel) return nativeModel;
-    return connected.flatMap((p) => p.models[agentKind] ?? [])[0]?.id ?? null;
+    return (
+      connected.flatMap((p) =>
+        (p.models[agentKind] ?? []).filter((m) => isConversationModel(m, p)),
+      )[0]?.id ?? null
+    );
   }
-  return getMaker().getCapabilities(agentKind).availableModels[0]?.id ?? null;
+  return (
+    getMaker()
+      .getCapabilities(agentKind)
+      .availableModels.find((m) => isConversationModel(m))?.id ?? null
+  );
 }
 
 function resolveEffort(
