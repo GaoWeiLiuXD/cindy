@@ -141,14 +141,14 @@ describe('CallbackListener(xAI loopback 回调)', () => {
     await getPromise;
   });
 
-  it('带 error 参数的回调终止登录并透出 error_description', async () => {
+  it('state 匹配的 error 回调终止登录并透出 error_description', async () => {
     const codePromise = listener.waitForCode('state-3');
     // 与生产 runGrokOAuthLogin 同模式预挂 no-op catch:reject 可能先于下方
     // rejects 断言挂载,避免被记成 unhandled rejection。
     codePromise.catch(() => undefined);
     const res = await send(
       'GET',
-      '/callback?error=access_denied&error_description=user%20denied',
+      '/callback?error=access_denied&error_description=user%20denied&state=state-3',
       { origin: XAI_ORIGIN },
     );
     expect(res.status).toBe(400);
@@ -156,12 +156,29 @@ describe('CallbackListener(xAI loopback 回调)', () => {
     await expect(codePromise).rejects.toThrow('No authorization code received');
   });
 
-  it('state 不匹配终止登录', async () => {
+  it('state 不匹配的回调(旧登录 tab 滞留重试)回 400 但不终止当前登录', async () => {
     const codePromise = listener.waitForCode('expected-state');
-    codePromise.catch(() => undefined);
-    const res = await send('GET', '/callback?code=abc&state=wrong-state');
-    expect(res.status).toBe(400);
-    await expect(codePromise).rejects.toThrow('Invalid state parameter');
+
+    // 旧 tab 带旧 state 的 code 重试与 error 回调都只被拒,不得 settle 当前登录。
+    const staleCode = await send('GET', '/callback?code=abc&state=wrong-state', {
+      origin: XAI_ORIGIN,
+    });
+    expect(staleCode.status).toBe(400);
+    const staleError = await send(
+      'GET',
+      '/callback?error=access_denied&state=wrong-state',
+      { origin: XAI_ORIGIN },
+    );
+    expect(staleError.status).toBe(400);
+    await expectStillPending(codePromise);
+
+    // 当前登录自己的回调随后到达,仍正常完成。
+    const getPromise = send('GET', '/callback?code=real&state=expected-state', {
+      origin: XAI_ORIGIN,
+    });
+    await expect(codePromise).resolves.toBe('real');
+    listener.succeed();
+    await getPromise;
   });
 
   it('exchange 进行中的重试回调挂起同候,succeed() 后与首个一起收到 200', async () => {

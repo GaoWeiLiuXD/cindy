@@ -331,6 +331,23 @@ export class CallbackListener {
       res.end(this.outcome === 'success' ? 'OK' : 'login failed');
       return;
     }
+    // state 是回调真实性的唯一凭证。固定端口 + fetch 重试的新流程下,上一次登录
+    // 尝试的 consent 页 tab 可能仍在带旧 state 重试 —— 凡 state 不匹配的回调
+    // (无论携带 code 还是 error)只回 400 拒绝该请求,绝不 settle 当前登录,
+    // 否则旧 tab 一次滞留重试就能杀死用户刚发起的新登录。
+    if (state !== this.expectedState) {
+      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
+      res.end(
+        renderOAuthResultPage({
+          htmlLang: OAUTH_RESULT_HTML_LANG[lang],
+          variant: 'error',
+          title: copy.errorTitle,
+          body: copy.invalidStateBody,
+          action,
+        }),
+      );
+      return;
+    }
     if (!code) {
       // 无 code 也无 error:健康检查、预取等杂请求,回 400 但保持登录流继续等待,
       // 不能让任意本机请求终止一次进行中的登录。
@@ -347,6 +364,7 @@ export class CallbackListener {
         );
         return;
       }
+      // state 已匹配的 error 回调 = 当前这次授权被真实拒绝/失败,终止登录。
       this.outcome = 'failed';
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
       res.end(
@@ -360,21 +378,6 @@ export class CallbackListener {
         }),
       );
       this.reject?.(new Error('No authorization code received'));
-      return;
-    }
-    if (state !== this.expectedState) {
-      this.outcome = 'failed';
-      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
-      res.end(
-        renderOAuthResultPage({
-          htmlLang: OAUTH_RESULT_HTML_LANG[lang],
-          variant: 'error',
-          title: copy.errorTitle,
-          body: copy.invalidStateBody,
-          action,
-        }),
-      );
-      this.reject?.(new Error('Invalid state parameter'));
       return;
     }
     this.outcome = 'exchanging';
