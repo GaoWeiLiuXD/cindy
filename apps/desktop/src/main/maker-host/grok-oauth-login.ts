@@ -4,6 +4,8 @@
  * 参数取自 xAI 的 grok-cli OAuth 公共配置(client_id / OIDC issuer / scope / 固定回调端口)。
  * 与 Claude 登录的关键差异:
  *   - 回调端口**固定 56121**(xAI 注册的 redirect_uri 是 http://127.0.0.1:56121/callback,不可随机);
+ *   - code 由 consent 页(accounts.x.ai)的**页面 JS 跨源 fetch** 投递到 loopback(新版流程,
+ *     不再 302 重定向)——回调服务器必须应答 CORS preflight + Chrome PNA 头,见 CallbackListener;
  *   - endpoints 走 OIDC discovery(auth.x.ai/.well-known/openid-configuration),校验必须在 *.x.ai over https;
  *   - token 交换是 **form-encoded**,且 PKCE 的 code_challenge/method 在交换时**再发一次**(该 client 会二次校验);
  *   - token 由**本模块自管**(存 safeStorage 的 provider secret 'xai',JSON blob),过期自己用 refresh_token 刷新
@@ -222,12 +224,35 @@ function blobFromTokenResponse(t: TokenResponse, prev?: GrokTokenBlob | null): G
   };
 }
 
+// ── 回调 CORS ──────────────────────────────────────────────────────────────────
+// xAI 新版 consent 页(accounts.x.ai)授权完成后不再 302 重定向到 loopback,而是由
+// 页面 JS 跨源 fetch 本回调地址投递 code(页面同时显示授权码供官方 CLI 手动粘贴兜底)。
+// 跨源 fetch 要求本服务器正确应答 CORS preflight;Chrome 对「公网 https 页面 →
+// 127.0.0.1」还要求 Private Network Access 头。来源只放行 xAI 自己的 auth 域。
+const CALLBACK_CORS_ALLOWED_ORIGINS = new Set(['https://accounts.x.ai', 'https://auth.x.ai']);
+
+/** origin 在白名单内时返回回调响应应附带的 CORS 头;否则为空(不放行)。 */
+export function xaiCallbackCorsHeaders(origin: string | undefined): Record<string, string> {
+  if (!origin || !CALLBACK_CORS_ALLOWED_ORIGINS.has(origin)) return {};
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Private-Network': 'true',
+    Vary: 'Origin',
+  };
+}
+
 // ── 回调监听(固定端口 56121)────────────────────────────────────────────────────
-class CallbackListener {
+// 导出仅供单测(runGrokOAuthLogin 是唯一运行期使用方)。
+export class CallbackListener {
   private server: Server;
   private expectedState = '';
   private pendingRes: ServerResponse | null = null;
+  private pendingCors: Record<string, string> = {};
   private callbackLang: OAuthResultPageLang = 'en';
+  /** 首个终态回调(code / error / state 不匹配)之后置位,防后续重试覆盖登录结果。 */
+  private settled = false;
   private resolve: ((code: string) => void) | null = null;
   private reject: ((err: Error) => void) | null = null;
 
@@ -261,6 +286,16 @@ class CallbackListener {
   }
 
   private onRequest(req: IncomingMessage, res: ServerResponse): void {
+    const cors = xaiCallbackCorsHeaders(
+      typeof req.headers.origin === 'string' ? req.headers.origin : undefined,
+    );
+    // CORS/PNA preflight 必须 204 放行且不触碰登录流状态 —— 它没有 code 参数,
+    // 落进下方缺 code 分支会直接终止整个登录(issue #491 的卡死根因之一)。
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, cors);
+      res.end();
+      return;
+    }
     const parsed = new URL(req.url || '', `http://127.0.0.1:${REDIRECT_PORT}`);
     if (parsed.pathname !== '/callback') {
       res.writeHead(404);
@@ -277,18 +312,40 @@ class CallbackListener {
     const action = buildOAuthReturnAction(lang, 'xai-oauth', BRAND_NAME);
     const code = parsed.searchParams.get('code') ?? undefined;
     const state = parsed.searchParams.get('state') ?? undefined;
+    const oauthError =
+      parsed.searchParams.get('error_description') ?? parsed.searchParams.get('error') ?? undefined;
+    // 已有终态结果后网页侧可能重试 fetch(超时重发/用户手动访问)—— 不再改写
+    // pendingRes / 登录结果,直接回执,避免首个响应悬空、结果被二次回调覆盖。
+    if (this.settled) {
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', ...cors });
+      res.end('OK');
+      return;
+    }
     if (!code) {
-      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
+      // 无 code 也无 error:健康检查、预取等杂请求,回 400 但保持登录流继续等待,
+      // 不能让任意本机请求终止一次进行中的登录。
+      if (!oauthError) {
+        res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
+        res.end(
+          renderOAuthResultPage({
+            htmlLang: OAUTH_RESULT_HTML_LANG[lang],
+            variant: 'error',
+            title: copy.errorTitle,
+            body: copy.missingCodeBody,
+            action,
+          }),
+        );
+        return;
+      }
+      this.settled = true;
+      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
       res.end(
         renderOAuthResultPage({
           htmlLang: OAUTH_RESULT_HTML_LANG[lang],
           variant: 'error',
           title: copy.errorTitle,
           body: copy.missingCodeBody,
-          detail:
-            parsed.searchParams.get('error_description') ??
-            parsed.searchParams.get('error') ??
-            undefined,
+          detail: oauthError,
           action,
         }),
       );
@@ -296,7 +353,8 @@ class CallbackListener {
       return;
     }
     if (state !== this.expectedState) {
-      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' });
+      this.settled = true;
+      res.writeHead(400, { 'content-type': 'text/html; charset=utf-8', ...cors });
       res.end(
         renderOAuthResultPage({
           htmlLang: OAUTH_RESULT_HTML_LANG[lang],
@@ -309,14 +367,21 @@ class CallbackListener {
       this.reject?.(new Error('Invalid state parameter'));
       return;
     }
+    this.settled = true;
     this.pendingRes = res;
+    this.pendingCors = cors;
     this.resolve?.(code);
   }
 
   succeed(): void {
     if (!this.pendingRes) return;
     const copy = getProviderOAuthResultCopy(this.callbackLang, 'xAI', BRAND_NAME);
-    this.pendingRes.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    // 回执必须带上收 code 那次请求的 CORS 头:没有它,consent 页的 fetch 读不到
+    // 响应,页面停在「等待检测」;302 导航场景 cors 为空对象,无影响。
+    this.pendingRes.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      ...this.pendingCors,
+    });
     this.pendingRes.end(
       renderOAuthResultPage({
         htmlLang: OAUTH_RESULT_HTML_LANG[this.callbackLang],
@@ -333,7 +398,10 @@ class CallbackListener {
     if (!this.pendingRes) return;
     try {
       const copy = getProviderOAuthResultCopy(this.callbackLang, 'xAI', BRAND_NAME);
-      this.pendingRes.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
+      this.pendingRes.writeHead(500, {
+        'content-type': 'text/html; charset=utf-8',
+        ...this.pendingCors,
+      });
       this.pendingRes.end(
         renderOAuthResultPage({
           htmlLang: OAUTH_RESULT_HTML_LANG[this.callbackLang],
