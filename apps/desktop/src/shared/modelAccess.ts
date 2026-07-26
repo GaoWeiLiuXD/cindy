@@ -156,6 +156,8 @@ export interface ModelAccessGatewayModel extends ModelGroupPricing {
   /**
    * 本条目价格字段的计费币种声明(透传 Gateway)。缺省表示 Gateway 原生口径
    * USD;客户端不得按构建区域改标或折算——单位永远跟随下发数据。
+   * 注意:本地记账账本是单币种的,声明必须全目录一致才生效;混合声明视为
+   * 未声明(USD),见 modelPriceQuote.resolveGatewayCatalogCurrency。
    */
   currency?: 'USD' | 'CNY';
   /** 进哪些 runtime tab;缺省 = 仅 claude-code(网关 /v1/messages 翻译覆盖面最广)。 */

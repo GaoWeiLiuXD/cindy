@@ -9,6 +9,9 @@ import {
 import { dailyModelUsage } from './schema.js';
 import { localDayKey } from './dailySpend.js';
 import { getDbClient } from './client/current.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('localDb/dailyModelUsage');
 
 export interface DailyModelUsageDelta {
   agentKind: 'claude-code' | 'codex';
@@ -39,7 +42,7 @@ export async function incrementDailyModelUsage(
   delta: DailyModelUsageDelta,
   ts: number = Date.now(),
 ): Promise<void> {
-  const money = delta.money ? normalizeRegionalMoney(delta.money) : undefined;
+  let money = delta.money ? normalizeRegionalMoney(delta.money) : undefined;
   const inputTokens = sanitizeTokens(delta.inputTokensDelta);
   const outputTokens = sanitizeTokens(delta.outputTokensDelta);
   const cacheReadTokens = sanitizeTokens(delta.cacheReadTokensDelta);
@@ -71,7 +74,21 @@ export async function incrementDailyModelUsage(
     existing?.costCurrency &&
     existing.costCurrency !== money.currency
   ) {
-    throw new Error('daily model usage row has conflicting currency');
+    // 单币种行:跨币种冲突只弃金额,token 增量必须照记 —— throw 会连本轮
+    // token 统计一起丢,损失更大。
+    log.warn(
+      `daily model usage currency conflict on ${day}/${delta.agentKind}/${model}: ` +
+        `keeping ${existing.costCurrency}, dropping ${money.currency} amount`,
+    );
+    money = undefined;
+    if (
+      inputTokens === 0 &&
+      outputTokens === 0 &&
+      cacheReadTokens === 0 &&
+      cacheCreateTokens === 0
+    ) {
+      return;
+    }
   }
   await db
     .insert(dailyModelUsage)

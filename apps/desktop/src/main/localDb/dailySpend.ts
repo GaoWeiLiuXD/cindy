@@ -8,6 +8,9 @@ import {
 } from '../../shared/regionalMoney.js';
 import { dailySpend } from './schema.js';
 import { getDbClient } from './client/current.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('localDb/dailySpend');
 
 export function localDayKey(ts: number = Date.now()): string {
   const date = new Date(ts);
@@ -71,7 +74,12 @@ export async function incrementDailySpend(
     .where(sql`${dailySpend.day} = ${day}`)
     .get();
   if (existing?.costCurrency && existing.costCurrency !== normalized.currency) {
-    throw new Error('daily spend row has conflicting currency');
+    // 单币种日账本:跨币种(币种切换过渡日 / 旧数据)只能弃掉后到的币种,
+    // 但绝不 throw —— 抛异常会打断 turn 收尾管道,损失比少记一段更大。
+    log.warn(
+      `daily spend currency conflict on ${day}: keeping ${existing.costCurrency}, dropping ${normalized.currency} amount`,
+    );
+    return { day, money: await getSpendForDay(day) };
   }
   await db
     .insert(dailySpend)

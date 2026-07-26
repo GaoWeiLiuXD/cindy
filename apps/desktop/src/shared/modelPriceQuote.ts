@@ -2,9 +2,10 @@ import { getClaudeSubscriptionValueFallbackPrice } from './claudeSubscriptionVal
 import { CODEX_SUBSCRIPTION_VALUE_PRICING } from './codexSubscriptionValue.js';
 import type { ModelAccessGatewayModel } from './modelAccess.js';
 import {
-  gatewayCurrency,
+  GATEWAY_NATIVE_CURRENCY,
   type ModelPriceQuote,
   type ModelPricingCatalog,
+  type MoneyCurrency,
 } from './regionalMoney.js';
 import { CHATGPT_MODEL_PREFIX, XAI_MODEL_PREFIX } from './subscriptionModels.js';
 
@@ -48,8 +49,26 @@ function applyCodexBudgetDiscount(quote: ModelPriceQuote): ModelPriceQuote {
   };
 }
 
+/**
+ * 全目录唯一声明币种:本地记账账本(daily / session / schedule)都是单币种,
+ * 逐条目声明会造成同端多币种金额被聚合层静默丢弃。因此只有当所有带声明的
+ * 条目一致时声明才生效;混合声明或无声明一律按 Gateway 原生 USD。
+ */
+export function resolveGatewayCatalogCurrency(
+  models: readonly ModelAccessGatewayModel[],
+): MoneyCurrency {
+  const declared = new Set<MoneyCurrency>();
+  for (const model of models) {
+    if (model.currency === 'USD' || model.currency === 'CNY') {
+      declared.add(model.currency);
+    }
+  }
+  return declared.size === 1 ? [...declared][0] : GATEWAY_NATIVE_CURRENCY;
+}
+
 export function gatewayModelPriceQuote(
   model: ModelAccessGatewayModel,
+  currency: MoneyCurrency = GATEWAY_NATIVE_CURRENCY,
 ): ModelPriceQuote | undefined {
   const modelId = model.id.trim();
   const inputPerMtok = perMtok(model.inputCostPerToken);
@@ -69,15 +88,11 @@ export function gatewayModelPriceQuote(
   }
   // quote 是用量估算用的标准价;costDiscount 只在 effectiveGatewayModelCost 侧应用到
   // cost,UI 展示价一致时取 cost(见 modelPriceFormat),不再并排展示标准价。
-  // 币种以条目声明为准,未声明按 Gateway 原生 USD;不按构建区域改标。
+  // 币种由 resolveGatewayCatalogCurrency 目录级统一解析后传入;不按构建区域改标。
   return applyCodexBudgetDiscount({
     providerId: 'xd',
     modelId,
-    currency: gatewayCurrency(
-      model.currency === 'CNY' || model.currency === 'USD'
-        ? model.currency
-        : undefined,
-    ),
+    currency,
     source: 'gateway',
     approximate: false,
     inputPerMtok,
@@ -90,9 +105,10 @@ export function gatewayModelPriceQuote(
 export function gatewayPricingCatalog(
   models: readonly ModelAccessGatewayModel[],
 ): ModelPricingCatalog {
+  const currency = resolveGatewayCatalogCurrency(models);
   const xd: Record<string, ModelPriceQuote> = {};
   for (const model of models) {
-    const quote = gatewayModelPriceQuote(model);
+    const quote = gatewayModelPriceQuote(model, currency);
     if (quote) xd[quote.modelId] = quote;
   }
   return Object.keys(xd).length > 0 ? { xd } : {};
