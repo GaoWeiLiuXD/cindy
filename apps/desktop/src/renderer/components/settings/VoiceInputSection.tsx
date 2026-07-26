@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, ChevronDown, Copy, Keyboard, Pencil, Plus, RotateCcw, Search, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Keyboard, Loader2, Pencil, Plus, RotateCcw, Search, Sparkles, Trash2, Upload, X } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
@@ -59,6 +59,7 @@ import {
   MAX_CUSTOM_ASR_WEBSOCKET_URL_CHARS,
   validateVoiceInputCustomAsrWebsocketUrl,
 } from '../../../shared/voiceInputCustomAsr';
+import type { VoiceInputConnectionTestFailureReason } from '../../../shared/voiceInputConnectionTest';
 
 const LANGUAGE_OPTIONS: ReadonlyArray<VoiceInputLanguage> = ['auto', ...SUPPORTED_LOCALES];
 const AUTO_MICROPHONE_VALUE = '__auto__';
@@ -68,6 +69,24 @@ type DictionaryFilter = (typeof DICTIONARY_FILTERS)[number];
 type VoiceInputSystemPermissions = ReturnType<typeof window.electronAPI.voiceInput.getSystemPermissionsCached>;
 type VoiceInputPermissionSnapshot = VoiceInputSystemPermissions['microphone'];
 type VoiceInputPermissionKind = 'microphone' | 'inputMonitoring' | 'accessibility';
+type VoiceInputConnectionTestViewState =
+  | { status: 'idle' }
+  | { status: 'testing' }
+  | { status: 'success' }
+  | { status: 'error'; reason: VoiceInputConnectionTestFailureReason };
+
+const VOICE_INPUT_CONNECTION_TEST_FAILURE_KEYS: Record<
+  VoiceInputConnectionTestFailureReason,
+  string
+> = {
+  'credentials-missing': 'settings.voiceInput.serviceSource.connectionTest.failure.credentialsMissing',
+  'authentication-failed': 'settings.voiceInput.serviceSource.connectionTest.failure.authenticationFailed',
+  'route-unavailable': 'settings.voiceInput.serviceSource.connectionTest.failure.routeUnavailable',
+  timeout: 'settings.voiceInput.serviceSource.connectionTest.failure.timeout',
+  network: 'settings.voiceInput.serviceSource.connectionTest.failure.network',
+  'service-error': 'settings.voiceInput.serviceSource.connectionTest.failure.serviceError',
+  'unsupported-provider': 'settings.voiceInput.serviceSource.connectionTest.failure.unsupportedProvider',
+};
 
 interface VoiceInputSelectOption<T extends string> {
   value: T;
@@ -365,6 +384,8 @@ function VoiceInputServiceSourceCard() {
   const [customAsrWebsocketUrl, setCustomAsrWebsocketUrl] = useState('');
   const [customAsrModel, setCustomAsrModel] = useState('');
   const [customAsrApiKey, setCustomAsrApiKey] = useState('');
+  const [connectionTest, setConnectionTest] = useState<VoiceInputConnectionTestViewState>({ status: 'idle' });
+  const connectionTestRequestRef = useRef(0);
 
   const localMode = appMode === 'local';
   const serviceMode: VoiceInputServiceModeData = localMode
@@ -385,6 +406,18 @@ function VoiceInputServiceSourceCard() {
     setCustomAsrWebsocketUrl(selection.customAsr.websocketUrl);
     setCustomAsrModel(selection.customAsr.model);
   }, [selection?.customAsr]);
+
+  useEffect(() => {
+    connectionTestRequestRef.current += 1;
+    setConnectionTest({ status: 'idle' });
+  }, [
+    serviceMode,
+    selection?.asrProvider,
+    selection?.customAsr?.model,
+    selection?.customAsr?.protocol,
+    selection?.customAsr?.websocketUrl,
+    customAsrApiKeyConfigured,
+  ]);
 
   const openProvidersTab = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -491,6 +524,13 @@ function VoiceInputServiceSourceCard() {
   const customAsrCanSave = customAsrUrlValidationError === null
     && Boolean(customAsrModel.trim())
     && (!customAsrEndpointRequiresNewKey || Boolean(customAsrApiKey.trim()));
+  const customAsrHasUnsavedChanges = customAsrSelected && (
+    !selection?.customAsr
+    || customAsrProtocol !== selection.customAsr.protocol
+    || customAsrWebsocketUrl.trim() !== selection.customAsr.websocketUrl
+    || customAsrModel.trim() !== selection.customAsr.model
+    || Boolean(customAsrApiKey.trim())
+  );
   const credentialRecoveryInVoiceSettings = customAsrSelected
     || readiness?.failureReason === 'codex-realtime-unsupported';
 
@@ -508,6 +548,25 @@ function VoiceInputServiceSourceCard() {
     customAsrWebsocketUrl,
     saveCustomAsr,
   ]);
+
+  const handleTestConnection = useCallback(async () => {
+    const requestId = connectionTestRequestRef.current + 1;
+    connectionTestRequestRef.current = requestId;
+    setConnectionTest({ status: 'testing' });
+    try {
+      const result = await window.electronAPI.voiceInput.testConnection();
+      if (connectionTestRequestRef.current !== requestId) return;
+      setConnectionTest(result.ok
+        ? { status: 'success' }
+        : { status: 'error', reason: result.reason });
+    } catch {
+      if (connectionTestRequestRef.current !== requestId) return;
+      setConnectionTest({ status: 'error', reason: 'service-error' });
+    }
+  }, []);
+
+  const connectionTestBusy = connectionTest.status === 'testing';
+  const connectionTestDisabled = saving || connectionTestBusy || customAsrHasUnsavedChanges;
 
   const customized = !localMode && Boolean(selection?.serviceModeConfigured);
 
@@ -550,6 +609,32 @@ function VoiceInputServiceSourceCard() {
         <>
           <VoiceInputInlineSettingRow
             label={t('settings.voiceInput.serviceSource.asr.label')}
+            labelAction={(
+              <button
+                type="button"
+                disabled={connectionTestDisabled}
+                onClick={() => void handleTestConnection()}
+                title={customAsrHasUnsavedChanges
+                  ? t('settings.voiceInput.serviceSource.connectionTest.saveBeforeTest')
+                  : undefined}
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-12 outline-none transition-colors',
+                  'border-[var(--settings-input-border)] bg-[var(--settings-input-bg)]',
+                  'text-[var(--settings-section-sublabel)]',
+                  'hover:border-[var(--settings-input-border-focus)] focus-visible:border-[var(--settings-input-border-focus)]',
+                  connectionTestDisabled && 'cursor-not-allowed opacity-55',
+                )}
+              >
+                {connectionTestBusy ? (
+                  <span className="inline-flex animate-spin motion-reduce:animate-none" aria-hidden>
+                    <Loader2 size={12} />
+                  </span>
+                ) : null}
+                {t(connectionTestBusy
+                  ? 'settings.voiceInput.serviceSource.connectionTest.testing'
+                  : 'settings.voiceInput.serviceSource.connectionTest.action')}
+              </button>
+            )}
             hint={t('settings.voiceInput.serviceSource.asr.hint')}
           >
             <VoiceInputSelect
@@ -559,6 +644,33 @@ function VoiceInputServiceSourceCard() {
               ariaLabel={t('settings.voiceInput.serviceSource.asr.ariaLabel')}
             />
           </VoiceInputInlineSettingRow>
+
+          {connectionTest.status !== 'idle' ? (
+            <div
+              role={connectionTest.status === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+              className={cn(
+                'flex items-center gap-2 rounded-[10px] border px-3 py-2 text-12 leading-[1.4]',
+                connectionTest.status === 'error'
+                  ? 'border-[var(--error-border)] bg-[var(--error-bg)] text-[var(--error-fg)]'
+                  : 'border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] text-[var(--settings-section-sublabel)]',
+              )}
+            >
+              {connectionTest.status === 'success' ? <Check size={13} aria-hidden /> : null}
+              {connectionTest.status === 'testing' ? (
+                <span className="inline-flex animate-spin motion-reduce:animate-none" aria-hidden>
+                  <Loader2 size={13} />
+                </span>
+              ) : null}
+              <span>
+                {connectionTest.status === 'testing'
+                  ? t('settings.voiceInput.serviceSource.connectionTest.testingStatus')
+                  : connectionTest.status === 'success'
+                    ? t('settings.voiceInput.serviceSource.connectionTest.success')
+                    : t(VOICE_INPUT_CONNECTION_TEST_FAILURE_KEYS[connectionTest.reason])}
+              </span>
+            </div>
+          ) : null}
 
           {customAsrSelected ? (
             <div className="flex flex-col gap-3 rounded-[12px] border border-[var(--settings-input-border)] bg-[var(--settings-input-bg)] p-3.5">

@@ -731,6 +731,22 @@
           "hint": "ASR model used for speech-to-text.",
           "ariaLabel": "Speech recognition model"
         },
+        "connectionTest": {
+          "action": "Test connection",
+          "testing": "Testing",
+          "testingStatus": "Connecting to the selected realtime ASR service…",
+          "success": "Connected. The selected realtime ASR route is available.",
+          "saveBeforeTest": "Save the custom ASR changes before testing the connection.",
+          "failure": {
+            "credentialsMissing": "Required credentials are missing. Complete the setup first.",
+            "authenticationFailed": "Authentication failed. Check the credentials for this service.",
+            "routeUnavailable": "The AI gateway does not support or has not enabled this realtime ASR route.",
+            "timeout": "Connection timed out. Check the network and service status, then try again.",
+            "network": "Could not connect. Check the network, address, and certificate settings.",
+            "serviceError": "The service handshake failed. Try again later or check the service setup.",
+            "unsupportedProvider": "Connection testing is not supported for this recognition model."
+          }
+        },
         "refiner": {
           "label": "Refinement model",
           "hint": "Model used to clean up dictated text.",

@@ -130,6 +130,11 @@ import {
   persistVoiceInputSelectionWithCustomAsrSecret,
   type CustomAsrSecretUpdate,
 } from './voiceInputCustomAsrPersistence.js';
+import {
+  VOICE_INPUT_TEST_CONNECTION_CHANNEL,
+  type VoiceInputConnectionTestResult,
+} from '../../shared/voiceInputConnectionTest.js';
+import { runVoiceInputConnectionTest } from './voiceInputConnectionTest.js';
 
 const log = createLogger('voice-input');
 let customAsrCredentialRevision = 0;
@@ -1762,6 +1767,42 @@ export function registerVoiceInputIpc(): void {
 
   ipcMain.handle('voice-input:get-readiness', async (): Promise<VoiceInputReadiness> =>
     refreshVoiceInputReadinessCache('ipc'),
+  );
+
+  ipcMain.handle(
+    VOICE_INPUT_TEST_CONNECTION_CHANNEL,
+    async (event): Promise<VoiceInputConnectionTestResult> => {
+      assertTrustedAppRendererEvent(event);
+      const selection = readActiveVoiceInputModelSelection('connection-test');
+      const provider = selection.asrProvider;
+      const profile = getVoiceInputAsrProfile(provider);
+      const providerModel = resolveVoiceInputProviderModel(provider);
+
+      if (
+        !isVoiceInputByokMode()
+        || profile.mode === 'batch-http'
+        || provider === 'openai-realtime-whisper'
+      ) {
+        return {
+          ok: false,
+          provider,
+          providerModel,
+          reason: 'unsupported-provider',
+        };
+      }
+
+      return runVoiceInputConnectionTest({
+        provider,
+        providerModel,
+        createProvider: () => createVoiceInputProvider(provider, undefined),
+        onError: (error) => {
+          log.warn('voice input connection test failed', {
+            provider,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      });
+    },
   );
 
   ipcMain.handle('voice-input:model-selection:get', async (event): Promise<VoiceInputModelSelectionIpcResult> => {

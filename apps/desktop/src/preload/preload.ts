@@ -32,6 +32,10 @@ import { SELECTION_CONTEXT_MENU_ADD_TO_CHAT_CHANNEL } from '../shared/selectionC
 import { SESSION_ATTENTION_CLEARED_CHANNEL } from '../shared/sessionAttention';
 import { VOICE_INPUT_POWER_STATE_CHANNEL } from '../shared/voiceInputPowerIpc';
 import {
+  VOICE_INPUT_TEST_CONNECTION_CHANNEL,
+  type VoiceInputConnectionTestResult,
+} from '../shared/voiceInputConnectionTest';
+import {
   type ApplicationMenuCommand,
   isApplicationMenuCommand,
 } from '../shared/applicationMenuCommands';
@@ -978,6 +982,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('voice-input:mute-system-audio'),
     restoreSystemAudio: (): Promise<{ ok: true } | { ok: false; error: string }> =>
       ipcRenderer.invoke('voice-input:restore-system-audio'),
+    testConnection: (): Promise<VoiceInputConnectionTestResult> =>
+      ipcRenderer.invoke(VOICE_INPUT_TEST_CONNECTION_CHANNEL),
     getReadiness: (): Promise<VoiceInputReadinessWire> => ipcRenderer.invoke('voice-input:get-readiness'),
     getReadinessCached: (): VoiceInputReadinessWire | null =>
       ipcRenderer.sendSync('voice-input:get-readiness-cached'),

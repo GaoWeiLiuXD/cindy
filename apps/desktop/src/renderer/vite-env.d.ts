@@ -15,6 +15,8 @@ type AnalyticsSettingsPayload = import('../shared/analyticsSettings').AnalyticsS
 type RsbWindowCommand = import('../shared/rightSidebarWindow').RsbWindowCommand;
 type VoiceInputPowerStatePayload =
   import('../shared/voiceInputPowerIpc').VoiceInputPowerStatePayload;
+type VoiceInputConnectionTestResult =
+  import('../shared/voiceInputConnectionTest').VoiceInputConnectionTestResult;
 type DesktopLoginAction = import('../shared/authIpc').DesktopLoginAction;
 type DesktopLoginActionResult = import('../shared/authIpc').DesktopLoginActionResult;
 type UtilityTextFailure = import('../shared/utilityTextResult').UtilityTextFailure;
@@ -1270,6 +1272,7 @@ interface ElectronAPI {
     openInputMonitoringSettings: () => Promise<VoiceInputGlobalResult>;
     muteSystemAudio: () => Promise<{ ok: true } | { ok: false; error: string }>;
     restoreSystemAudio: () => Promise<{ ok: true } | { ok: false; error: string }>;
+    testConnection: () => Promise<VoiceInputConnectionTestResult>;
     getReadiness: () => Promise<{
       ok: boolean;
       provider:
