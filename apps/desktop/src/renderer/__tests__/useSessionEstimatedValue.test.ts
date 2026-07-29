@@ -5,6 +5,7 @@ import {
   shouldApplyEstimatedValueEntry,
   syncEstimatedValueCostsFromStoreSnapshot,
 } from '@/hooks/useSessionEstimatedValue';
+import { combineSessionUsageMoney } from '@/hooks/useSessionUsageMoney';
 import type { ChatMessage } from '@/lib/makerChatStore';
 import { buildTurnUsageDetails } from '../../shared/turnUsageDetails';
 import type { RegionalMoney } from '../../shared/regionalMoney';
@@ -182,5 +183,32 @@ describe('shouldApplyEstimatedValueEntry', () => {
       'persisted-history',
       false,
     )).toBe(true);
+  });
+});
+
+describe('combineSessionUsageMoney', () => {
+  it('adds CN actual cost and subscription value into one stable session total', () => {
+    const result = combineSessionUsageMoney(
+      {
+        amount: 0.393092,
+        currency: 'CNY',
+        approximate: false,
+        kind: 'actual-cost',
+      },
+      {
+        amount: 0.866712,
+        currency: 'CNY',
+        approximate: true,
+        kind: 'value-estimate',
+        estimateReasons: ['subscription-value', 'reference-price'],
+      },
+    );
+
+    expect(result.totalMoney).toMatchObject({
+      currency: 'CNY',
+      approximate: true,
+      kind: 'actual-cost',
+    });
+    expect(result.totalMoney?.amount).toBeCloseTo(1.259804, 10);
   });
 });

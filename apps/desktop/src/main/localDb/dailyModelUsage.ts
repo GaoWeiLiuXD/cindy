@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 
 import {
   addRegionalMoney,
+  DEFAULT_USAGE_CURRENCY,
   legacyUsdMoney,
   normalizeRegionalMoney,
   type RegionalMoney,
@@ -43,6 +44,11 @@ export async function incrementDailyModelUsage(
   ts: number = Date.now(),
 ): Promise<void> {
   const money = delta.money ? normalizeRegionalMoney(delta.money) : undefined;
+  if (money && money.currency !== DEFAULT_USAGE_CURRENCY) {
+    throw new Error(
+      `daily model usage currency mismatch: ${money.currency} != ${DEFAULT_USAGE_CURRENCY}`,
+    );
+  }
   const inputTokens = sanitizeTokens(delta.inputTokensDelta);
   const outputTokens = sanitizeTokens(delta.outputTokensDelta);
   const cacheReadTokens = sanitizeTokens(delta.cacheReadTokensDelta);
@@ -60,9 +66,8 @@ export async function incrementDailyModelUsage(
   const day = localDayKey(ts);
   const model = delta.model || 'unknown';
   const db = getDbClient().drizzle;
-  // 单币种行:币种守卫必须在同一条 upsert 里用 CASE 表达 —— 先查再写有
-  // TOCTOU 窗口,并发首写会把不同币种的裸数字加进同一行。冲突时原子地只弃
-  // 金额,token 增量照记(throw 会连本轮 token 统计一起丢,损失更大)。
+  // 单币种行:入口只允许当前区域币种；已有异币种历史金额保持原样，
+  // token 增量仍累计。守卫与 upsert 同句，避免并发混加不同单位。
   const sameCurrency = money
     ? sql`(${dailyModelUsage.costCurrency} IS NULL OR ${dailyModelUsage.costCurrency} = ${money.currency})`
     : sql`0`;
@@ -82,11 +87,7 @@ export async function incrementDailyModelUsage(
       updatedAt: ts,
     })
     .onConflictDoUpdate({
-      target: [
-        dailyModelUsage.day,
-        dailyModelUsage.agentKind,
-        dailyModelUsage.model,
-      ],
+      target: [dailyModelUsage.day, dailyModelUsage.agentKind, dailyModelUsage.model],
       set: {
         costAmount: sql`CASE WHEN ${sameCurrency} THEN ${dailyModelUsage.costAmount} + ${money?.amount ?? 0} ELSE ${dailyModelUsage.costAmount} END`,
         costCurrency: sql`CASE WHEN ${sameCurrency} THEN ${money?.currency ?? null} ELSE ${dailyModelUsage.costCurrency} END`,
@@ -118,11 +119,9 @@ export async function incrementDailyModelUsage(
   }
 }
 
-export async function getModelUsageSince(
-  sinceDayKey: string,
-): Promise<DailyModelUsageRow[]> {
-  const rows = await getDbClient().drizzle
-    .select({
+export async function getModelUsageSince(sinceDayKey: string): Promise<DailyModelUsageRow[]> {
+  const rows = await getDbClient()
+    .drizzle.select({
       day: dailyModelUsage.day,
       agentKind: dailyModelUsage.agentKind,
       model: dailyModelUsage.model,
@@ -158,7 +157,7 @@ export async function getModelUsageSince(
           ? legacy.currency === current.currency
             ? addRegionalMoney([legacy, current])
             : current
-          : current ?? legacy,
+          : (current ?? legacy),
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       cacheReadTokens: row.cacheReadTokens,

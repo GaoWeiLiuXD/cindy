@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 
 import {
   addRegionalMoney,
+  DEFAULT_USAGE_CURRENCY,
   legacyUsdMoney,
   normalizeRegionalMoney,
   type RegionalMoney,
@@ -20,12 +21,16 @@ export function localDayKey(ts: number = Date.now()): string {
   return `${year}-${month}-${day}`;
 }
 
-function rowMoney(row: {
-  costUsd: number;
-  costAmount: number;
-  costCurrency: 'CNY' | 'USD' | null;
-  costIsApproximate: boolean;
-} | undefined): RegionalMoney {
+function rowMoney(
+  row:
+    | {
+        costUsd: number;
+        costAmount: number;
+        costCurrency: 'CNY' | 'USD' | null;
+        costIsApproximate: boolean;
+      }
+    | undefined,
+): RegionalMoney {
   const legacy = legacyUsdMoney(row?.costUsd ?? 0);
   const current =
     row?.costCurrency && row.costAmount > 0
@@ -37,16 +42,14 @@ function rowMoney(row: {
         })
       : undefined;
   if (legacy.amount > 0 && current) {
-    return legacy.currency === current.currency
-      ? addRegionalMoney([legacy, current])
-      : current;
+    return legacy.currency === current.currency ? addRegionalMoney([legacy, current]) : current;
   }
   return current ?? legacy;
 }
 
 async function getSpendForDay(day: string): Promise<RegionalMoney> {
-  const row = await getDbClient().drizzle
-    .select({
+  const row = await getDbClient()
+    .drizzle.select({
       costUsd: dailySpend.costUsd,
       costAmount: dailySpend.costAmount,
       costCurrency: dailySpend.costCurrency,
@@ -67,10 +70,14 @@ export async function incrementDailySpend(
   if (!normalized || normalized.amount < 1e-10) {
     return { day, money: await getSpendForDay(day) };
   }
+  if (normalized.currency !== DEFAULT_USAGE_CURRENCY) {
+    throw new Error(
+      `daily spend currency mismatch: ${normalized.currency} != ${DEFAULT_USAGE_CURRENCY}`,
+    );
+  }
   const db = getDbClient().drizzle;
-  // 单币种日账本:币种守卫必须在同一条 upsert 里用 CASE 表达 —— 先查再写有
-  // TOCTOU 窗口,并发首写会把不同币种的裸数字加进同一行。冲突段原子地弃掉
-  // (行保持原币种),绝不 throw:抛异常会打断 turn 收尾管道,损失更大。
+  // 单币种日账本:入口只允许当前区域币种；已有异币种历史行保持原样。
+  // 守卫在同一条 upsert 里，避免并发写把不同单位的裸数字加到一起。
   const sameCurrency = sql`(${dailySpend.costCurrency} IS NULL OR ${dailySpend.costCurrency} = ${normalized.currency})`;
   await db
     .insert(dailySpend)
@@ -104,11 +111,9 @@ export function getTodaySpend(): Promise<RegionalMoney> {
   return getSpendForDay(localDayKey());
 }
 
-export async function getAllSpendDays(): Promise<
-  Array<{ day: string; money: RegionalMoney }>
-> {
-  const rows = await getDbClient().drizzle
-    .select({
+export async function getAllSpendDays(): Promise<Array<{ day: string; money: RegionalMoney }>> {
+  const rows = await getDbClient()
+    .drizzle.select({
       day: dailySpend.day,
       costUsd: dailySpend.costUsd,
       costAmount: dailySpend.costAmount,

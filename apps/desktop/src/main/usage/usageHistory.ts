@@ -34,6 +34,7 @@ import { computePriceQuoteTurnMoney } from './turnCostCalculator';
 import {
   getModelPriceQuote,
 } from '../../shared/modelPriceQuote.js';
+import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
   addCompatibleRegionalMoney,
   DEFAULT_USAGE_CURRENCY,
@@ -58,8 +59,8 @@ const ANOMALY_MIN_ACTIVE_DAYS = 3;
 const MODEL_WINDOW_DAYS = 30;
 /** 等价格表的最长预算 (ms) — 缓存命中时是同步快返, 只有冷启动网络 fetch 会触及。 */
 const PRICING_WAIT_BUDGET_MS = 200;
-// v3: 币种语义改为跟随来源(默认 USD),旧缓存里 CN 构建的金额带错标 CNY,整体作废。
-const DISK_CACHE_VERSION = 3;
+// v4:恢复 CN usage 的 CNY 账本口径，并让订阅 USD 估值按 6.7 投影到 CNY。
+const DISK_CACHE_VERSION = 4;
 const DISK_CACHE_FILE = 'usage-history.json';
 /** 后台刷新完成后, renderer 的短轮询能拿到 fresh payload, 避免 stale 状态自循环。 */
 const MEMORY_FRESH_MS = 10_000;
@@ -614,6 +615,7 @@ export async function readUsageHistoryWith(
       m.estimatedMoney = computePriceQuoteTurnMoney(
         m,
         getSubscriptionValuePriceFor(m.agentKind, m.model, pricing),
+        CURRENT_CINDY_REGION,
       );
     }
   }
@@ -630,6 +632,7 @@ export async function readUsageHistoryWith(
         ? (computePriceQuoteTurnMoney(
             row,
             getSubscriptionValuePriceFor(agentKind, model, pricing),
+            CURRENT_CINDY_REGION,
           ) ?? zeroEstimate())
         : zeroEstimate();
     const money =

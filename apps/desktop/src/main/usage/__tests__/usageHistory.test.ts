@@ -84,6 +84,8 @@ import { getAllSpendDays } from '../../localDb/dailySpend';
 import { getModelUsageSince } from '../../localDb/dailyModelUsage';
 import { getModelPricing, isModelPricingRefreshInFlight } from '../modelPricing';
 import {
+  DEFAULT_USAGE_CURRENCY,
+  USD_TO_CNY_FIXED_RATE,
   zeroUsageMoney,
   type ModelPriceQuote,
   type RegionalMoney,
@@ -94,11 +96,17 @@ const TODAY = '2026-06-11';
 function actual(amount: number, approximate = false): RegionalMoney {
   return {
     amount,
-    currency: 'USD',
+    currency: DEFAULT_USAGE_CURRENCY,
     approximate,
     kind: 'actual-cost',
     ...(approximate ? { estimateReasons: ['legacy-usd'] } : {}),
   };
+}
+
+function regionalUsdAmount(amount: number): number {
+  return DEFAULT_USAGE_CURRENCY === 'CNY'
+    ? amount * USD_TO_CNY_FIXED_RATE
+    : amount;
 }
 
 function subscriptionQuote(
@@ -235,7 +243,7 @@ describe('billing model keys', () => {
 
 describe('readUsageHistoryWith', () => {
   it('aggregates actual money and subscription value without double counting', async () => {
-    const estimateAmount = 2;
+    const estimateAmount = regionalUsdAmount(2);
     const result = await readUsageHistoryWith(makeDeps({
       getAllSpendDays: async () => [
         { day: '2026-06-10', money: actual(3) },
@@ -304,7 +312,7 @@ describe('readUsageHistoryWith', () => {
   });
 
   it('uses provider-scoped Anthropic reference pricing for Claude subscription rows', async () => {
-    const expected = 5;
+    const expected = regionalUsdAmount(5);
     const result = await readUsageHistoryWith(makeDeps({
       getModelUsageSince: async () => [
         modelRow(
@@ -396,7 +404,7 @@ describe('production cache and empty payload', () => {
         ),
       );
       expect(raw).toMatchObject({
-        version: 3,
+        version: 4,
         optsKey: 'user=user-a|days=30',
         payload: {
           totals: {
