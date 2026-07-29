@@ -574,15 +574,17 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
     if (subscriptionPortalLockRef.current || currentSubscription?.provider !== 'stripe') return;
     subscriptionPortalLockRef.current = true;
     setOpeningSubscriptionPortal(true);
+    subscriptionPortalRefreshPendingRef.current = true;
     try {
       const result = await billingApi.openSubscriptionPortal();
-      if (result.success || result.timedOut) {
-        subscriptionPortalRefreshPendingRef.current = true;
+      if (!result.success && !result.timedOut) {
+        subscriptionPortalRefreshPendingRef.current = false;
       }
       if (!result.success) {
         toast.error(t('billing.settings.subscriptionCard.portalFailed'));
       }
     } catch {
+      subscriptionPortalRefreshPendingRef.current = false;
       toast.error(t('billing.settings.subscriptionCard.portalFailed'));
     } finally {
       setOpeningSubscriptionPortal(false);

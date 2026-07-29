@@ -1360,7 +1360,7 @@ describe('BillingPage plan change', () => {
     });
   });
 
-  it('opens Stripe subscription management from the subscription menu', async () => {
+  it('refreshes when Cindy regains focus before the Stripe portal launch resolves', async () => {
     const billing = install(billingMocks());
     let resolvePortal!: (result: BillingSubscriptionPortalResult) => void;
     billing.openSubscriptionPortal.mockImplementation(
@@ -1390,7 +1390,6 @@ describe('BillingPage plan change', () => {
 
     expect(billing.openSubscriptionPortal).toHaveBeenCalledWith();
     expect(billing.openSubscriptionPortal).toHaveBeenCalledTimes(1);
-    await act(async () => resolvePortal({ success: true }));
 
     const catalogCalls = billing.getCatalog.mock.calls.length;
     const subscriptionCalls = billing.getCurrentSubscription.mock.calls.length;
@@ -1402,6 +1401,7 @@ describe('BillingPage plan change', () => {
       expect(billing.getBalance).toHaveBeenCalledTimes(balanceCalls + 1);
     });
 
+    await act(async () => resolvePortal({ success: true }));
     await act(async () => window.dispatchEvent(new Event('focus')));
     expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(subscriptionCalls + 1);
   });
