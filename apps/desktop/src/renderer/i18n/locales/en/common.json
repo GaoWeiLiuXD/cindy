@@ -7226,6 +7226,7 @@
       "poolDetail": "Used {{used}} · Total {{total}}",
       "remaining": "Remaining",
       "progressLabel": "{{label}} usage",
+      "noPlanCredits": "No subscription credits because there is no active subscription.",
       "historyUnavailable": "Usage history is incomplete. Only the remaining balance is available.",
       "detailsUnavailable": "Usage details are temporarily unavailable. Current balances are shown instead.",
       "promotionalDetails": {

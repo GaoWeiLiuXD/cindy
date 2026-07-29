@@ -7216,6 +7216,7 @@
       "poolDetail": "已用 {{used}} · 总额 {{total}}",
       "remaining": "剩余",
       "progressLabel": "{{label}}使用进度",
+      "noPlanCredits": "当前无生效订阅，因此没有订阅点数。",
       "historyUnavailable": "历史记录不完整，暂时仅显示剩余余额。",
       "detailsUnavailable": "用量明细暂时不可用，当前仅显示各类余额。",
       "promotionalDetails": {

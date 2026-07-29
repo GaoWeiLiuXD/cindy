@@ -7215,6 +7215,7 @@
       "poolDetail": "사용 {{used}} · 전체 {{total}}",
       "remaining": "잔여",
       "progressLabel": "{{label}} 사용량",
+      "noPlanCredits": "활성 구독이 없어 구독 크레딧이 없습니다.",
       "historyUnavailable": "사용 기록이 완전하지 않아 잔여 크레딧만 표시합니다.",
       "detailsUnavailable": "사용량 상세를 불러올 수 없어 현재 잔액만 표시합니다.",
       "promotionalDetails": {
