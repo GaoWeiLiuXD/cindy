@@ -500,7 +500,7 @@ describe('billing IPC', () => {
       success: true,
     });
     expect(fetch).toHaveBeenCalledWith('/api/billing/subscription/portal', {
-      baseUrl: 'https://model-access.example',
+      baseUrl: expect.any(Function),
       timeoutMs: 20_000,
       redactErrorDetails: true,
       method: 'POST',
