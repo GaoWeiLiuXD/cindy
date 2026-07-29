@@ -1487,20 +1487,22 @@ function BillingOfferDialog({
                         )}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-2">
                             <p className="truncate text-13 font-medium text-[var(--text-primary)]">
                               {product.name}
                             </p>
-                            {currentPlan && (
-                              <span className="rounded-full bg-[var(--surface)] px-2 py-0.5 text-10 font-medium text-[var(--text-secondary)]">
-                                {t('billing.catalog.currentPlan')}
-                              </span>
-                            )}
-                            {unavailableReason && (
-                              <span className="rounded-full bg-[var(--surface-chip)] px-2 py-0.5 text-10 font-medium text-[var(--text-secondary)]">
-                                {t(`billing.catalog.unavailableReasons.${unavailableReason}`)}
-                              </span>
-                            )}
+                            <div className="min-w-0">
+                              {currentPlan && (
+                                <span className="rounded-full bg-[var(--surface)] px-2 py-0.5 text-10 font-medium text-[var(--text-secondary)]">
+                                  {t('billing.catalog.currentPlan')}
+                                </span>
+                              )}
+                              {unavailableReason && (
+                                <span className="rounded-full bg-[var(--surface-chip)] px-2 py-0.5 text-10 font-medium text-[var(--text-secondary)]">
+                                  {t(`billing.catalog.unavailableReasons.${unavailableReason}`)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-3">
