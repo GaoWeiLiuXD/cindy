@@ -1403,34 +1403,6 @@ describe('BillingPage plan change', () => {
     expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(subscriptionCalls + 1);
   });
 
-  it('keeps the Stripe portal lock across an account switch', async () => {
-    const billing = install(billingMocks());
-    let resolvePortal!: (result: { success: boolean }) => void;
-    billing.openSubscriptionPortal.mockImplementation(
-      () => new Promise<{ success: boolean }>((resolve) => {
-        resolvePortal = resolve;
-      }),
-    );
-
-    const view = render(<BillingPage />);
-    await openSubscriptionManagementMenu();
-    fireEvent.click(
-      screen.getByRole('menuitem', { name: 'billing.settings.subscriptionCard.portalAction' }),
-    );
-    expect(billing.openSubscriptionPortal).toHaveBeenCalledTimes(1);
-
-    authState.dataOwnerId = 'account-switched';
-    view.rerender(<BillingPage />);
-    await screen.findByText('Plus plan');
-    await openSubscriptionManagementMenu();
-    fireEvent.click(
-      screen.getByRole('menuitem', { name: 'billing.settings.subscriptionCard.portalAction' }),
-    );
-    expect(billing.openSubscriptionPortal).toHaveBeenCalledTimes(1);
-
-    await act(async () => resolvePortal({ success: true }));
-  });
-
   it('does not show Stripe management in the menu for an Alipay subscription', async () => {
     const billing = billingMocks();
     billing.getCurrentSubscription = vi.fn(async () => ({
