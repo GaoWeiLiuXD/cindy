@@ -519,7 +519,7 @@ describe('billing IPC', () => {
       const pending = call(BILLING_INVOKE.OPEN_SUBSCRIPTION_PORTAL);
       await vi.advanceTimersByTimeAsync(10_000);
 
-      await expect(pending).resolves.toEqual({ success: false });
+      await expect(pending).resolves.toEqual({ success: false, timedOut: true });
       expect(openExternal).toHaveBeenCalledWith(url);
     } finally {
       vi.useRealTimers();

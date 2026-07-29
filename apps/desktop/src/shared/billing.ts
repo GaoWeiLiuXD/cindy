@@ -33,6 +33,10 @@ export type BillingPaymentAction =
   | { type: 'QR_CODE'; value: string; expiresAt: string }
   | { type: 'REDIRECT'; url: string; expiresAt: string };
 
+export type BillingSubscriptionPortalResult =
+  | { success: true }
+  | { success: false; timedOut?: true };
+
 export type BillingFulfillmentStatus = 'NOT_STARTED' | 'PENDING' | 'SUCCEEDED' | 'FAILED';
 
 export type BillingPurchaseOption = {
@@ -237,6 +241,6 @@ export interface BillingRendererApi {
   confirmPlanChange: (payload: { planChangeId: string }) => Promise<BillingPlanChange>;
   refreshPlanChange: (payload: { planChangeId: string }) => Promise<BillingPlanChange>;
   cancelPlanChange: (payload: { planChangeId: string }) => Promise<BillingPlanChange>;
-  openSubscriptionPortal: () => Promise<{ success: boolean }>;
+  openSubscriptionPortal: () => Promise<BillingSubscriptionPortalResult>;
   openPaymentRedirect: (payload: { url: string }) => Promise<{ success: boolean }>;
 }

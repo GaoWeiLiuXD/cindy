@@ -2,6 +2,7 @@ import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'ele
 
 import {
   BILLING_INVOKE,
+  type BillingSubscriptionPortalResult,
   type CreateBillingSubscriptionRequest,
   type CreateBillingTopupRequest,
 } from '../../shared/billing.js';
@@ -103,25 +104,28 @@ function projectResponse<T>(value: unknown, projector: (input: unknown) => T): T
 function openExternalWithTimeout(
   openExternal: (url: string) => Promise<void>,
   url: string,
-): Promise<boolean> {
+): Promise<BillingSubscriptionPortalResult> {
   return new Promise((resolve) => {
     let settled = false;
     let timeout: ReturnType<typeof setTimeout>;
-    const finish = (success: boolean) => {
+    const finish = (result: BillingSubscriptionPortalResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      resolve(success);
+      resolve(result);
     };
 
-    timeout = setTimeout(() => finish(false), EXTERNAL_BROWSER_LAUNCH_TIMEOUT_MS);
+    timeout = setTimeout(
+      () => finish({ success: false, timedOut: true }),
+      EXTERNAL_BROWSER_LAUNCH_TIMEOUT_MS,
+    );
     try {
       void openExternal(url).then(
-        () => finish(true),
-        () => finish(false),
+        () => finish({ success: true }),
+        () => finish({ success: false }),
       );
     } catch {
-      finish(false);
+      finish({ success: false });
     }
   });
 }
@@ -424,7 +428,7 @@ export function createBillingHandlers(
         await invoke<unknown>('/api/billing/subscription/portal', { method: 'POST' }),
         projectBillingPortalSession,
       );
-      return { success: await openExternalWithTimeout(openExternal, session.url) };
+      return openExternalWithTimeout(openExternal, session.url);
     }),
     [BILLING_INVOKE.OPEN_PAYMENT_REDIRECT]: protect(async (raw) => {
       const payload = requireObject(raw);

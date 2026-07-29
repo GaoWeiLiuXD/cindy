@@ -4,6 +4,7 @@ import type {
   BillingOrderList,
   BillingPaymentOrder,
   BillingPlanChange,
+  BillingSubscriptionPortalResult,
   BillingSubscription,
   CreateBillingSubscriptionRequest,
   CreateBillingTopupRequest,
@@ -68,7 +69,7 @@ export const billingApi = {
   cancelPlanChange(planChangeId: string): Promise<BillingPlanChange> {
     return window.electronAPI.billing.cancelPlanChange({ planChangeId });
   },
-  openSubscriptionPortal(): Promise<{ success: boolean }> {
+  openSubscriptionPortal(): Promise<BillingSubscriptionPortalResult> {
     return window.electronAPI.billing.openSubscriptionPortal();
   },
   openPaymentRedirect(url: string): Promise<{ success: boolean }> {

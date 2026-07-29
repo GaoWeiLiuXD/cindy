@@ -2,7 +2,10 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BillingSubscription } from '../../../../shared/billing';
+import type {
+  BillingSubscription,
+  BillingSubscriptionPortalResult,
+} from '../../../../shared/billing';
 
 const i18n = {
   language: 'en',
@@ -1359,9 +1362,9 @@ describe('BillingPage plan change', () => {
 
   it('opens Stripe subscription management from the subscription menu', async () => {
     const billing = install(billingMocks());
-    let resolvePortal!: (result: { success: boolean }) => void;
+    let resolvePortal!: (result: BillingSubscriptionPortalResult) => void;
     billing.openSubscriptionPortal.mockImplementation(
-      () => new Promise<{ success: boolean }>((resolve) => {
+      () => new Promise<BillingSubscriptionPortalResult>((resolve) => {
         resolvePortal = resolve;
       }),
     );
@@ -1401,6 +1404,27 @@ describe('BillingPage plan change', () => {
 
     await act(async () => window.dispatchEvent(new Event('focus')));
     expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(subscriptionCalls + 1);
+  });
+
+  it('refreshes billing after a timed-out Stripe portal launch', async () => {
+    const billing = install(billingMocks());
+    billing.openSubscriptionPortal.mockResolvedValue({ success: false, timedOut: true });
+
+    render(<BillingPage />);
+    await selectSubscriptionManagementAction('billing.settings.subscriptionCard.portalAction');
+    await waitFor(() => {
+      expect(uiMocks.toastError).toHaveBeenCalledWith('billing.settings.subscriptionCard.portalFailed');
+    });
+
+    const catalogCalls = billing.getCatalog.mock.calls.length;
+    const subscriptionCalls = billing.getCurrentSubscription.mock.calls.length;
+    const balanceCalls = billing.getBalance.mock.calls.length;
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => {
+      expect(billing.getCatalog).toHaveBeenCalledTimes(catalogCalls + 1);
+      expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(subscriptionCalls + 1);
+      expect(billing.getBalance).toHaveBeenCalledTimes(balanceCalls + 1);
+    });
   });
 
   it('does not show Stripe management in the menu for an Alipay subscription', async () => {

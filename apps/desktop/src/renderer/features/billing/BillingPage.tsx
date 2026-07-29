@@ -576,9 +576,10 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
     setOpeningSubscriptionPortal(true);
     try {
       const result = await billingApi.openSubscriptionPortal();
-      if (result.success) {
+      if (result.success || result.timedOut) {
         subscriptionPortalRefreshPendingRef.current = true;
-      } else {
+      }
+      if (!result.success) {
         toast.error(t('billing.settings.subscriptionCard.portalFailed'));
       }
     } catch {
@@ -1076,7 +1077,7 @@ function SubscriptionOverviewCard({
                 <DropdownMenuItem
                   onSelect={showPlanChangeEntry ? onChangePlan : onPurchase}
                   disabled={actionDisabled}
-                  className="h-9 rounded-lg px-3 text-12 focus:bg-[var(--surface-hover-soft)] focus:text-[var(--text-primary)]"
+                  className="h-9 rounded-lg px-3 text-12 focus:bg-[var(--surface-hover)] focus:text-[var(--text-primary)]"
                 >
                   {showPlanChangeEntry
                     ? t('billing.settings.subscriptionCard.changeAction')
@@ -1086,7 +1087,7 @@ function SubscriptionOverviewCard({
                   <DropdownMenuItem
                     onSelect={onOpenPortal}
                     disabled={actionDisabled}
-                    className="h-9 gap-2 rounded-lg px-3 text-12 focus:bg-[var(--surface-hover-soft)] focus:text-[var(--text-primary)]"
+                    className="h-9 gap-2 rounded-lg px-3 text-12 focus:bg-[var(--surface-hover)] focus:text-[var(--text-primary)]"
                   >
                     <ExternalLink size={14} aria-hidden="true" />
                     {t('billing.settings.subscriptionCard.portalAction')}
