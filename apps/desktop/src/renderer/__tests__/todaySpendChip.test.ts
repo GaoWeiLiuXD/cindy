@@ -193,10 +193,10 @@ describe('TodaySpendChip dashboard routing', () => {
 
   it('formats gateway quota amounts with the gateway-native currency', () => {
     expect(source).toContain(
-      'formatCompactMoney(gatewayMoney(claudeQuota.spend))',
+      'formatCompactMoney(gatewayMoney(claudeQuota.spend, claudeQuota.currency))',
     );
     expect(source).toContain(
-      'formatCompactMoney(gatewayMoney(claudeQuota.maxBudget))',
+      'formatCompactMoney(gatewayMoney(claudeQuota.maxBudget, claudeQuota.currency))',
     );
     expect(source).not.toContain('formatCompactUsd(claudeQuota.');
   });

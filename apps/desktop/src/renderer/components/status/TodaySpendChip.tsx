@@ -164,8 +164,8 @@ function computeMetricSlots(
     // monthly 永远跟 cycle 一起拿到; daily 走单独 endpoint 可能拉不到 (todaySpend=null) → 隐藏
     slots.monthly = {
       label: t('todaySpend.monthlyLimitLabel', {
-        spend: formatCompactMoney(gatewayMoney(claudeQuota.spend)),
-        limit: formatCompactMoney(gatewayMoney(claudeQuota.maxBudget)),
+        spend: formatCompactMoney(gatewayMoney(claudeQuota.spend, claudeQuota.currency)),
+        limit: formatCompactMoney(gatewayMoney(claudeQuota.maxBudget, claudeQuota.currency)),
       }),
       available: true,
     };
@@ -174,9 +174,9 @@ function computeMetricSlots(
       slots.daily = {
         label: t('todaySpend.dailyLimitLabel', {
           spend: formatCompactMoney(
-            gatewayMoney(claudeQuota.todaySpend),
+            gatewayMoney(claudeQuota.todaySpend, claudeQuota.currency),
           ),
-          limit: formatCompactMoney(gatewayMoney(softLimit)),
+          limit: formatCompactMoney(gatewayMoney(softLimit, claudeQuota.currency)),
         }),
         available: true,
       };

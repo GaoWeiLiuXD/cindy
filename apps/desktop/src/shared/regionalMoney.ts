@@ -125,13 +125,17 @@ export function regionalizeUsd(
   return regionalizeMoney(usdMoney(amountUsd, kind, reason), region);
 }
 
-/** 当前客户端 Gateway 数值，币种跟随本地 usage 账本。 */
-export function gatewayMoney(amount: number, kind: MoneyKind = 'actual-cost'): RegionalMoney {
+/** Gateway 原生数值；缺省币种跟随本地 usage 账本，账号快照可显式传入币种。 */
+export function gatewayMoney(
+  amount: number,
+  currency: MoneyCurrency = DEFAULT_USAGE_CURRENCY,
+  kind: MoneyKind = 'actual-cost',
+): RegionalMoney {
   assertAmount(amount);
   const approximate = kind === 'value-estimate';
   return {
     amount,
-    currency: DEFAULT_USAGE_CURRENCY,
+    currency,
     approximate,
     kind,
     ...(approximate ? { estimateReasons: ['subscription-value'] } : {}),

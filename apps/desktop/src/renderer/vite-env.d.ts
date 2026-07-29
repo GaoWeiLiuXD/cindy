@@ -4431,6 +4431,7 @@ interface ElectronAPI {
         cb: (p: {
           spend: number;
           maxBudget: number;
+          currency: import('../shared/regionalMoney').MoneyCurrency;
           budgetResetAt?: string | null;
           todaySpend: number | null;
           fetchedAt: number;

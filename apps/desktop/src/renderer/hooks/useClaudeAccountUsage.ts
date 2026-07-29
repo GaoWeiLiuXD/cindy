@@ -27,11 +27,15 @@
 
 import { useEffect, useState } from 'react';
 
+import type { MoneyCurrency } from '../../shared/regionalMoney';
+
 export interface ClaudeAccountUsageSnapshot {
   /** 月度周期跨客户端累计，保持 Gateway 部署区域的原生金额。 */
   spend: number;
   /** 月度周期上限，保持 Gateway 部署区域的原生金额。 */
   maxBudget: number;
+  /** Gateway 账号金额的原生币种。 */
+  currency: MoneyCurrency;
   /** 下次月度 reset 时间 ISO8601。 */
   budgetResetAt?: string | null;
   /**
@@ -53,6 +57,7 @@ function isSnapshot(v: unknown): v is ClaudeAccountUsageSnapshot {
     typeof r.spend === 'number' &&
     typeof r.maxBudget === 'number' &&
     r.maxBudget > 0 &&
+    (r.currency === 'CNY' || r.currency === 'USD') &&
     (typeof r.todaySpend === 'number' || r.todaySpend === null)
   );
 }
