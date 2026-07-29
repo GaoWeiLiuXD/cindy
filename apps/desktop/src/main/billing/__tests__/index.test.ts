@@ -514,7 +514,7 @@ describe('billing IPC', () => {
       const { call, fetch, openExternal } = harness();
       const url = 'https://billing.stripe.com/p/session/session_fixture';
       fetch.mockResolvedValueOnce({ url });
-      openExternal.mockImplementationOnce(() => new Promise<void>(() => {}));
+      openExternal.mockImplementationOnce(() => new Promise<undefined>(() => {}));
 
       const pending = call(BILLING_INVOKE.OPEN_SUBSCRIPTION_PORTAL);
       await vi.advanceTimersByTimeAsync(10_000);
