@@ -13,6 +13,7 @@ import {
   projectBillingCatalog,
   projectBillingCurrentSubscription,
   projectBillingOrderList,
+  projectBillingPortalSession,
   projectBillingPaymentOrder,
   projectBillingPlanChange,
   projectBillingSubscription,
@@ -387,6 +388,21 @@ export function createBillingHandlers(
         ),
         projectBillingPlanChange,
       );
+    }),
+    [BILLING_INVOKE.OPEN_SUBSCRIPTION_PORTAL]: protect(async (raw) => {
+      if (raw !== undefined) {
+        throwIpcError('INVALID_PARAMS', 'subscription portal does not accept a payload');
+      }
+      const session = projectResponse(
+        await invoke<unknown>('/api/billing/subscription/portal', { method: 'POST' }),
+        projectBillingPortalSession,
+      );
+      try {
+        await openExternal(session.url);
+        return { success: true };
+      } catch {
+        return { success: false };
+      }
     }),
     [BILLING_INVOKE.OPEN_PAYMENT_REDIRECT]: protect(async (raw) => {
       const payload = requireObject(raw);

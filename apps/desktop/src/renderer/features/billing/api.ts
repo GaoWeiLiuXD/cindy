@@ -68,6 +68,9 @@ export const billingApi = {
   cancelPlanChange(planChangeId: string): Promise<BillingPlanChange> {
     return window.electronAPI.billing.cancelPlanChange({ planChangeId });
   },
+  openSubscriptionPortal(): Promise<{ success: boolean }> {
+    return window.electronAPI.billing.openSubscriptionPortal();
+  },
   openPaymentRedirect(url: string): Promise<{ success: boolean }> {
     return window.electronAPI.billing.openPaymentRedirect({ url });
   },

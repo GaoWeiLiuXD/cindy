@@ -3,8 +3,10 @@ import * as Dialog from '@radix-ui/react-dialog';
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   CircleDollarSign,
   CreditCard,
+  ExternalLink,
   PackageOpen,
   RefreshCcw,
   X,
@@ -12,6 +14,13 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from '@/lib/toast';
 import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -233,6 +242,7 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
   const [loadingSubscription, setLoadingSubscription] = useState(true);
   const [subscriptionError, setSubscriptionError] = useState(false);
   const [cancelingSubscription, setCancelingSubscription] = useState(false);
+  const [openingSubscriptionPortal, setOpeningSubscriptionPortal] = useState(false);
   const [creditUsage, setCreditUsage] = useState<ModelAccessCreditUsage | null>(null);
   const [balance, setBalance] = useState<ModelAccessBalance | null>(null);
   const [usageDetailsUnavailable, setUsageDetailsUnavailable] = useState(false);
@@ -541,6 +551,21 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
     };
   }, [billingLocale, currentSubscription, planNameOf, t]);
 
+  const openSubscriptionPortal = useCallback(async () => {
+    if (currentSubscription?.provider !== 'stripe') return;
+    setOpeningSubscriptionPortal(true);
+    try {
+      const result = await billingApi.openSubscriptionPortal();
+      if (!result.success) {
+        toast.error(t('billing.settings.subscriptionCard.portalFailed'));
+      }
+    } catch {
+      toast.error(t('billing.settings.subscriptionCard.portalFailed'));
+    } finally {
+      setOpeningSubscriptionPortal(false);
+    }
+  }, [currentSubscription?.provider, t]);
+
   const cancelCurrentSubscription = useCallback(async () => {
     if (
       cancelSubscriptionLockRef.current ||
@@ -734,7 +759,11 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
             type="button"
             onClick={() => void loadBillingState()}
             disabled={
-              loadingCatalog || loadingSubscription || loadingBalance || cancelingSubscription
+              loadingCatalog ||
+              loadingSubscription ||
+              loadingBalance ||
+              cancelingSubscription ||
+              openingSubscriptionPortal
             }
             className="inline-flex h-8 shrink-0 items-center gap-2 rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover-soft)] disabled:opacity-45"
           >
@@ -754,11 +783,19 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
               loading={loadingSubscription}
               error={subscriptionError}
               showPlanChangeEntry={showPlanChangeEntry}
+              showPortalEntry={currentSubscription?.provider === 'stripe'}
               canceling={cancelingSubscription}
-              actionDisabled={loadingSubscription || subscriptionError || cancelingSubscription}
+              openingPortal={openingSubscriptionPortal}
+              actionDisabled={
+                loadingSubscription ||
+                subscriptionError ||
+                cancelingSubscription ||
+                openingSubscriptionPortal
+              }
               pendingPlanChange={pendingPlanChange}
               pendingTargetName={planNameOf(pendingPlanChange?.targetPlan?.product.code)}
               onCancelSubscription={() => void cancelCurrentSubscription()}
+              onOpenPortal={() => void openSubscriptionPortal()}
               onChangePlan={openPlanChange}
               onPurchase={() => openPurchaseDialog('SUBSCRIPTION')}
               onCancelPending={() => {
@@ -891,11 +928,14 @@ function SubscriptionOverviewCard({
   loading,
   error,
   showPlanChangeEntry,
+  showPortalEntry,
   canceling,
+  openingPortal,
   actionDisabled,
   pendingPlanChange,
   pendingTargetName,
   onCancelSubscription,
+  onOpenPortal,
   onChangePlan,
   onPurchase,
   onCancelPending,
@@ -904,11 +944,14 @@ function SubscriptionOverviewCard({
   loading: boolean;
   error: boolean;
   showPlanChangeEntry: boolean;
+  showPortalEntry: boolean;
   canceling: boolean;
+  openingPortal: boolean;
   actionDisabled: boolean;
   pendingPlanChange: BillingPendingPlanChange | null;
   pendingTargetName: string | null;
   onCancelSubscription: () => void;
+  onOpenPortal: () => void;
   onChangePlan: () => void;
   onPurchase: () => void;
   onCancelPending: () => void;
@@ -981,33 +1024,80 @@ function SubscriptionOverviewCard({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
-          {facts &&
-            !facts.cancelAtPeriodEnd &&
-            SUBSCRIPTION_CANCELLABLE_STATUSES.includes(facts.status) && (
-              <button
-                type="button"
-                onClick={onCancelSubscription}
-                disabled={actionDisabled}
-                aria-label={t('billing.settings.subscriptionCard.cancelAction')}
-                className="inline-flex h-8 select-none items-center justify-center rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--error-fg)] transition-colors hover:bg-[var(--error-bg)] disabled:cursor-not-allowed disabled:opacity-40"
+          {facts ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  disabled={actionDisabled}
+                  className="group inline-flex h-8 select-none items-center justify-center gap-1.5 rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] data-[state=open]:bg-[var(--surface-chip)] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {t('billing.settings.subscriptionCard.manageAction')}
+                  {canceling || openingPortal ? (
+                    <Spinner size={13} />
+                  ) : (
+                    <ChevronDown
+                      size={13}
+                      strokeWidth={1.75}
+                      className="transition-transform duration-150 group-data-[state=open]:rotate-180 motion-reduce:transition-none"
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={8}
+                className="w-44 rounded-[12px] border-[0.5px] border-[var(--border-default)] bg-[var(--surface-elevated)] p-1.5 text-[var(--text-primary)] shadow-[var(--shadow-menu)]"
               >
-                {canceling ? (
-                  <Spinner size={13} />
-                ) : (
-                  t('billing.settings.subscriptionCard.cancelAction')
+                <DropdownMenuItem
+                  onSelect={showPlanChangeEntry ? onChangePlan : onPurchase}
+                  disabled={actionDisabled}
+                  className="h-9 rounded-lg px-3 text-12 focus:bg-[var(--surface-hover-soft)] focus:text-[var(--text-primary)]"
+                >
+                  {showPlanChangeEntry
+                    ? t('billing.settings.subscriptionCard.changeAction')
+                    : t('billing.settings.subscriptionCard.action')}
+                </DropdownMenuItem>
+                {showPortalEntry && (
+                  <DropdownMenuItem
+                    onSelect={onOpenPortal}
+                    disabled={actionDisabled}
+                    className="h-9 gap-2 rounded-lg px-3 text-12 focus:bg-[var(--surface-hover-soft)] focus:text-[var(--text-primary)]"
+                  >
+                    <ExternalLink size={14} aria-hidden="true" />
+                    {t('billing.settings.subscriptionCard.portalAction')}
+                  </DropdownMenuItem>
                 )}
-              </button>
-            )}
-          <button
-            type="button"
-            onClick={showPlanChangeEntry ? onChangePlan : onPurchase}
-            disabled={actionDisabled}
-            className="h-8 select-none rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover-soft)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {showPlanChangeEntry
-              ? t('billing.settings.subscriptionCard.changeAction')
-              : t('billing.settings.subscriptionCard.action')}
-          </button>
+                {!facts.cancelAtPeriodEnd &&
+                  SUBSCRIPTION_CANCELLABLE_STATUSES.includes(facts.status) && (
+                    <>
+                      <DropdownMenuSeparator className="mx-2 my-1 h-px bg-[var(--border-default)]" />
+                      <DropdownMenuItem
+                        onSelect={onCancelSubscription}
+                        disabled={actionDisabled}
+                        className="h-9 rounded-lg px-3 text-12 text-[var(--error-fg)] focus:bg-[var(--error-bg)] focus:text-[var(--error-fg)]"
+                      >
+                        {canceling ? (
+                          <Spinner size={13} />
+                        ) : (
+                          t('billing.settings.subscriptionCard.cancelAction')
+                        )}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <button
+              type="button"
+              onClick={onPurchase}
+              disabled={actionDisabled}
+              className="h-8 select-none rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {t('billing.settings.subscriptionCard.action')}
+            </button>
+          )}
         </div>
       </div>
       {pendingPlanChange?.status === 'SCHEDULED' && (
