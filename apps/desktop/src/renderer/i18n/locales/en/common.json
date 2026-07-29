@@ -7270,8 +7270,7 @@
     "catalog": {
       "errorTitle": "Plans are temporarily unavailable",
       "errorDescription": "Check your connection and retry. Local fallback plans will not be used.",
-      "emptyTitle": "No Plans Available",
-      "emptyDescription": "The server has not published any plans yet.",
+      "emptyTitle": "Coming soon. Stay tuned.",
       "currentPlan": "Current Plan",
       "unavailableReasons": {
         "OFFER_COMING_SOON": "Coming Soon",

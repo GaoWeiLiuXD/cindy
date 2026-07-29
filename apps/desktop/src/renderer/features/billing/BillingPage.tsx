@@ -1450,7 +1450,6 @@ function BillingOfferDialog({
               <StateCard
                 icon={<PackageOpen size={22} />}
                 title={t('billing.catalog.emptyTitle')}
-                description={t('billing.catalog.emptyDescription')}
               />
             ) : (
               <>

@@ -7260,8 +7260,7 @@
     "catalog": {
       "errorTitle": "暂时无法获取套餐",
       "errorDescription": "请检查网络后重试。不会使用本地套餐替代。",
-      "emptyTitle": "当前暂无套餐",
-      "emptyDescription": "服务端尚未配置公开的套餐。",
+      "emptyTitle": "即将上线，敬请期待",
       "currentPlan": "当前套餐",
       "unavailableReasons": {
         "OFFER_COMING_SOON": "敬请期待",
