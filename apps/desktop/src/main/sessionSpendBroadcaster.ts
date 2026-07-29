@@ -89,15 +89,16 @@ export async function recordSessionTurnSpend(
   }
   try {
     const db = getDbClient().drizzle;
-    // 单币种累计列:已有异币种历史金额保持原样。CASE 与币种写入在同一条
-    // UPDATE 里，避免并发把不同单位的裸数字加到一起。
+    // 单币种累计列:恢复旧会话时若累计仍是旧币种，首笔当前币种费用重新
+    // 起算聚合列；消息历史保持原样，不猜测旧总额应如何换算。CASE 与写入
+    // 在同一条 UPDATE 里，避免并发混加不同单位。
     const sameCurrency = sql`(${sessions.totalCostCurrency} IS NULL OR ${sessions.totalCostCurrency} = ${normalized.currency})`;
     await db
       .update(sessions)
       .set({
-        totalCostAmount: sql`CASE WHEN ${sameCurrency} THEN ${sessions.totalCostAmount} + ${normalized.amount} ELSE ${sessions.totalCostAmount} END`,
-        totalCostCurrency: sql`CASE WHEN ${sameCurrency} THEN ${normalized.currency} ELSE ${sessions.totalCostCurrency} END`,
-        totalCostIsApproximate: sql`CASE WHEN ${sameCurrency} THEN (${sessions.totalCostIsApproximate} OR ${normalized.approximate ? 1 : 0}) ELSE ${sessions.totalCostIsApproximate} END`,
+        totalCostAmount: sql`CASE WHEN ${sameCurrency} THEN ${sessions.totalCostAmount} + ${normalized.amount} ELSE ${normalized.amount} END`,
+        totalCostCurrency: normalized.currency,
+        totalCostIsApproximate: sql`CASE WHEN ${sameCurrency} THEN (${sessions.totalCostIsApproximate} OR ${normalized.approximate ? 1 : 0}) ELSE ${normalized.approximate ? 1 : 0} END`,
       })
       .where(sql`${sessions.id} = ${sessionId}`)
       .run();
@@ -111,9 +112,6 @@ export async function recordSessionTurnSpend(
       .from(sessions)
       .where(sql`${sessions.id} = ${sessionId}`)
       .get();
-    if (row?.totalCostCurrency && row.totalCostCurrency !== normalized.currency) {
-      log.warn('recordSessionTurnSpend dropped a conflicting-currency segment');
-    }
     const legacy = legacyUsdMoney(row?.totalCostUsd ?? 0);
     const current = normalizeRegionalMoney({
       amount: row?.totalCostAmount ?? 0,

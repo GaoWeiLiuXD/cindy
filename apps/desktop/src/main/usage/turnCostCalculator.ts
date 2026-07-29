@@ -125,10 +125,21 @@ export function resolveTurnCost(args: {
 
   if (context.billingRoute === 'xd-gateway') {
     const quote = getModelPriceQuote(pricing, 'xd', model);
+    if (!quote) {
+      const fallbackUsd = Math.max(0, sdkCostDelta ?? 0);
+      return {
+        model,
+        money:
+          fallbackUsd > 0
+            ? regionalizeUsd(fallbackUsd, context.region)
+            : null,
+        source: 'sdk-fallback',
+      };
+    }
     return {
       model,
       money: computePriceQuoteTurnMoney(tokens, quote, context.region),
-      source: quote ? 'gateway' : 'sdk-fallback',
+      source: 'gateway',
     };
   }
 

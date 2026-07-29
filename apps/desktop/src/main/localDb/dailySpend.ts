@@ -5,6 +5,7 @@ import {
   DEFAULT_USAGE_CURRENCY,
   legacyUsdMoney,
   normalizeRegionalMoney,
+  zeroUsageMoney,
   type RegionalMoney,
 } from '../../shared/regionalMoney.js';
 import { dailySpend } from './schema.js';
@@ -44,7 +45,7 @@ function rowMoney(
   if (legacy.amount > 0 && current) {
     return legacy.currency === current.currency ? addRegionalMoney([legacy, current]) : current;
   }
-  return current ?? legacy;
+  return current ?? (legacy.amount > 0 ? legacy : zeroUsageMoney());
 }
 
 async function getSpendForDay(day: string): Promise<RegionalMoney> {
@@ -71,13 +72,15 @@ export async function incrementDailySpend(
     return { day, money: await getSpendForDay(day) };
   }
   if (normalized.currency !== DEFAULT_USAGE_CURRENCY) {
-    throw new Error(
-      `daily spend currency mismatch: ${normalized.currency} != ${DEFAULT_USAGE_CURRENCY}`,
+    log.warn(
+      `daily spend rejected currency mismatch: ${normalized.currency} != ${DEFAULT_USAGE_CURRENCY}`,
     );
+    return { day, money: await getSpendForDay(day) };
   }
   const db = getDbClient().drizzle;
-  // 单币种日账本:入口只允许当前区域币种；已有异币种历史行保持原样。
-  // 守卫在同一条 upsert 里，避免并发写把不同单位的裸数字加到一起。
+  // 单币种日账本:入口只允许当前区域币种。升级前当天若仍是旧币种，
+  // 首笔新费用从当前区域币种重新起算；不猜测或换算旧聚合值，也不让当天
+  // 后续费用永久停记。CASE 与写入保持原子，避免并发混加不同单位。
   const sameCurrency = sql`(${dailySpend.costCurrency} IS NULL OR ${dailySpend.costCurrency} = ${normalized.currency})`;
   await db
     .insert(dailySpend)
@@ -91,19 +94,14 @@ export async function incrementDailySpend(
     .onConflictDoUpdate({
       target: dailySpend.day,
       set: {
-        costAmount: sql`CASE WHEN ${sameCurrency} THEN ${dailySpend.costAmount} + ${normalized.amount} ELSE ${dailySpend.costAmount} END`,
-        costCurrency: sql`CASE WHEN ${sameCurrency} THEN ${normalized.currency} ELSE ${dailySpend.costCurrency} END`,
-        costIsApproximate: sql`CASE WHEN ${sameCurrency} THEN (${dailySpend.costIsApproximate} OR ${normalized.approximate ? 1 : 0}) ELSE ${dailySpend.costIsApproximate} END`,
+        costAmount: sql`CASE WHEN ${sameCurrency} THEN ${dailySpend.costAmount} + ${normalized.amount} ELSE ${normalized.amount} END`,
+        costCurrency: normalized.currency,
+        costIsApproximate: sql`CASE WHEN ${sameCurrency} THEN (${dailySpend.costIsApproximate} OR ${normalized.approximate ? 1 : 0}) ELSE ${normalized.approximate ? 1 : 0} END`,
         updatedAt: ts,
       },
     })
     .run();
   const persisted = await getSpendForDay(day);
-  if (persisted.currency !== normalized.currency && persisted.amount > 0) {
-    log.warn(
-      `daily spend currency conflict on ${day}: keeping ${persisted.currency}, dropped ${normalized.currency} amount`,
-    );
-  }
   return { day, money: persisted };
 }
 
