@@ -1220,6 +1220,10 @@ function UsageBreakdownCard({
   );
 }
 
+function isZeroCreditAmount(amount: string): boolean {
+  return /^[+-]?0+(?:\.0+)?$/.test(amount.trim());
+}
+
 function CreditPoolRow({
   label,
   pool,
@@ -1238,7 +1242,7 @@ function CreditPoolRow({
           used: formatMoney(pool.used, BILLING_CURRENCY, billingLocale),
           total: formatMoney(pool.total, BILLING_CURRENCY, billingLocale),
         })
-      : noActiveSubscription
+      : noActiveSubscription && isZeroCreditAmount(pool.remaining)
         ? t('billing.usage.noPlanCredits')
         : t('billing.usage.historyUnavailable');
   return (
@@ -1636,7 +1640,7 @@ function StateCard({
 }: {
   icon: React.ReactNode;
   title: string;
-  description: string;
+  description?: string;
   action?: React.ReactNode;
 }) {
   return (
@@ -1645,7 +1649,7 @@ function StateCard({
         {icon}
       </div>
       <p className="mt-4 text-sm font-medium">{title}</p>
-      <p className="mt-1 text-12 text-[var(--text-secondary)]">{description}</p>
+      {description && <p className="mt-1 text-12 text-[var(--text-secondary)]">{description}</p>}
       {action}
     </div>
   );
