@@ -1359,7 +1359,12 @@ describe('BillingPage plan change', () => {
 
   it('opens Stripe subscription management from the subscription menu', async () => {
     const billing = install(billingMocks());
-    billing.openSubscriptionPortal.mockResolvedValue({ success: true });
+    let resolvePortal!: (result: { success: boolean }) => void;
+    billing.openSubscriptionPortal.mockImplementation(
+      () => new Promise<{ success: boolean }>((resolve) => {
+        resolvePortal = resolve;
+      }),
+    );
 
     render(<BillingPage />);
     await openSubscriptionManagementMenu();
@@ -1372,11 +1377,17 @@ describe('BillingPage plan change', () => {
     expect(
       screen.getByRole('menuitem', { name: 'billing.settings.subscriptionCard.cancelAction' }),
     ).toBeTruthy();
-    fireEvent.click(
-      screen.getByRole('menuitem', { name: 'billing.settings.subscriptionCard.portalAction' }),
-    );
+    const portalAction = screen.getByRole('menuitem', {
+      name: 'billing.settings.subscriptionCard.portalAction',
+    });
+    await act(async () => {
+      fireEvent.click(portalAction);
+      fireEvent.click(portalAction);
+    });
 
-    await waitFor(() => expect(billing.openSubscriptionPortal).toHaveBeenCalledWith());
+    expect(billing.openSubscriptionPortal).toHaveBeenCalledWith();
+    expect(billing.openSubscriptionPortal).toHaveBeenCalledTimes(1);
+    await act(async () => resolvePortal({ success: true }));
   });
 
   it('does not show Stripe management in the menu for an Alipay subscription', async () => {

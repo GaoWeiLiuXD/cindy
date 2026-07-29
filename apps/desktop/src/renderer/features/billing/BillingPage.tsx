@@ -257,6 +257,7 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
   const checkout = useBillingCheckout(accountId);
   const previousCheckoutPhaseRef = useRef(checkout.state.phase);
   const cancelSubscriptionLockRef = useRef(false);
+  const subscriptionPortalLockRef = useRef(false);
   // 取消订阅的 DELETE 不带 subscriptionId,服务端按「请求时已认证的账号」执行。
   // ConfirmDialogProvider 挂在 AuthProvider 之外(见 App.tsx),弹窗会活过本 section
   // 因 dataOwnerId 变化而发生的卸载,所以必须记住确认时的账号与挂载态。
@@ -552,7 +553,8 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
   }, [billingLocale, currentSubscription, planNameOf, t]);
 
   const openSubscriptionPortal = useCallback(async () => {
-    if (currentSubscription?.provider !== 'stripe') return;
+    if (subscriptionPortalLockRef.current || currentSubscription?.provider !== 'stripe') return;
+    subscriptionPortalLockRef.current = true;
     setOpeningSubscriptionPortal(true);
     try {
       const result = await billingApi.openSubscriptionPortal();
@@ -563,6 +565,7 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
       toast.error(t('billing.settings.subscriptionCard.portalFailed'));
     } finally {
       setOpeningSubscriptionPortal(false);
+      subscriptionPortalLockRef.current = false;
     }
   }, [currentSubscription?.provider, t]);
 
@@ -1030,7 +1033,7 @@ function SubscriptionOverviewCard({
                 <button
                   type="button"
                   disabled={actionDisabled}
-                  className="group inline-flex h-8 select-none items-center justify-center gap-1.5 rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] data-[state=open]:bg-[var(--surface-chip)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="group inline-flex h-8 min-w-[9.5rem] select-none items-center justify-center gap-1.5 rounded-full border border-[var(--border-default)] px-3.5 text-12 font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--surface-hover-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] data-[state=open]:bg-[var(--surface-chip)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {t('billing.settings.subscriptionCard.manageAction')}
                   {canceling || openingPortal ? (
@@ -1048,7 +1051,7 @@ function SubscriptionOverviewCard({
               <DropdownMenuContent
                 align="end"
                 sideOffset={8}
-                className="w-44 rounded-[12px] border-[0.5px] border-[var(--border-default)] bg-[var(--surface-elevated)] p-1.5 text-[var(--text-primary)] shadow-[var(--shadow-menu)]"
+                className="w-[var(--radix-dropdown-menu-trigger-width)] rounded-[12px] border-[0.5px] border-[var(--border-default)] bg-[var(--surface-elevated)] p-1.5 text-[var(--text-primary)] shadow-[var(--shadow-menu)]"
               >
                 <DropdownMenuItem
                   onSelect={showPlanChangeEntry ? onChangePlan : onPurchase}
