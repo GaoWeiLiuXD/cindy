@@ -186,7 +186,7 @@ describe('resolveTurnCost', () => {
     expect(claude.money?.amount).toBe(5);
   });
 
-  it('uses the SDK USD fallback in regional currency when the Gateway quote is missing', () => {
+  it('keeps the SDK USD fallback for Global when the Gateway quote is missing', () => {
     const result = resolveTurnCost({
       rawModel: 'unknown-model',
       tokens: {
@@ -197,13 +197,14 @@ describe('resolveTurnCost', () => {
       },
       sdkCostDelta: 1.23,
       pricing: {},
-      context: XD_GATEWAY_CN,
+      context: XD_GATEWAY,
     });
     expect(result.source).toBe('sdk-fallback');
-    expect(result.money).toMatchObject({
-      amount: 1.23 * 6.7,
-      currency: 'CNY',
+    expect(result.money).toEqual({
+      amount: 1.23,
+      currency: 'USD',
       approximate: false,
+      kind: 'actual-cost',
     });
   });
 
@@ -332,7 +333,7 @@ describe('resolveClaudeTurnCostSinks', () => {
     expect(result.perModel.map((item) => item.source)).toEqual(['gateway', 'gateway']);
   });
 
-  it('combines quoted CN Gateway segments with regionalized SDK fallbacks', () => {
+  it('keeps quoted CN Gateway segments and omits unquoted SDK USD amounts', () => {
     const pricing = catalog(quote('claude-opus-4-8', 5, 25, { currency: 'CNY' }));
     const result = resolveClaudeTurnCostSinks(
       [
@@ -343,13 +344,13 @@ describe('resolveClaudeTurnCostSinks', () => {
       XD_GATEWAY_CN,
     );
     expect(result.turnMoney).toMatchObject({
-      amount: 18.4,
+      amount: 5,
       currency: 'CNY',
       kind: 'actual-cost',
     });
     expect(result.perModel.map((item) => item.money)).toEqual([
       expect.objectContaining({ currency: 'CNY', amount: 5 }),
-      expect.objectContaining({ currency: 'CNY', amount: 13.4 }),
+      null,
     ]);
     expect(result.perModel.map((item) => item.source)).toEqual(['gateway', 'sdk-fallback']);
   });

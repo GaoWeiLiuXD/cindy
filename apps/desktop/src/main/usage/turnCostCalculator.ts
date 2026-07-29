@@ -126,11 +126,13 @@ export function resolveTurnCost(args: {
   if (context.billingRoute === 'xd-gateway') {
     const quote = getModelPriceQuote(pricing, 'xd', model);
     if (!quote) {
+      // Global 的 SDK costUSD 与账本同为 USD，可在冷缓存时保底；CN/Dev 的
+      // Gateway 报价原生 CNY，SDK USD 既不是该报价也没有 costDiscount，不能误记。
       const fallbackUsd = Math.max(0, sdkCostDelta ?? 0);
       return {
         model,
         money:
-          fallbackUsd > 0
+          context.region === 'global' && fallbackUsd > 0
             ? regionalizeUsd(fallbackUsd, context.region)
             : null,
         source: 'sdk-fallback',
