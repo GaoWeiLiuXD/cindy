@@ -212,7 +212,7 @@ describe('combineSessionUsageMoney', () => {
     expect(result.totalMoney?.amount).toBeCloseTo(1.259804, 10);
   });
 
-  it('projects a legacy USD estimate into an active CNY session total', () => {
+  it('drops an ambiguous legacy USD estimate from an active CNY session total', () => {
     const result = combineSessionUsageMoney(
       {
         amount: 1,
@@ -229,7 +229,7 @@ describe('combineSessionUsageMoney', () => {
       },
     );
 
-    expect(result.estimatedValueMoney?.amount).toBe(6.7);
-    expect(result.totalMoney).toMatchObject({ amount: 7.7, currency: 'CNY' });
+    expect(result.estimatedValueMoney).toBeNull();
+    expect(result.totalMoney).toMatchObject({ amount: 1, currency: 'CNY' });
   });
 });
