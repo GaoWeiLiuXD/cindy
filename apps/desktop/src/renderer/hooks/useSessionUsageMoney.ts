@@ -8,7 +8,12 @@
 
 import { useMemo } from 'react';
 
-import { addCompatibleRegionalMoney, type RegionalMoney } from '../../shared/regionalMoney';
+import {
+  addCompatibleRegionalMoney,
+  DEFAULT_USAGE_CURRENCY,
+  regionalizeMoney,
+  type RegionalMoney,
+} from '../../shared/regionalMoney';
 import { useSessionEstimatedValue } from './useSessionEstimatedValue';
 import { useSessionSpend } from './useSessionSpend';
 
@@ -22,12 +27,21 @@ export function combineSessionUsageMoney(
   actualMoney: RegionalMoney | null,
   estimatedValueMoney: RegionalMoney | null,
 ): SessionUsageMoney {
-  const values = [actualMoney, estimatedValueMoney].filter((money): money is RegionalMoney =>
-    Boolean(money && money.amount > 0),
+  // 旧 turnCostUsd 只在读侧投影：活跃账本已是 CNY 时按固定汇率纳入会话合计；
+  // 仍为 USD 的历史会话保持同单位，不猜测或改写历史脏数据。
+  const preferredCurrency = actualMoney?.currency ?? DEFAULT_USAGE_CURRENCY;
+  const displayedEstimatedValueMoney =
+    preferredCurrency === 'CNY' &&
+    estimatedValueMoney?.currency === 'USD' &&
+    estimatedValueMoney.estimateReasons?.includes('legacy-usd')
+      ? regionalizeMoney(estimatedValueMoney, 'cn')
+      : estimatedValueMoney;
+  const values = [actualMoney, displayedEstimatedValueMoney].filter(
+    (money): money is RegionalMoney => Boolean(money && money.amount > 0),
   );
   return {
     actualMoney,
-    estimatedValueMoney,
+    estimatedValueMoney: displayedEstimatedValueMoney,
     totalMoney: values.length > 0 ? addCompatibleRegionalMoney(values) : null,
   };
 }

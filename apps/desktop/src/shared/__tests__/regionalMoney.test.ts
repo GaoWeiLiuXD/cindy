@@ -21,25 +21,13 @@ const cnyActual = (amount: number): RegionalMoney => ({
 });
 
 describe('regional money', () => {
-  it('keeps Gateway values exact and uses the current region by default', () => {
+  it('keeps current-client Gateway values exact in the local ledger currency', () => {
     expect(gatewayMoney(3).currency).toBe(DEFAULT_USAGE_CURRENCY);
-    expect(gatewayMoney(3, 'actual-cost', 'global')).toEqual({
-      amount: 3,
-      currency: 'USD',
-      approximate: false,
-      kind: 'actual-cost',
-    });
   });
 
-  it('uses the build region as the Gateway currency contract', () => {
+  it('maps an explicitly supplied region to the Gateway currency contract', () => {
     expect(gatewayCurrency('global')).toBe('USD');
     expect(gatewayCurrency('cn')).toBe('CNY');
-    expect(gatewayMoney(3, 'actual-cost', 'cn')).toEqual({
-      amount: 3,
-      currency: 'CNY',
-      approximate: false,
-      kind: 'actual-cost',
-    });
   });
 
   it('converts non-Gateway USD into the CN ledger at the exact fixed rate', () => {

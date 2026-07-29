@@ -211,4 +211,25 @@ describe('combineSessionUsageMoney', () => {
     });
     expect(result.totalMoney?.amount).toBeCloseTo(1.259804, 10);
   });
+
+  it('projects a legacy USD estimate into an active CNY session total', () => {
+    const result = combineSessionUsageMoney(
+      {
+        amount: 1,
+        currency: 'CNY',
+        approximate: false,
+        kind: 'actual-cost',
+      },
+      {
+        amount: 1,
+        currency: 'USD',
+        approximate: true,
+        kind: 'value-estimate',
+        estimateReasons: ['legacy-usd', 'subscription-value'],
+      },
+    );
+
+    expect(result.estimatedValueMoney?.amount).toBe(6.7);
+    expect(result.totalMoney).toMatchObject({ amount: 7.7, currency: 'CNY' });
+  });
 });

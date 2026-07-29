@@ -60,18 +60,16 @@ function uniqueReasons(
   return out.length > 0 ? out : undefined;
 }
 
-/** Gateway 金额币种只由当前构建 region 决定。 */
-export function gatewayCurrency(region: CindyRegion = CURRENT_CINDY_REGION): MoneyCurrency {
+/** Gateway 金额币种由显式 region 决定。 */
+export function gatewayCurrency(region: CindyRegion): MoneyCurrency {
   return gatewayCurrencyForRegion(region);
 }
 
-export function zeroUsageMoney(
-  kind: MoneyKind = 'actual-cost',
-  region: CindyRegion = CURRENT_CINDY_REGION,
-): RegionalMoney {
+/** 当前客户端本地 usage 账本的零值。 */
+export function zeroUsageMoney(kind: MoneyKind = 'actual-cost'): RegionalMoney {
   return {
     amount: 0,
-    currency: gatewayCurrencyForRegion(region),
+    currency: DEFAULT_USAGE_CURRENCY,
     approximate: kind === 'value-estimate',
     kind,
     ...(kind === 'value-estimate' ? { estimateReasons: ['subscription-value'] } : {}),
@@ -127,16 +125,13 @@ export function regionalizeUsd(
   return regionalizeMoney(usdMoney(amountUsd, kind, reason), region);
 }
 
-export function gatewayMoney(
-  amount: number,
-  kind: MoneyKind = 'actual-cost',
-  region: CindyRegion = CURRENT_CINDY_REGION,
-): RegionalMoney {
+/** 当前客户端 Gateway 数值，币种跟随本地 usage 账本。 */
+export function gatewayMoney(amount: number, kind: MoneyKind = 'actual-cost'): RegionalMoney {
   assertAmount(amount);
   const approximate = kind === 'value-estimate';
   return {
     amount,
-    currency: gatewayCurrency(region),
+    currency: DEFAULT_USAGE_CURRENCY,
     approximate,
     kind,
     ...(approximate ? { estimateReasons: ['subscription-value'] } : {}),
