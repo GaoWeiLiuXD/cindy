@@ -508,6 +508,24 @@ describe('billing IPC', () => {
     expect(openExternal).toHaveBeenCalledWith(url);
   });
 
+  it('releases a stalled Stripe portal browser launch', async () => {
+    vi.useFakeTimers();
+    try {
+      const { call, fetch, openExternal } = harness();
+      const url = 'https://billing.stripe.com/p/session/session_fixture';
+      fetch.mockResolvedValueOnce({ url });
+      openExternal.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+      const pending = call(BILLING_INVOKE.OPEN_SUBSCRIPTION_PORTAL);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(pending).resolves.toEqual({ success: false });
+      expect(openExternal).toHaveBeenCalledWith(url);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails closed when the portal endpoint does not return a Stripe portal URL', async () => {
     const { call, fetch, openExternal } = harness();
     fetch.mockResolvedValueOnce({ url: 'https://checkout.stripe.com/c/pay/session_fixture' });

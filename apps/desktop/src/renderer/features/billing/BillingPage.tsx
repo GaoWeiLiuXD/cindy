@@ -1071,7 +1071,7 @@ function SubscriptionOverviewCard({
               <DropdownMenuContent
                 align="end"
                 sideOffset={8}
-                className="w-[var(--radix-dropdown-menu-trigger-width)] rounded-[12px] border border-[var(--border-default)] bg-[var(--surface-elevated)] p-1.5 text-[var(--text-primary)]"
+                className="w-[var(--radix-dropdown-menu-trigger-width)] rounded-[12px] border border-[var(--border-default)] bg-[var(--surface-elevated)] p-1.5 text-[var(--text-primary)] shadow-none"
               >
                 <DropdownMenuItem
                   onSelect={showPlanChangeEntry ? onChangePlan : onPurchase}
