@@ -1388,6 +1388,19 @@ describe('BillingPage plan change', () => {
     expect(billing.openSubscriptionPortal).toHaveBeenCalledWith();
     expect(billing.openSubscriptionPortal).toHaveBeenCalledTimes(1);
     await act(async () => resolvePortal({ success: true }));
+
+    const catalogCalls = billing.getCatalog.mock.calls.length;
+    const subscriptionCalls = billing.getCurrentSubscription.mock.calls.length;
+    const balanceCalls = billing.getBalance.mock.calls.length;
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => {
+      expect(billing.getCatalog).toHaveBeenCalledTimes(catalogCalls + 1);
+      expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(subscriptionCalls + 1);
+      expect(billing.getBalance).toHaveBeenCalledTimes(balanceCalls + 1);
+    });
+
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(subscriptionCalls + 1);
   });
 
   it('does not show Stripe management in the menu for an Alipay subscription', async () => {

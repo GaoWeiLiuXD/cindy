@@ -258,6 +258,7 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
   const previousCheckoutPhaseRef = useRef(checkout.state.phase);
   const cancelSubscriptionLockRef = useRef(false);
   const subscriptionPortalLockRef = useRef(false);
+  const subscriptionPortalRefreshPendingRef = useRef(false);
   // 取消订阅的 DELETE 不带 subscriptionId,服务端按「请求时已认证的账号」执行。
   // ConfirmDialogProvider 挂在 AuthProvider 之外(见 App.tsx),弹窗会活过本 section
   // 因 dataOwnerId 变化而发生的卸载,所以必须记住确认时的账号与挂载态。
@@ -343,6 +344,23 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
 
   useEffect(() => {
     void loadBillingState();
+  }, [loadBillingState]);
+
+  useEffect(() => {
+    const refreshAfterPortal = () => {
+      if (!subscriptionPortalRefreshPendingRef.current) return;
+      subscriptionPortalRefreshPendingRef.current = false;
+      void loadBillingState();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshAfterPortal();
+    };
+    window.addEventListener('focus', refreshAfterPortal);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', refreshAfterPortal);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [loadBillingState]);
 
   const closeCheckout = useCallback(() => {
@@ -558,7 +576,9 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
     setOpeningSubscriptionPortal(true);
     try {
       const result = await billingApi.openSubscriptionPortal();
-      if (!result.success) {
+      if (result.success) {
+        subscriptionPortalRefreshPendingRef.current = true;
+      } else {
         toast.error(t('billing.settings.subscriptionCard.portalFailed'));
       }
     } catch {
