@@ -331,6 +331,18 @@ describe('readUsageHistoryWith', () => {
           modelRow(TODAY, 'codex', codexSubscriptionUsageModelKey('gpt-5.5'), actual(0), {
             inputTokens: 1_000_000,
           }),
+          modelRow(
+            TODAY,
+            'claude-code',
+            'legacy-mixed-currency',
+            {
+              amount: 10,
+              currency: historicalCurrency,
+              approximate: false,
+              kind: 'actual-cost',
+            },
+            { outputTokens: 20 },
+          ),
         ],
         getModelPricing: async () => ({
           openai: {
@@ -347,6 +359,27 @@ describe('readUsageHistoryWith', () => {
       currency: DEFAULT_USAGE_CURRENCY,
     });
     expect(result.totals.last30DaysWithEstimatedValue.amount).toBeCloseTo(estimateAmount);
+    expect(result.days[0]).toMatchObject({
+      money: actual(0),
+      tokens: 1_000_020,
+    });
+    expect(
+      result.models.find((row) => row.model === 'legacy-mixed-currency'),
+    ).toMatchObject({
+      money: actual(0),
+      estimatedMoney: null,
+      outputTokens: 20,
+    });
+    expect(
+      result.modelDaily.find((row) => row.model === 'legacy-mixed-currency'),
+    ).toMatchObject({
+      money: {
+        amount: 0,
+        currency: DEFAULT_USAGE_CURRENCY,
+      },
+      apiMoney: actual(0),
+      tokens: 20,
+    });
   });
 
   it('uses provider-scoped Anthropic reference pricing for Claude subscription rows', async () => {

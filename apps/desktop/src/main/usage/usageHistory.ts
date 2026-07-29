@@ -487,15 +487,9 @@ export async function readUsageHistoryWith(
   const windowDays = Math.min(366, Math.max(1, Math.floor(opts?.days ?? 140)));
   const todayKey = deps.todayKey();
 
-  const allDays = await deps.getAllSpendDays();
-  // 当前摘要始终使用本构建的账本币种。异币种历史行保留原样,但不能反向决定
-  // 当前摘要口径,否则旧 USD 行会让 CN 的新 CNY 订阅估算在聚合时被丢弃。
+  // 历史聚合只有一个金额口径:兼容当前账本币种的金额保留,无法确定换算语义的
+  // 异币种金额在入口丢弃为 0。token 等非金额统计仍保留。
   const ledgerCurrency = DEFAULT_USAGE_CURRENCY;
-  const spendByDay = new Map(
-    allDays
-      .filter((row) => row.money.currency === ledgerCurrency)
-      .map((row) => [row.day, row.money.amount]),
-  );
   // 零值也用账本币种:无消费日的 today/空聚合不能把展示单位翻回默认币种。
   const zeroActual = (): RegionalMoney => ({
     amount: 0,
@@ -510,7 +504,15 @@ export async function readUsageHistoryWith(
     kind: 'value-estimate',
     estimateReasons: ['subscription-value'],
   });
-  // 当前摘要只聚合本构建账本币种;异币种历史值仍留在明细,不参与当前合计。
+  const keepCompatibleMoney = (money: RegionalMoney): RegionalMoney =>
+    money.currency === ledgerCurrency ? money : zeroActual();
+  const allDays = (await deps.getAllSpendDays()).map((row) => ({
+    ...row,
+    money: keepCompatibleMoney(row.money),
+  }));
+  const spendByDay = new Map(
+    allDays.map((row) => [row.day, row.money.amount]),
+  );
   const addOrZero = (
     values: RegionalMoney[],
     kind: 'actual-cost' | 'value-estimate' = 'actual-cost',
@@ -525,7 +527,10 @@ export async function readUsageHistoryWith(
   // 一次查询同时服务两个窗口: 热力图 tooltip 的每日 token (heatmap 窗口) 与
   // 模型拆分聚合 (30 天窗口)。取更早的 cutoff (ISO day key 字符串可直接比较)。
   const usageRowsSince = heatmapCutoff < modelCutoff ? heatmapCutoff : modelCutoff;
-  const allModelRows = await deps.getModelUsageSince(usageRowsSince);
+  const allModelRows = (await deps.getModelUsageSince(usageRowsSince)).map((row) => ({
+    ...row,
+    money: keepCompatibleMoney(row.money),
+  }));
   const modelRows = allModelRows.filter((r) => r.day >= modelCutoff);
 
   // 每日 token 合计 → days 的 tooltip 数据。codex-only 日 daily_spend 无行 ($ 只有
