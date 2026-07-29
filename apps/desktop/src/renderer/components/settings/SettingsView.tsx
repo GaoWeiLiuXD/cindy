@@ -341,7 +341,6 @@ export function SettingsView() {
               >
                 <section aria-label={t('settings.sections.billing')}>
                   <BillingSettingsSection
-                    key={`billing:${dataOwnerId ?? 'none'}`}
                     accountId={dataOwnerId}
                   />
                 </section>

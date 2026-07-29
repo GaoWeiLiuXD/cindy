@@ -226,12 +226,27 @@ function balanceIssue(error: unknown): Exclude<BalanceIssue, null> {
  */
 export function BillingPage() {
   const { dataOwnerId } = useAuth();
-  return (
-    <BillingSettingsSection key={`billing:${dataOwnerId ?? 'none'}`} accountId={dataOwnerId} />
-  );
+  return <BillingSettingsSection accountId={dataOwnerId} />;
 }
 
 export function BillingSettingsSection({ accountId }: { accountId: string | null }) {
+  const subscriptionPortalLockRef = useRef(false);
+  return (
+    <BillingSettingsSectionContent
+      key={`billing:${accountId ?? 'none'}`}
+      accountId={accountId}
+      subscriptionPortalLockRef={subscriptionPortalLockRef}
+    />
+  );
+}
+
+function BillingSettingsSectionContent({
+  accountId,
+  subscriptionPortalLockRef,
+}: {
+  accountId: string | null;
+  subscriptionPortalLockRef: { current: boolean };
+}) {
   const { t, i18n } = useTranslation();
   const { confirm } = useConfirmDialog();
   const billingLocale = i18n.resolvedLanguage ?? i18n.language;
@@ -257,7 +272,6 @@ export function BillingSettingsSection({ accountId }: { accountId: string | null
   const checkout = useBillingCheckout(accountId);
   const previousCheckoutPhaseRef = useRef(checkout.state.phase);
   const cancelSubscriptionLockRef = useRef(false);
-  const subscriptionPortalLockRef = useRef(false);
   const subscriptionPortalRefreshPendingRef = useRef(false);
   // 取消订阅的 DELETE 不带 subscriptionId,服务端按「请求时已认证的账号」执行。
   // ConfirmDialogProvider 挂在 AuthProvider 之外(见 App.tsx),弹窗会活过本 section
