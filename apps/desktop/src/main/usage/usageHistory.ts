@@ -488,12 +488,9 @@ export async function readUsageHistoryWith(
   const todayKey = deps.todayKey();
 
   const allDays = await deps.getAllSpendDays();
-  // 阈值启发式(异常检测)使用的日金额表必须与账本币种同单位:币种切换过渡
-  // 期的异币种历史日不进表(按 0 计),避免拿一种币种的阈值去比另一种的数值。
-  const ledgerCurrency =
-    allDays.find((row) => row.day === todayKey)?.money.currency ??
-    allDays[allDays.length - 1]?.money.currency ??
-    DEFAULT_USAGE_CURRENCY;
+  // 当前摘要始终使用本构建的账本币种。异币种历史行保留原样,但不能反向决定
+  // 当前摘要口径,否则旧 USD 行会让 CN 的新 CNY 订阅估算在聚合时被丢弃。
+  const ledgerCurrency = DEFAULT_USAGE_CURRENCY;
   const spendByDay = new Map(
     allDays
       .filter((row) => row.money.currency === ledgerCurrency)
@@ -513,14 +510,15 @@ export async function readUsageHistoryWith(
     kind: 'value-estimate',
     estimateReasons: ['subscription-value'],
   });
-  // 聚合偏好账本币种(今天/最新行的币种):默认 USD 偏好会在币种切换过渡期
-  // 把当前币种的日金额整段挤掉(窗口里残留任意旧 USD 行即触发)。
+  // 当前摘要只聚合本构建账本币种;异币种历史值仍留在明细,不参与当前合计。
   const addOrZero = (
     values: RegionalMoney[],
     kind: 'actual-cost' | 'value-estimate' = 'actual-cost',
   ): RegionalMoney =>
-    addCompatibleRegionalMoney(values, ledgerCurrency) ??
-    (kind === 'actual-cost' ? zeroActual() : zeroEstimate());
+    addCompatibleRegionalMoney(
+      values.filter((value) => value.currency === ledgerCurrency),
+      ledgerCurrency,
+    ) ?? (kind === 'actual-cost' ? zeroActual() : zeroEstimate());
 
   const heatmapCutoff = shiftDayKey(todayKey, -(windowDays - 1));
   const modelCutoff = shiftDayKey(todayKey, -(MODEL_WINDOW_DAYS - 1));
@@ -714,7 +712,8 @@ export async function readUsageHistoryWith(
       row.money.approximate,
   );
   const today =
-    allDays.find((row) => row.day === todayKey)?.money ?? zeroActual();
+    allDays.find((row) => row.day === todayKey && row.money.currency === ledgerCurrency)?.money ??
+    zeroActual();
 
   return {
     generatedAt: Date.now(),

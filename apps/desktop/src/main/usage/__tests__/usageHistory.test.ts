@@ -311,6 +311,44 @@ describe('readUsageHistoryWith', () => {
     expect(api?.subscriptionEstimateMoney.amount).toBe(0);
   });
 
+  it('keeps current-region subscription estimates when history uses another currency', async () => {
+    const historicalCurrency = DEFAULT_USAGE_CURRENCY === 'CNY' ? 'USD' : 'CNY';
+    const estimateAmount = regionalUsdAmount(2);
+    const result = await readUsageHistoryWith(
+      makeDeps({
+        getAllSpendDays: async () => [
+          {
+            day: TODAY,
+            money: {
+              amount: 5,
+              currency: historicalCurrency,
+              approximate: false,
+              kind: 'actual-cost',
+            },
+          },
+        ],
+        getModelUsageSince: async () => [
+          modelRow(TODAY, 'codex', codexSubscriptionUsageModelKey('gpt-5.5'), actual(0), {
+            inputTokens: 1_000_000,
+          }),
+        ],
+        getModelPricing: async () => ({
+          openai: {
+            'gpt-5.5': subscriptionQuote('openai', 'gpt-5.5', 2, 8),
+          },
+        }),
+      }),
+    );
+
+    expect(result.totals.today).toEqual(actual(0));
+    expect(result.totals.last30Days).toEqual(actual(0));
+    expect(result.totals.last30DaysEstimatedValue).toMatchObject({
+      amount: estimateAmount,
+      currency: DEFAULT_USAGE_CURRENCY,
+    });
+    expect(result.totals.last30DaysWithEstimatedValue.amount).toBeCloseTo(estimateAmount);
+  });
+
   it('uses provider-scoped Anthropic reference pricing for Claude subscription rows', async () => {
     const expected = regionalUsdAmount(5);
     const result = await readUsageHistoryWith(makeDeps({
