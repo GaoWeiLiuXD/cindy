@@ -152,18 +152,19 @@ export interface ModelGroupPricing {
 /**
  * Model Access Server 下发的模型条目。
  *
- * 同一含义只有一个字段:Gateway 的能力字段(contextLength / supportedEndpoints /
- * reasoning / supportsServiceTier / architecture)由服务端一次归一化成这里的
- * contextWindow / agents / efforts + defaultEffort / supportsFastMode / modalities,
- * 上游原名字段不下发、客户端也不再二次转换(见 model-access/index.ts 的
+ * 同一含义只有一个字段:Gateway 的能力字段(contextLength / maxInputTokens /
+ * supportedEndpoints / reasoning / supportsServiceTier / architecture)由服务端一次
+ * 归一化成这里的 contextWindow / agents / efforts + defaultEffort / supportsFastMode /
+ * modalities,上游原名字段不下发、客户端也不再二次转换(见 model-access/index.ts 的
  * applyGatewayModels)。旧版服务端只给归一化字段,语义相同,故无需兼容分支。
+ *
+ * 其中 contextLength 与 maxInputTokens 在 Gateway 侧本就同值(文档:contextLength
+ * currently mirrors maxInputTokens),统一由 contextWindow 表达。
  */
 export interface ModelAccessGatewayModel extends ModelGroupPricing {
   id: string;
   /** Gateway 能力字段；均为可选，缺失表示上游未声明。 */
   mode?: string;
-  /** 输入 token 上限;与 contextWindow 语义不同(后者是上下文窗口)。 */
-  maxInputTokens?: number;
   /** Gateway 原生价格币种；旧版服务端未下发时按运行区域回退。 */
   currency?: 'USD' | 'CNY';
   /** 进哪些 runtime tab;缺省 = 仅 claude-code(网关 /v1/messages 翻译覆盖面最广)。 */
