@@ -3,7 +3,8 @@
  *
  * XD 模型与价格只来自 model-access-server 的同一次 GET /models 响应。这里不再
  * 直接请求 LiteLLM；模型同步成功时整体替换 XD quote，失败时保留上一份成功快照。
- * Gateway per-token 数值在这里转换为 per-Mtok，币种只由构建区域决定。
+ * Gateway per-token 数值在这里转换为 per-Mtok；新版服务端下发的原生币种优先，
+ * 旧版服务端缺失时才回退构建区域。
  */
 
 import { promises as fs, statSync } from 'node:fs';
@@ -18,7 +19,12 @@ import {
 } from '../../shared/modelPriceQuote.js';
 import type { ModelAccessGatewayModel } from '../../shared/modelAccess.js';
 import { providerSecretStorageKey } from '../../shared/providerSecrets.js';
-import { type ModelPriceQuote, type ModelPricingCatalog } from '../../shared/regionalMoney.js';
+import {
+  gatewayCurrencyForRegion,
+  type ModelPriceQuote,
+  type ModelPricingCatalog,
+  type MoneyCurrency,
+} from '../../shared/regionalMoney.js';
 import { getCurrentDbClientUserId } from '../localDb/client/current.js';
 import { createLogger } from '../logger.js';
 import { getClientEndpoint } from '../clientEndpointsService.js';
@@ -31,9 +37,10 @@ export type {
 } from '../../shared/regionalMoney.js';
 
 const log = createLogger('modelPricing');
+// v7:币种改为优先使用 Model Access 明确声明，不能复用按 region 猜测的旧 quote。
 // v6:所有 Gateway 模型统一按服务端 costDiscount 计费。v5 的 codex/ quote 已
 // 硬编码乘过 0.15 且丢弃 costDiscount，不能继续复用。
-const DISK_CACHE_VERSION = 6;
+const DISK_CACHE_VERSION = 7;
 const DISK_CACHE_FILE = 'model-pricing.json';
 
 export const MODEL_PRICING_CHANGED_CHANNEL = 'usage:model-pricing-changed';
@@ -49,8 +56,26 @@ let cache: ModelPricingCatalog | null = null;
 let cacheScope: string | null = null;
 let cacheAt = 0;
 let modelSyncInflight: Promise<unknown> | null = null;
+let gatewayAccountCurrency: MoneyCurrency | null = null;
+let gatewayAccountCurrencyScope: string | null = null;
 const hydratedScopes = new Set<string>();
 const hydrateInflightByScope = new Map<string, Promise<ModelPricingCatalog | null>>();
+
+function resolveGatewayAccountCurrency(
+  models: readonly ModelAccessGatewayModel[],
+): MoneyCurrency | null {
+  if (models.length === 0) return null;
+  const currencies = new Set(
+    models
+      .map((model) => model.currency)
+      .filter((currency): currency is MoneyCurrency => currency === 'CNY' || currency === 'USD'),
+  );
+  if (currencies.size > 1) {
+    log.warn('xd gateway models returned mixed currencies; account quota currency unavailable');
+    return null;
+  }
+  return currencies.values().next().value ?? gatewayCurrencyForRegion(CURRENT_CINDY_REGION);
+}
 
 function currentKeyCacheIdentity(): string {
   try {
@@ -239,6 +264,8 @@ export function replaceGatewayModelPricing(
   cache = pricing;
   cacheScope = scope;
   cacheAt = Date.now();
+  gatewayAccountCurrency = resolveGatewayAccountCurrency(models);
+  gatewayAccountCurrencyScope = scope;
   hydratedScopes.add(scope);
   void writeDiskCache(scope, pricing, cacheAt);
   broadcastPricing(pricing);
@@ -279,6 +306,38 @@ export async function getModelPricing(): Promise<ModelPricingCatalog | null> {
  */
 const PRICING_SYNC_WAIT_MS = 3_000;
 
+async function waitForModelPricingSync(): Promise<void> {
+  if (!modelSyncInflight) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      modelSyncInflight.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PRICING_SYNC_WAIT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Model Access 账号用量与模型目录属于同一个 Gateway 租户，因而共用目录声明的
+ * 原生币种。混合币种或尚无当前账号目录时返回 null，调用方不再根据组织名称猜测。
+ */
+export async function getGatewayAccountCurrency(
+  authenticatedUserId?: string,
+): Promise<MoneyCurrency | null> {
+  await waitForModelPricingSync();
+  const scope = currentScope(authenticatedUserId);
+  if (gatewayAccountCurrencyScope === scope) return gatewayAccountCurrency;
+  if (cacheScope !== scope) return null;
+  const currencies = new Set(
+    Object.values(cache?.xd ?? {}).map((quote) => quote.currency),
+  );
+  return currencies.size === 1 ? (currencies.values().next().value ?? null) : null;
+}
+
 /**
  * 计费热路径等待模型同步已经落下的本地投影，不再自己联网。providerId 是必需的，
  * 同模型从 XD/OpenAI/订阅来源进入时不会串价。
@@ -287,19 +346,7 @@ export async function getModelPricingForModel(
   providerId: string | null | undefined,
   modelId: string,
 ): Promise<ModelPricingCatalog | null> {
-  if (modelSyncInflight) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        modelSyncInflight.catch(() => undefined),
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, PRICING_SYNC_WAIT_MS);
-        }),
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
+  await waitForModelPricingSync();
   const pricing = await getModelPricing();
   void getModelPriceQuote(pricing, providerId, modelId);
   return pricing;
@@ -330,6 +377,8 @@ export function __resetModelPricingCacheForTesting(): void {
   cacheScope = null;
   cacheAt = 0;
   modelSyncInflight = null;
+  gatewayAccountCurrency = null;
+  gatewayAccountCurrencyScope = null;
   hydratedScopes.clear();
   hydrateInflightByScope.clear();
 }

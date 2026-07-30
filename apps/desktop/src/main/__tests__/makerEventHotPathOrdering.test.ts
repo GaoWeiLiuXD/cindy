@@ -289,10 +289,13 @@ describe('maker:event hot path ordering', () => {
     expect(codexDoneSource).not.toContain('hasCodexOAuthLogin()');
     expect(codexDoneSource).toContain('promptTokens + completionTokens + cachedTokens');
     expect(codexDoneSource).not.toContain('promptTokens + completionTokens + reasoningTokens + cachedTokens');
-    expect(codexDoneSource).toContain('const isCodexBudgetRoute = pricingModel.startsWith(\'codex/\');');
-    expect(codexDoneSource).toContain('const isCodexXaiProviderRoute = pricingModel.startsWith(XAI_MODEL_PREFIX);');
+    expect(codexDoneSource).toContain('const isCustomProviderRoute =');
+    expect(codexDoneSource).toContain('isUserProviderSession(session.id)');
+    expect(codexDoneSource).toContain("&& pricingModel.startsWith('codex/');");
+    expect(codexDoneSource).toContain('&& pricingModel.startsWith(XAI_MODEL_PREFIX);');
     expect(codexDoneSource).toContain('const hasGatewayKey = Boolean(readClaudeApiKey());');
     expect(codexDoneSource).toContain('const hasEffectiveGatewayRoute =');
+    expect(codexDoneSource).toContain('!isCustomProviderRoute');
     expect(codexDoneSource).toContain('(sessionProvider === \'xd\' && hasGatewayKey)');
     expect(codexDoneSource).toContain('const isSubscriptionValue = isRemoteCodexSession ||');
     expect(codexDoneSource).toContain('isCodexXaiProviderRoute ||');
@@ -303,10 +306,10 @@ describe('maker:event hot path ordering', () => {
     expect(codexDoneSource).toContain('const price = isCodexXaiProviderRoute');
     expect(codexDoneSource).toContain('? getSubscriptionDirectValuePrice(pricingModel)');
     expect(codexDoneSource).toContain('? getCodexSubscriptionValuePrice(pricingModel, pricing)');
-    expect(codexDoneSource).toContain(": getModelPriceQuote(pricing, 'xd', pricingModel)");
+    expect(codexDoneSource).toContain("? getModelPriceQuote(pricing, 'xd', pricingModel)");
     expect(codexDoneSource).toContain('const pricing = isSubscriptionValue && !isCodexXaiProviderRoute');
     expect(codexDoneSource).toContain('? await getModelPricing()');
-    expect(codexDoneSource).toContain(": await getModelPricingForModel('xd', pricingModel)");
+    expect(codexDoneSource).toContain("? await getModelPricingForModel('xd', pricingModel)");
     expect(codexDoneSource).toContain('price ?? undefined');
     expect(codexDoneSource).toContain('if (!isSubscriptionValue && money)');
     expect(codexDoneSource).toContain('void recordTurnSpend(money);');
@@ -327,6 +330,7 @@ describe('maker:event hot path ordering', () => {
     expect(codexDoneSource).toContain('clientId: turnAssistantPersistId');
     expect(codexDoneSource).toContain('money,');
     expect(codexDoneSource).toContain('if (!isRemoteCodexSession &&');
+    expect(codexDoneSource).toContain('!isCustomProviderRoute &&');
     expect(codexDoneSource).toContain("!model.startsWith(XAI_MODEL_PREFIX) &&");
     expect(codexDoneSource).toContain("(codexAuthInjection === 'env-key' || model.startsWith('codex/') || (sessionProvider === 'xd' && hasGatewayKey))");
     expect(codexDoneSource).not.toContain("sessionProvider !== 'xai'");

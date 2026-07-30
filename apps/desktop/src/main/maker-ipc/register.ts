@@ -413,7 +413,10 @@ import {
 import { getActiveCatalog, setDiscoveredProviderModels } from '../maker-host/active-catalog.js';
 import { testProviderConnection } from '../maker-host/provider-diagnostics.js';
 import { fetchProviderModels } from '../maker-host/provider-model-fetch.js';
-import { beginProviderRouteMutation } from '../maker-host/provider-route.js';
+import {
+  beginProviderRouteMutation,
+  isUserProviderSession,
+} from '../maker-host/provider-route.js';
 import {
   getAnthropicModelDiscoveryFailure,
   refreshAnthropicModelsFromHttp,
@@ -3123,6 +3126,8 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
       // 「是否走订阅(不计网关费)」改由 spawn 注入 + 该会话是否显式选了 XD 网关决定。
       const sessionProvider = getSessionProvider(session.id);
       const isRemoteCodexSession = Boolean(session.remoteHostId);
+      const isCustomProviderRoute =
+        !isRemoteCodexSession && isUserProviderSession(session.id);
       const codexAuthInjection = isRemoteCodexSession ? null : getCodexProxyAuthInjection();
       const modelPromise = turnModelPromiseBySession.get(session.id) ?? readSessionModelForUsage(session.id);
       turnModelPromiseBySession.delete(session.id);
@@ -3156,11 +3161,18 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
           } catch {
             // 模型读取失败时仍记录 token, 聚合 UI 会归到 unknown。
           }
-          const isCodexBudgetRoute = pricingModel.startsWith('codex/');
-          const isCodexXaiProviderRoute = pricingModel.startsWith(XAI_MODEL_PREFIX);
+          const isCodexBudgetRoute =
+            (sessionProvider == null || sessionProvider === 'xd')
+            && pricingModel.startsWith('codex/');
+          const isCodexXaiProviderRoute =
+            (sessionProvider == null || sessionProvider === 'xai')
+            && pricingModel.startsWith(XAI_MODEL_PREFIX);
+          const isCodexOpenAiProviderRoute =
+            sessionProvider == null || sessionProvider === 'openai';
           const hasGatewayKey = Boolean(readClaudeApiKey());
           const hasEffectiveGatewayRoute =
             !isRemoteCodexSession &&
+            !isCustomProviderRoute &&
             (
               codexAuthInjection === 'env-key' ||
               isCodexBudgetRoute ||
@@ -3168,7 +3180,11 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
             );
           const isSubscriptionValue = isRemoteCodexSession ||
             isCodexXaiProviderRoute ||
-            (codexAuthInjection === 'oauth-bearer' && !hasEffectiveGatewayRoute);
+            (
+              isCodexOpenAiProviderRoute
+              && codexAuthInjection === 'oauth-bearer'
+              && !hasEffectiveGatewayRoute
+            );
           const modelUsageKey = isSubscriptionValue
             ? codexSubscriptionUsageModelKey(pricingModel)
             : codexApiUsageModelKey(pricingModel);
@@ -3192,14 +3208,16 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
           try {
             const pricing = isSubscriptionValue && !isCodexXaiProviderRoute
               ? await getModelPricing()
-              : isSubscriptionValue
-                ? null
-                : await getModelPricingForModel('xd', pricingModel);
+              : hasEffectiveGatewayRoute
+                ? await getModelPricingForModel('xd', pricingModel)
+                : null;
             const price = isCodexXaiProviderRoute
               ? getSubscriptionDirectValuePrice(pricingModel)
               : isSubscriptionValue
                 ? getCodexSubscriptionValuePrice(pricingModel, pricing)
-                : getModelPriceQuote(pricing, 'xd', pricingModel);
+                : hasEffectiveGatewayRoute
+                  ? getModelPriceQuote(pricing, 'xd', pricingModel)
+                  : undefined;
             const money = computePriceQuoteTurnMoney(
               codexUsageToTokens(u),
               price ?? undefined,
@@ -3249,6 +3267,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
         .then((model) => {
           const hasGatewayKey = Boolean(readClaudeApiKey());
           if (!isRemoteCodexSession &&
+            !isCustomProviderRoute &&
             !model.startsWith(XAI_MODEL_PREFIX) &&
             (codexAuthInjection === 'env-key' || model.startsWith('codex/') || (sessionProvider === 'xd' && hasGatewayKey))) {
             void triggerClaudeAccountUsageRefresh();

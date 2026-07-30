@@ -42,12 +42,13 @@
 
 import { BrowserWindow } from 'electron';
 
-import { DEFAULT_USAGE_CURRENCY, type MoneyCurrency } from '../../shared/regionalMoney';
+import type { MoneyCurrency } from '../../shared/regionalMoney';
 import { getAuthState } from '../authManager';
 import { createLogger } from '../logger';
 import { readClaudeApiKey } from '../maker-host/auth-adapters';
 import { outboundFetch } from '../maker-host/outbound-fetch';
 import { claudeUpstreamEndpoint } from '../maker-host/runtime-configs';
+import { getGatewayAccountCurrency } from './modelPricing';
 
 const log = createLogger('claudeAccountUsage');
 
@@ -62,7 +63,7 @@ export interface ClaudeAccountUsageSnapshot {
   spend: number;
   /** 周期内预算上限，保持 Gateway 原值 (来自 user.max_budget)。 */
   maxBudget: number;
-  /** XD 企业账号为 USD；其它账号沿用当前区域的 Cindy AI Gateway 币种。 */
+  /** 与当前 Model Access 模型目录声明一致的 Gateway 账号原生币种。 */
   currency: MoneyCurrency;
   /** 下次重置时间 ISO8601 (来自 user.budget_reset_at)。 */
   budgetResetAt?: string | null;
@@ -91,13 +92,6 @@ let snapshot: ClaudeAccountUsageSnapshot | null = null;
 let fetchInFlight = false;
 let lastFetchAt = 0;
 let idlePollTimer: NodeJS.Timeout | null = null;
-
-function currentGatewayAccountCurrency(): MoneyCurrency {
-  const user = getAuthState().user;
-  return user?.membershipKind === 'org' && user.orgSlug === 'xd'
-    ? 'USD'
-    : DEFAULT_USAGE_CURRENCY;
-}
 
 interface LiteLlmUserInfo {
   spend?: number;
@@ -186,7 +180,8 @@ function resolveDailyActivitySpend(activity: LiteLlmDailyActivity): { todaySpend
 }
 
 async function fetchOnce(): Promise<ClaudeAccountUsageSnapshot | null> {
-  const currency = currentGatewayAccountCurrency();
+  const currency = await getGatewayAccountCurrency(getAuthState().user?.id);
+  if (!currency) return null;
   const apiKey = readClaudeApiKey();
   // 直连真上游,不走本地 anthropic-compat-proxy —— 这条账号查询路径跟 Claude Code 子进程
   // 无关,proxy 只服务于子进程的 chat completion 请求。

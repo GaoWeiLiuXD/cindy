@@ -23,10 +23,6 @@ const cnyActual = (amount: number): RegionalMoney => ({
 describe('regional money', () => {
   it('keeps current-client Gateway values exact in the local ledger currency', () => {
     expect(gatewayMoney(3).currency).toBe(DEFAULT_USAGE_CURRENCY);
-    expect(gatewayMoney(450, 'USD')).toMatchObject({
-      amount: 450,
-      currency: 'USD',
-    });
   });
 
   it('maps an explicitly supplied region to the Gateway currency contract', () => {

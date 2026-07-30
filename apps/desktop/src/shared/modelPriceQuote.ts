@@ -39,10 +39,7 @@ function normalizedCostDiscount(value: unknown): number | undefined {
     : undefined;
 }
 
-/**
- * Cindy AI Gateway 的价格币种由构建 region 决定。CN /models 的数字原生是
- * CNY,Global 原生是 USD；条目缺少 currency 不改变该契约。
- */
+/** Gateway 原生币种优先；旧服务端未声明时才按构建 region 回退。 */
 /** 该条目是否会产生报价(与币种无关;目录币种裁决与覆盖率统计共用此判定)。 */
 export function isPricedGatewayModel(model: ModelAccessGatewayModel): boolean {
   // 币种不影响“是否有价格”的判断，这里显式传值，避免计费 API 隐式回落 Global。
@@ -75,7 +72,7 @@ export function gatewayModelPriceQuote(
   return {
     providerId: 'xd',
     modelId,
-    currency: gatewayCurrencyForRegion(region),
+    currency: model.currency ?? gatewayCurrencyForRegion(region),
     source: 'gateway',
     approximate: false,
     inputPerMtok,

@@ -58,7 +58,7 @@ export interface XdGatewayAgentOverride {
   defaultEnabled?: boolean;
 }
 
-/** 服务端下发的 XD 网关聊天模型条目(shared/modelAccess ModelAccessGatewayModel 的子集)。 */
+/** Model Access 条目转换为客户端能力后的子集。 */
 export interface XdGatewayModelInfo {
   id: string;
   /** AIGateway 折扣比例(0..1),折后价 = 原价 × (1 - costDiscount)。 */
@@ -75,6 +75,7 @@ export interface XdGatewayModelInfo {
   group?: string;
   description?: string;
   contextWindow?: number;
+  maxOutputTokens?: number;
   efforts?: string[];
   defaultEffort?: string | null;
   sortOrder?: number;
@@ -84,6 +85,7 @@ export interface XdGatewayModelInfo {
   defaultEnabled?: boolean;
   /** 展示图标 id(AI Gateway 设定;缺省 / 未知值渲染层回落来源供应商标)。 */
   icon?: string;
+  modalities?: { input: string[]; output: string[] };
   /** per-tab 能力覆盖。 */
   perAgent?: Partial<Record<AgentKind, XdGatewayAgentOverride>>;
 }
@@ -504,7 +506,7 @@ function computeMerged(): Catalog {
     for (const gm of gwModels) {
       // tab 归属:服务端 agents > 仅 claude-code(网关 /v1/messages 翻译覆盖面最广,不猜)
       const targetAgents: AgentKind[] =
-        gm.agents && gm.agents.length > 0 ? gm.agents : ['claude-code'];
+        gm.agents !== undefined ? gm.agents : ['claude-code'];
       for (const agent of targetAgents) {
         if (!models[agent]) continue; // 未知 agent 键防御(wire 数据)
         const ov = gm.perAgent?.[agent] ?? {};
@@ -516,7 +518,11 @@ function computeMerged(): Catalog {
             : rawEfforts.filter((e): e is Effort => VALID_EFFORTS.has(e));
         const rawDefault = ov.defaultEffort !== undefined ? ov.defaultEffort : gm.defaultEffort;
         const defaultEffort: Effort | null =
-          rawDefault && VALID_EFFORTS.has(rawDefault) && efforts.includes(rawDefault as Effort)
+          rawDefault === null
+            ? null
+            : rawDefault &&
+                VALID_EFFORTS.has(rawDefault) &&
+                efforts.includes(rawDefault as Effort)
             ? (rawDefault as Effort)
             : efforts.includes('high')
               ? 'high'
@@ -530,6 +536,7 @@ function computeMerged(): Catalog {
           name: gm.name ?? gm.id,
           group: gm.group ?? 'custom:xd',
           contextWindow: ov.contextWindow ?? gm.contextWindow ?? 200_000,
+          ...(gm.maxOutputTokens !== undefined ? { maxOutput: gm.maxOutputTokens } : {}),
           efforts,
           defaultEffort,
           supportsFastMode: ov.supportsFastMode ?? gm.supportsFastMode ?? false,
@@ -538,6 +545,7 @@ function computeMerged(): Catalog {
           ...(defaultEnabled !== undefined ? { defaultEnabled } : {}),
           ...(gm.icon !== undefined ? { icon: gm.icon } : {}),
           ...(cost ? { cost } : {}),
+          ...(gm.modalities !== undefined ? { modalities: gm.modalities } : {}),
         };
         models[agent]!.push(merged);
       }

@@ -16,13 +16,13 @@ function model(
 }
 
 describe('gatewayPricingCatalog', () => {
-  it('keeps every priced CN Gateway model in the native CNY catalog', () => {
+  it('prefers explicit Gateway currency and falls back to region only when missing', () => {
     const catalog = gatewayPricingCatalog(
       [model('a', { currency: 'CNY' }), model('b', { currency: 'USD' }), model('c')],
       'cn',
     );
     expect(Object.keys(catalog.xd)).toEqual(['a', 'b', 'c']);
-    expect(Object.values(catalog.xd).map((quote) => quote.currency)).toEqual(['CNY', 'CNY', 'CNY']);
+    expect(Object.values(catalog.xd).map((quote) => quote.currency)).toEqual(['CNY', 'USD', 'CNY']);
   });
 
   it('carries Gateway costDiscount uniformly for ordinary and codex models', () => {
