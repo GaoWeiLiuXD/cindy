@@ -299,7 +299,18 @@ export interface ProxyHandle {
    * 用于宿主把已命中 HTTP-only recovery 的 Codex thread 从预热连接池中逐出；
    * 否则下一次请求会复用旧 WS，无法通过新的 upgrade 响应触发 transport fallback。
    */
-  disconnectWebSocketsForThread?(threadId: string): number;
+  disconnectWebSocketsForThread?(
+    threadId: string,
+    options?: {
+      /**
+       * 同时断开没有稳定 thread header 的 startup-prewarm 隧道。
+       *
+       * Codex 可能在线程创建完成前预热连接；这类连接后续会被真实 thread 复用，
+       * recovery 时必须逐出，才能让重投的新 upgrade 收到 426。
+       */
+      readonly includeUnscoped?: boolean;
+    },
+  ): number;
   /** 优雅关闭 —— close listener + 等待 in-flight 请求结束(2s 超时强关) */
   dispose(): Promise<void>;
 }

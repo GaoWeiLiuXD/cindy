@@ -261,6 +261,29 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(body).toBe('{"error":{"code":"server_is_overloaded"}}');
   });
 
+  it('closes the client when a preserved refusal body fails mid-stream', async () => {
+    const upstream = createServer((_req, res) => {
+      res.writeHead(503, {
+        'content-type': 'application/json',
+        'transfer-encoding': 'chunked',
+      });
+      const socket = res.socket;
+      res.write('{"error":"partial', () => socket?.destroy());
+    });
+    const port = await listenOnAvailableLoopbackPort(upstream);
+    cleanups.push(() => new Promise<void>((resolve) => upstream.close(() => resolve())));
+
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid',
+      transformRequest: [],
+      resolveWebSocketUpstream: () => `http://127.0.0.1:${port}`,
+    });
+
+    const response = await readUpgradeFailure(proxy.url);
+    expect(response).toContain('HTTP/1.1 503 Service Unavailable');
+    expect(response).toContain('{"error":"partial');
+  });
+
   it('falls back to HTTP when the network path refuses websocket upgrades', async () => {
     const upstream = createServer((_req, res) => {
       res.writeHead(403, { 'content-type': 'text/plain' });
@@ -355,6 +378,52 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     threadB.socket.write('PING');
     await expect(waitForSocketText(threadB.socket, threadB.rest, 'PONG')).resolves.toContain('PONG');
     expect(proxy.disconnectWebSocketsForThread?.('thread-missing')).toBe(0);
+  });
+
+  it('can evict unscoped startup-prewarm sockets without closing other owned threads', async () => {
+    const upstream = await startUpgradeUpstream();
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid',
+      transformRequest: [],
+      resolveWebSocketUpstream: () => upstream.url,
+    });
+
+    const unscoped = await openUpgrade(
+      proxy.url,
+      '/v1/responses',
+      Buffer.alloc(0),
+      ['X-Client-Request-Id: request-only-id'],
+    );
+    const target = await openUpgrade(
+      proxy.url,
+      '/v1/responses',
+      Buffer.alloc(0),
+      ['Thread-Id: thread-target'],
+    );
+    const other = await openUpgrade(
+      proxy.url,
+      '/v1/responses',
+      Buffer.alloc(0),
+      ['Thread-Id: thread-other'],
+    );
+    const unscopedClosed = new Promise<void>((resolve) => {
+      unscoped.socket.once('close', () => resolve());
+    });
+    const targetClosed = new Promise<void>((resolve) => {
+      target.socket.once('close', () => resolve());
+    });
+
+    expect(proxy.disconnectWebSocketsForThread?.(
+      'thread-target',
+      { includeUnscoped: true },
+    )).toBe(2);
+    await Promise.all([unscopedClosed, targetClosed]);
+    expect(unscoped.socket.destroyed).toBe(true);
+    expect(target.socket.destroyed).toBe(true);
+    expect(other.socket.destroyed).toBe(false);
+
+    other.socket.write('PING');
+    await expect(waitForSocketText(other.socket, other.rest, 'PONG')).resolves.toContain('PONG');
   });
 
   it('routes an https websocket upstream through the configured HTTP CONNECT proxy', async () => {

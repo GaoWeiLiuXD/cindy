@@ -133,9 +133,29 @@ export function armCodexHttpRecovery(args: {
   if (!rule) return null;
 
   const sessionId = args.sessionId.trim();
-  if (sessionId) bindThreadToSession(sessionId, threadId);
+  const existingSessionId = threadToSession.get(threadId);
+  if (sessionId && existingSessionId && existingSessionId !== sessionId) {
+    log.warn('refusing to arm codex websocket recovery for a thread owned by another session', {
+      sessionId,
+      threadId,
+      existingSessionId,
+    });
+    return null;
+  }
+  if (sessionId && !existingSessionId) {
+    // recovery 只需要让 unregister 能清掉 thread 标记，不能调用 bindThreadToSession：
+    // 子 Agent thread 与主 thread 属于同一业务 session，但 bind 会把它当成主 thread
+    // 切换并清空整个父子线程集合，连 registry 与已有 recovery 标记一起误删。
+    const threads = sessionToThreads.get(sessionId) ?? new Set<string>();
+    threads.add(threadId);
+    sessionToThreads.set(sessionId, threads);
+    threadToSession.set(threadId, sessionId);
+  }
   httpRecoveryReasonByThread.set(threadId, rule.id);
-  const disconnectedWebSockets = _handle?.disconnectWebSocketsForThread?.(threadId) ?? 0;
+  const disconnectedWebSockets = _handle?.disconnectWebSocketsForThread?.(
+    threadId,
+    { includeUnscoped: true },
+  ) ?? 0;
   log.info('codex websocket recovery fallback armed', {
     sessionId,
     threadId,

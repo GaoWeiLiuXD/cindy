@@ -1608,8 +1608,49 @@ describe('codex proxy host', () => {
     expect(proxyOpts.resolveWebSocketUpstream(ctxForThread('thread-safe'))).toBe(
       'https://chatgpt.com/backend-api/codex',
     );
-    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith('thread-encrypted');
-    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith('thread-image');
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith(
+      'thread-encrypted',
+      { includeUnscoped: true },
+    );
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith(
+      'thread-image',
+      { includeUnscoped: true },
+    );
+  });
+
+  it('arming recovery for a child thread preserves its parent and sibling routes', async () => {
+    const host = await freshCodexProxyHost();
+    const disconnectWebSocketsForThread = vi.fn(() => 2);
+    mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
+      url: 'http://127.0.0.1:43210',
+      disconnectWebSocketsForThread,
+      dispose: vi.fn(async () => undefined),
+    });
+    await host.ensureCodexProxyReady();
+    host.setCodexProxyAuthInjection('oauth-bearer');
+
+    host.registerComposed('session-family', 'thread-parent', 'PRODUCT_PROMPT');
+    expect(host.registerChildThread('thread-parent', 'thread-child')).toBe(true);
+    expect(host.registerChildThread('thread-parent', 'thread-sibling')).toBe(true);
+
+    expect(host.armCodexHttpRecovery({
+      sessionId: 'session-family',
+      threadId: 'thread-child',
+      message: 'invalid_encrypted_content',
+    })).toBe('encrypted_content');
+
+    expect(mockState.capturedRegistry?.get('thread-parent')).toBe('PRODUCT_PROMPT');
+    expect(mockState.capturedRegistry?.get('thread-child')).toBe('PRODUCT_PROMPT');
+    expect(mockState.capturedRegistry?.get('thread-sibling')).toBe('PRODUCT_PROMPT');
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith(
+      'thread-child',
+      { includeUnscoped: true },
+    );
+
+    host.unregister('session-family');
+    expect(mockState.capturedRegistry?.get('thread-parent')).toBeUndefined();
+    expect(mockState.capturedRegistry?.get('thread-child')).toBeUndefined();
+    expect(mockState.capturedRegistry?.get('thread-sibling')).toBeUndefined();
   });
 
   it('clears the websocket recovery fallback when its session is unregistered', async () => {

@@ -19,7 +19,7 @@ import type { Socket, TcpSocketConnectOpts } from 'node:net';
 import { URL } from 'node:url';
 import { brotliDecompressSync, gunzipSync, inflateRawSync, inflateSync } from 'node:zlib';
 
-import { DEFAULT_THREAD_ID_HEADERS, selectedHeaderValue } from './headers.js';
+import { DEFAULT_THREAD_ID_HEADERS, selectedHeaderValue, STABLE_THREAD_ID_HEADERS } from './headers.js';
 import {
   formatAuthority,
   formatHostHeader,
@@ -1636,7 +1636,10 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
     let established = false;
     let settled = false;
     let upstreamReqForEarlyClose: ClientRequest | null = null;
-    const threadId = selectedHeaderValue(headers, DEFAULT_THREAD_ID_HEADERS);
+    // x-client-request-id 是每次握手唯一值，不能用来关联后续 recovery。startup-prewarm
+    // 发生在线程对宿主可见之前，通常没有稳定 header；保留空值，让宿主可在恢复时
+    // 显式逐出这些可能被目标 thread 复用的匿名预热连接。
+    const threadId = selectedHeaderValue(headers, STABLE_THREAD_ID_HEADERS);
     const connection: LiveWebSocket = {
       threadId,
       clientSocket,
@@ -1807,6 +1810,21 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         } catch {
           // socket 可能已废; body pipe 下面照常尝试, 失败由 socket 自己的 error 收口。
         }
+        // pipe 不会把源流 error 自动传播给目标 socket。上游若在 401/429/5xx body
+        // 中途断开，必须自己结束客户端写侧；否则 Codex 会一直等 EOF，未监听的
+        // IncomingMessage error 还可能升级为进程级异常。用 end 而不是立即 destroy，
+        // 先尽量刷出已经收到的状态行和错误详情。
+        upstreamRes.once('error', (err) => {
+          logger.warn?.('websocket refusal response body failed', {
+            reqId,
+            status,
+            path: upstreamPath,
+            err: String(err),
+          });
+          if (!clientSocket.destroyed) {
+            clientSocket.end(() => clientSocket.destroy());
+          }
+        });
         upstreamRes.pipe(clientSocket);
       });
 
@@ -1847,11 +1865,14 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
 
   return {
     url,
-    disconnectWebSocketsForThread(threadId) {
+    disconnectWebSocketsForThread(threadId, options) {
       const normalized = threadId.trim();
       if (!normalized) return 0;
       const matches = Array.from(liveWebSocketConnections)
-        .filter((connection) => connection.threadId === normalized);
+        .filter((connection) =>
+          connection.threadId === normalized
+          || (options?.includeUnscoped === true && connection.threadId === ''),
+        );
       for (const connection of matches) connection.closeForHostFallback();
       return matches.length;
     },
