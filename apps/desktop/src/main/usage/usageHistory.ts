@@ -57,8 +57,6 @@ const ANOMALY_MIN_TODAY_USD = 1;
 const ANOMALY_MIN_ACTIVE_DAYS = 3;
 /** 模型拆分统计窗口 (天)。 */
 const MODEL_WINDOW_DAYS = 30;
-/** 等价格表的最长预算 (ms) — 缓存命中时是同步快返, 只有冷启动网络 fetch 会触及。 */
-const PRICING_WAIT_BUDGET_MS = 200;
 // v4:恢复 CN usage 的 CNY 账本口径，并让订阅 USD 估值按 6.7 投影到 CNY。
 const DISK_CACHE_VERSION = 4;
 const DISK_CACHE_FILE = 'usage-history.json';
@@ -496,13 +494,9 @@ export async function readUsageHistoryWith(
   // 整段归零成不计费。历史遗留的异币种行(换号 / 跨区)仍按 keepCompatibleMoney 归零。
   const [spendDayRows, pricing] = await Promise.all([
     deps.getAllSpendDays(),
-    // pricing 不许阻塞首页首帧: 冷启动时 getModelPricing 是一次最长 5s 的网络请求,
-    // race 一个短预算 — 没赶上就先按无价格返回 (Codex 行暂显 token 量), 后台 fetch
-    // 仍会完成并写 6h 缓存, renderer 下一次刷新 (push 触发) 自然补上估算金额。
-    Promise.race([
-      deps.getModelPricing(),
-      new Promise<null>((resolve) => setTimeout(resolve, PRICING_WAIT_BUDGET_MS, null)),
-    ]),
+    // getModelPricing 只读内存或账号作用域内的磁盘快照，不发网络请求。必须等它完成，
+    // 因为 hydrateFromDisk 还负责恢复同一快照声明的账本币种。
+    deps.getModelPricing(),
   ]);
   // 必须在上面 pricing 恢复之后再读:hydrateFromDisk 会在磁盘缓存生效的同时回写账本币种,
   // 而 prewarmModelPricing 与首页首次聚合是并发的。先读会拿到构建默认值,把该账号的日账与

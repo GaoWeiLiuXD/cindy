@@ -247,9 +247,9 @@ describe('pricing cache lifecycle', () => {
     await vi.waitFor(async () => {
       const raw = JSON.parse(await readFile(userDataPath('cache', 'model-pricing.json'), 'utf8'));
       expect(raw).toMatchObject({
-        // 报价缓存加入 currency 后升到 7:旧缓存没有币种，复用会让计费落到错误币种，
+        // 账号币种与报价同快照持久化后升到 8:旧缓存缺少账号币种，
         // 必须靠版本号失效掉。改缓存结构时同步这里。
-        version: 7,
+        version: 8,
         scope: expectedScope(),
         pricing,
       });
@@ -262,22 +262,21 @@ describe('pricing cache lifecycle', () => {
   });
 
   it('restores the active ledger currency when only the disk cache is hydrated', async () => {
-    // review 证据:计费热路径(turn 记账 / prewarm)走 getModelPricing，不经过可选的账号
-    // 配额查询。所以币种恢复必须发生在 hydrateFromDisk 里 —— 否则冷启动只命中磁盘缓存
-    // (/models 尚未完成或失败)时 currentLedgerCurrency() 回落构建默认，用缓存报价算出的
-    // 金额会被账本守卫当异币种丢弃，等于这段时间完全不计费。
+    // 模型即使没有可计价 quote，也可能明确声明账号结算币种；两者必须同快照恢复。
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     replaceGatewayModelPricing([
       {
         id: 'gpt-5.5',
         currency: 'USD',
-        inputCostPerToken: 0.000005,
-        outputCostPerToken: 0.00003,
       },
     ]);
     await vi.waitFor(async () => {
-      await readFile(userDataPath('cache', 'model-pricing.json'), 'utf8');
+      const raw = JSON.parse(await readFile(userDataPath('cache', 'model-pricing.json'), 'utf8'));
+      expect(raw).toMatchObject({
+        pricing: {},
+        accountCurrency: 'USD',
+      });
     });
 
     // 模拟重启:清掉内存缓存与账本币种，只留磁盘缓存
@@ -285,7 +284,7 @@ describe('pricing cache lifecycle', () => {
     __resetActiveLedgerCurrencyForTesting();
     expect(currentLedgerCurrency()).toBe(DEFAULT_USAGE_CURRENCY);
 
-    await getModelPricing();
+    await expect(getModelPricing()).resolves.toEqual({});
 
     expect(currentLedgerCurrency()).toBe('USD');
     expect(fetchMock).not.toHaveBeenCalled();

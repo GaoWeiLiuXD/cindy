@@ -39,10 +39,11 @@ export type {
 } from '../../shared/regionalMoney.js';
 
 const log = createLogger('modelPricing');
+// v8:账号币种与报价同快照持久化；无报价模型也可能明确声明结算币种。
 // v7:币种改为优先使用 Model Access 明确声明，不能复用按 region 猜测的旧 quote。
 // v6:所有 Gateway 模型统一按服务端 costDiscount 计费。v5 的 codex/ quote 已
 // 硬编码乘过 0.15 且丢弃 costDiscount，不能继续复用。
-const DISK_CACHE_VERSION = 7;
+const DISK_CACHE_VERSION = 8;
 const DISK_CACHE_FILE = 'model-pricing.json';
 
 export const MODEL_PRICING_CHANGED_CHANNEL = 'usage:model-pricing-changed';
@@ -52,6 +53,7 @@ interface DiskCachePayload {
   scope: string;
   fetchedAt: number;
   pricing: ModelPricingCatalog;
+  accountCurrency: MoneyCurrency | null;
 }
 
 let cache: ModelPricingCatalog | null = null;
@@ -174,6 +176,7 @@ function validateCatalog(value: unknown): ModelPricingCatalog | null {
 async function writeDiskCache(
   scope: string,
   pricing: ModelPricingCatalog,
+  accountCurrency: MoneyCurrency | null,
   fetchedAt: number,
 ): Promise<void> {
   try {
@@ -184,6 +187,7 @@ async function writeDiskCache(
       scope,
       fetchedAt,
       pricing,
+      accountCurrency,
     };
     await fs.writeFile(file, JSON.stringify(payload), 'utf8');
     hydratedScopes.add(scope);
@@ -208,7 +212,10 @@ async function hydrateFromDisk(scope: string): Promise<ModelPricingCatalog | nul
         raw.version !== DISK_CACHE_VERSION ||
         raw.scope !== scope ||
         !Number.isFinite(raw.fetchedAt) ||
-        Number(raw.fetchedAt) <= 0
+        Number(raw.fetchedAt) <= 0 ||
+        (raw.accountCurrency !== null &&
+          raw.accountCurrency !== 'CNY' &&
+          raw.accountCurrency !== 'USD')
       ) {
         return null;
       }
@@ -223,12 +230,9 @@ async function hydrateFromDisk(scope: string): Promise<ModelPricingCatalog | nul
       // getModelPricing / getModelPricingForModel。冷启动只命中磁盘缓存(/models 尚未
       // 完成或失败)时若不在此同步,currentLedgerCurrency() 会回落构建默认币种,把该账号
       // 用缓存报价算出的金额当异币种丢弃 —— 等于这一段时间完全不计费。
-      const derived = gatewayLedgerCurrency(pricing);
-      if (derived) {
-        gatewayAccountCurrency = derived;
-        gatewayAccountCurrencyScope = scope;
-        setActiveLedgerCurrency(derived);
-      }
+      gatewayAccountCurrency = raw.accountCurrency;
+      gatewayAccountCurrencyScope = scope;
+      setActiveLedgerCurrency(raw.accountCurrency);
       log.debug(`hydrated model pricing cache: ${Object.keys(pricing.xd ?? {}).length} XD quotes`);
       return pricing;
     } catch (err) {
@@ -283,7 +287,7 @@ export function replaceGatewayModelPricing(
   // 币种时 resolveGatewayAccountCurrency 返回 null，账本随之回落构建默认值。
   setActiveLedgerCurrency(gatewayAccountCurrency);
   hydratedScopes.add(scope);
-  void writeDiskCache(scope, pricing, cacheAt);
+  void writeDiskCache(scope, pricing, gatewayAccountCurrency, cacheAt);
   broadcastPricing(pricing);
   return pricing;
 }
