@@ -291,7 +291,12 @@ import { computeModelUsageDeltas, type ModelUsageCumulative, type ModelUsageDelt
 import { claudeSubscriptionUsageModelKey, codexApiUsageModelKey, codexSubscriptionUsageModelKey } from '../usage/usageHistory.js';
 import { buildClaudeTurnUsageDetails, computePriceQuoteTurnMoney, estimateClaudeSubscriptionTurnValue, isAnthropicModel, normalizeModelIdForPricing, resolveClaudeTurnCostSinks, type BillingRoute } from '../usage/turnCostCalculator.js';
 import { CHATGPT_MODEL_PREFIX, XAI_MODEL_PREFIX, isSubscriptionDirectModel } from '../../shared/subscriptionModels.js';
-import { addRegionalMoney, regionalizeUsd, type RegionalMoney } from '../../shared/regionalMoney.js';
+import {
+  addRegionalMoney,
+  usdToLedgerCurrency,
+  type RegionalMoney,
+} from '../../shared/regionalMoney.js';
+import { currentLedgerCurrency } from '../usage/ledgerCurrency.js';
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import { triggerClaudeSubscriptionUsageRefresh, triggerCodexAccountUsageRefresh } from './usage.js';
 import {
@@ -3170,14 +3175,14 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
               const value = computePriceQuoteTurnMoney(
                 m.deltas,
                 quote ?? undefined,
-                CURRENT_CINDY_REGION,
+                currentLedgerCurrency(),
               );
               if (value?.amount) estimatedValues.push(value);
             }
             if (isClaudeSubscriptionSession) {
               const claudeEstimated = estimateClaudeSubscriptionTurnValue(
                 perModel,
-                CURRENT_CINDY_REGION,
+                currentLedgerCurrency(),
               );
               if (claudeEstimated?.amount) estimatedValues.push(claudeEstimated);
             }
@@ -3226,7 +3231,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
                     ? 'provider-api'
                     : 'unknown';
             if (route === 'subscription' || route === 'xd-gateway') return;
-            const money = regionalizeUsd(rawDelta, CURRENT_CINDY_REGION);
+            const money = usdToLedgerCurrency(rawDelta, currentLedgerCurrency());
             const turnUsageDetails = buildClaudeTurnUsageDetails(doneData?.usage, undefined, resolvedModel);
             recordTurnSpend(money);
             recordSessionTurnSpend(session.id, money);
@@ -3359,7 +3364,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
             const money = computePriceQuoteTurnMoney(
               codexUsageToTokens(u),
               price ?? undefined,
-              CURRENT_CINDY_REGION,
+              currentLedgerCurrency(),
             );
             if (!isSubscriptionValue && money) {
               await recordModelTurnUsage({

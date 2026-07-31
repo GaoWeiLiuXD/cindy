@@ -49,6 +49,7 @@ import { readClaudeApiKey } from '../maker-host/auth-adapters';
 import { outboundFetch } from '../maker-host/outbound-fetch';
 import { claudeUpstreamEndpoint } from '../maker-host/runtime-configs';
 import { getGatewayAccountCurrency } from './modelPricing';
+import { currentLedgerCurrency } from './ledgerCurrency';
 
 const log = createLogger('claudeAccountUsage');
 
@@ -180,8 +181,12 @@ function resolveDailyActivitySpend(activity: LiteLlmDailyActivity): { todaySpend
 }
 
 async function fetchOnce(): Promise<ClaudeAccountUsageSnapshot | null> {
-  const currency = await getGatewayAccountCurrency(getAuthState().user?.id);
-  if (!currency) return null;
+  // 币种优先取账号目录声明。取不到时**不放弃整个快照**,回落本地账本币种:
+  // 手填 XD key 是明确支持的兜底流程(Model Access 处于 disabled / failed 时),那时没有
+  // 目录可推导,若直接 return 会让这些会话永久看不到账号配额 —— 比"币种按账本回落"更糟。
+  // 回落值与账本写入侧同源(currentLedgerCurrency),不会与同一行的其它金额混排。
+  const currency =
+    (await getGatewayAccountCurrency(getAuthState().user?.id)) ?? currentLedgerCurrency();
   const apiKey = readClaudeApiKey();
   // 直连真上游,不走本地 anthropic-compat-proxy —— 这条账号查询路径跟 Claude Code 子进程
   // 无关,proxy 只服务于子进程的 chat completion 请求。

@@ -154,6 +154,18 @@ describe('resolveCreditTotals', () => {
     ).toBeNull();
   });
 
+  it('returns null instead of silently losing precision beyond the safe integer range', () => {
+    // 账本允许 10 位整数 + 9 位小数,汇总后的 ledger units 能超过 Number.MAX_SAFE_INTEGER。
+    // 那时转 number 会静默丢精度,破坏"全程 BigInt 不丢精度"的保证 —— 宁可整条不展示。
+    expect(
+      resolveCreditTotals(
+        usage({
+          plan: { remaining: '0', used: '9999999999', total: '9999999999' },
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it('returns null when there is no usage snapshot', () => {
     expect(resolveCreditTotals(null)).toBeNull();
   });

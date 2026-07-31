@@ -232,6 +232,31 @@ describe('resolveTurnCost', () => {
     });
   });
 
+  it('projects non-gateway costs to the ledger currency, not the build region', () => {
+    // 账本是单币种的,写入侧只接受账本币种。以 USD 结算的账号在 CN 构建上,若把第三方
+    // 供应商 / 订阅估值按区域折成 CNY,这些金额会被账本守卫整批丢弃 —— 那些渠道的花费
+    // 就再也记不进日账本、按模型统计与「本对话」累计。
+    const providerApiOnUsdLedger = resolveTurnCost({
+      rawModel: 'gpt-4o',
+      tokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0 },
+      sdkCostDelta: 2,
+      pricing: catalog(quote('some-other-model', 3, 15)),
+      context: { providerId: 'openai', billingRoute: 'provider-api', region: 'cn' },
+    });
+    expect(providerApiOnUsdLedger.money).toMatchObject({ amount: 2, currency: 'USD' });
+
+    // CNY 账本仍按固定汇率投影(原有行为)。
+    const providerApiOnCnyLedger = resolveTurnCost({
+      rawModel: 'gpt-4o',
+      tokens: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0 },
+      sdkCostDelta: 2,
+      pricing: catalog(quote('some-other-model', 3, 15, { currency: 'CNY' })),
+      context: { providerId: 'openai', billingRoute: 'provider-api', region: 'cn' },
+    });
+    expect(providerApiOnCnyLedger.money).toMatchObject({ currency: 'CNY' });
+    expect(providerApiOnCnyLedger.money?.amount).toBeCloseTo(2 * 6.7, 6);
+  });
+
   it('omits the SDK USD fallback for a CNY-settled account (wrong currency, no discount)', () => {
     // CNY 账本下 SDK 的 USD 既不是该账号的报价口径、也不含 costDiscount，
     // 折算进去只会误记，这一轮宁可不记。
@@ -466,7 +491,7 @@ describe('subscription value and usage details', () => {
           outputTokens: 200_000,
         }),
       ],
-      'global',
+      'USD',
     );
     expect(value).toMatchObject({
       amount: 10,
@@ -484,11 +509,11 @@ describe('subscription value and usage details', () => {
           resolvedModel('claude-opus-4-8', { inputTokens: 1_000_000 }, usdMoney(1)),
           resolvedModel('claude-unknown-9', { inputTokens: 1_000_000 }),
         ],
-        'global',
+        'USD',
       ),
     ).toBeNull();
     expect(
-      estimateClaudeSubscriptionTurnValue([resolvedModel('claude-opus-4-8')], 'global'),
+      estimateClaudeSubscriptionTurnValue([resolvedModel('claude-opus-4-8')], 'USD'),
     ).toBeNull();
   });
 

@@ -27,11 +27,28 @@ import { useEffect, useState } from 'react';
 
 import type { ModelAccessCreditUsage } from '../../shared/modelAccess';
 import { billingApi } from '../features/billing/api';
+import { useAuth } from '../contexts/AuthContext';
 
 /** 额度变化只跟 turn 走,状态栏辅助信息不值得高频拉取。 */
 const REFRESH_INTERVAL_MS = 60_000;
 
-let lastUsage: ModelAccessCreditUsage | null = null;
+/**
+ * 防闪烁缓存，**按账号绑定**。
+ *
+ * 额度是财务数据，缓存必须跟着账号走：同一个 renderer 生命周期内可以登出再登录另一个
+ * 账号，若缓存不绑身份，新账号在自己的请求返回前会看到上一个账号的已用 / 总额；而下面
+ * 的 catch 又刻意保留旧值（避免网络抖动清空），新账号不支持该查询或请求失败时这个错值
+ * 会一直挂着。所以缓存连同当前账号 id 一起存，账号不匹配时视为无缓存。
+ *
+ * 本 hook 走 invoke 拉取、没有 main→renderer 的推送通道，不像 useClaudeAccountUsage
+ * 那样会被新账号的广播覆盖，因此必须自己做这层隔离。
+ */
+let cache: { accountId: string; usage: ModelAccessCreditUsage } | null = null;
+
+function readCache(accountId: string | null): ModelAccessCreditUsage | null {
+  if (!accountId || cache?.accountId !== accountId) return null;
+  return cache.usage;
+}
 
 function isCreditPool(v: unknown): boolean {
   if (!v || typeof v !== 'object') return false;
@@ -57,16 +74,18 @@ function isCreditUsage(v: unknown): v is ModelAccessCreditUsage {
 export function useModelAccessCreditUsage(
   enabled: boolean,
 ): ModelAccessCreditUsage | null {
+  const { dataOwnerId } = useAuth();
   const [usage, setUsage] = useState<ModelAccessCreditUsage | null>(() =>
-    enabled ? lastUsage : null,
+    enabled ? readCache(dataOwnerId) : null,
   );
 
+  // 账号切换（或禁用）立即丢弃上一个账号的额度，不等请求返回。
   useEffect(() => {
-    setUsage(enabled ? lastUsage : null);
-  }, [enabled]);
+    setUsage(enabled ? readCache(dataOwnerId) : null);
+  }, [enabled, dataOwnerId]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !dataOwnerId) return;
     let cancelled = false;
 
     const load = () => {
@@ -75,11 +94,11 @@ export function useModelAccessCreditUsage(
         .then((res) => {
           if (cancelled) return;
           if (!isCreditUsage(res)) return;
-          lastUsage = res;
+          cache = { accountId: dataOwnerId, usage: res };
           setUsage(res);
         })
         .catch(() => {
-          /* 租户不提供该查询 / 未开户 / 上游不可用 → 保持上一次值, 不清空 */
+          /* 租户不提供该查询 / 未开户 / 上游不可用 → 保持本账号上一次值, 不清空 */
         });
     };
 
@@ -89,7 +108,7 @@ export function useModelAccessCreditUsage(
       cancelled = true;
       clearInterval(timer);
     };
-  }, [enabled]);
+  }, [enabled, dataOwnerId]);
 
   return usage;
 }

@@ -41,7 +41,17 @@ function ledgerUnits(value: string): bigint | null {
   return match[1] === '-' ? -units : units;
 }
 
-function toCurrency(units: bigint): number {
+/**
+ * ledger units → 货币单位。
+ *
+ * 账本允许 10 位整数 + 9 位小数，汇总后的 units 理论上能超过 Number.MAX_SAFE_INTEGER
+ * (9e15)，转 number 会静默丢精度、破坏本模块"全程 BigInt 不丢精度"的保证。超出安全范围
+ * 时返回 null，让调用方整条不展示，而不是给出一个悄悄错掉的金额。
+ */
+function toCurrency(units: bigint): number | null {
+  if (units > BigInt(Number.MAX_SAFE_INTEGER) || units < -BigInt(Number.MAX_SAFE_INTEGER)) {
+    return null;
+  }
   return Number(units) / Number(LEDGER_SCALE);
 }
 
@@ -82,5 +92,8 @@ export function resolveCreditTotals(
   }
 
   if (totalUnits === 0n) return null;
-  return { used: toCurrency(usedUnits), total: toCurrency(totalUnits) };
+  const used = toCurrency(usedUnits);
+  const total = toCurrency(totalUnits);
+  if (used === null || total === null) return null;
+  return { used, total };
 }

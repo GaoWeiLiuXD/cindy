@@ -13,6 +13,7 @@ import { app, BrowserWindow } from 'electron';
 
 import { CURRENT_CINDY_REGION } from '../../shared/brandRegion.js';
 import {
+  gatewayLedgerCurrency,
   gatewayPricingCatalog,
   getModelPriceQuote,
   subscriptionDirectPriceQuote,
@@ -335,11 +336,19 @@ export async function getGatewayAccountCurrency(
   await waitForModelPricingSync();
   const scope = currentScope(authenticatedUserId);
   if (gatewayAccountCurrencyScope === scope) return gatewayAccountCurrency;
+  // 本轮 /models 没跑成(冷启动尚未完成 / 同步失败)时,磁盘缓存里的报价同样能定出币种。
+  // 主动 hydrate 一次:只读本地文件,不联网。
+  const pricing = await getModelPricing();
   if (cacheScope !== scope) return null;
-  const currencies = new Set(
-    Object.values(cache?.xd ?? {}).map((quote) => quote.currency),
-  );
-  return currencies.size === 1 ? (currencies.values().next().value ?? null) : null;
+  const derived = gatewayLedgerCurrency(pricing);
+  if (!derived) return null;
+  // 推导结果写回缓存与账本事实源。少了这一步,只命中磁盘缓存的启动路径里
+  // currentLedgerCurrency() 会一直回落构建默认币种,把该账号的金额当异币种丢弃,
+  // 直到下一次 replaceGatewayModelPricing 成功才恢复。
+  gatewayAccountCurrency = derived;
+  gatewayAccountCurrencyScope = scope;
+  setActiveLedgerCurrency(derived);
+  return derived;
 }
 
 /**

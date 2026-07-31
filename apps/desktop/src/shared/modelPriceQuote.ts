@@ -47,9 +47,14 @@ export function isPricedGatewayModel(model: ModelAccessGatewayModel): boolean {
   return gatewayModelPriceQuote(model, 'global') !== undefined;
 }
 
+/**
+ * @param fallbackCurrency 该模型未声明 currency 时的回落币种。调用方(gatewayPricingCatalog)
+ *   会传同一目录里已声明的币种，让整份目录保持单一币种；缺省才按区域回落。
+ */
 export function gatewayModelPriceQuote(
   model: ModelAccessGatewayModel,
   region: CindyRegion,
+  fallbackCurrency?: MoneyCurrency,
 ): ModelPriceQuote | undefined {
   const modelId = model.id.trim();
   const inputPerMtok = perMtok(model.inputCostPerToken);
@@ -73,7 +78,7 @@ export function gatewayModelPriceQuote(
   return {
     providerId: 'xd',
     modelId,
-    currency: model.currency ?? gatewayCurrencyForRegion(region),
+    currency: model.currency ?? fallbackCurrency ?? gatewayCurrencyForRegion(region),
     source: 'gateway',
     approximate: false,
     inputPerMtok,
@@ -88,9 +93,22 @@ export function gatewayPricingCatalog(
   models: readonly ModelAccessGatewayModel[],
   region: CindyRegion,
 ): ModelPricingCatalog {
+  // 目录级币种优先于区域回落:同一账号的目录币种是统一的,个别模型省略 currency 时应跟随
+  // 同一目录里已声明的币种,而不是各自回落构建区域。否则新旧字段混合的响应(一条声明
+  // USD、一条省略)会产出跨币种目录 —— 账号币种被判成 USD,而回落成 CNY 的那些模型金额
+  // 会被账本写入守卫当异币种整批丢弃。只有整个目录都没声明时才回落区域。
+  const declared = new Set(
+    models
+      .map((model) => model.currency)
+      .filter((currency): currency is MoneyCurrency => currency === 'CNY' || currency === 'USD'),
+  );
+  const fallbackCurrency =
+    declared.size === 1
+      ? (declared.values().next().value ?? gatewayCurrencyForRegion(region))
+      : gatewayCurrencyForRegion(region);
   const xd: Record<string, ModelPriceQuote> = {};
   for (const model of models) {
-    const quote = gatewayModelPriceQuote(model, region);
+    const quote = gatewayModelPriceQuote(model, region, fallbackCurrency);
     if (quote) xd[quote.modelId] = quote;
   }
   return Object.keys(xd).length > 0 ? { xd } : {};

@@ -627,7 +627,7 @@ export async function readUsageHistoryWith(
       m.estimatedMoney = computePriceQuoteTurnMoney(
         m,
         getSubscriptionValuePriceFor(m.agentKind, m.model, pricing),
-        CURRENT_CINDY_REGION,
+        ledgerCurrency,
       );
     }
   }
@@ -644,7 +644,7 @@ export async function readUsageHistoryWith(
         ? (computePriceQuoteTurnMoney(
             row,
             getSubscriptionValuePriceFor(agentKind, model, pricing),
-            CURRENT_CINDY_REGION,
+            ledgerCurrency,
           ) ?? zeroEstimate())
         : zeroEstimate();
     const money =

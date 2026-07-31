@@ -12,11 +12,12 @@ import {
 import {
   addRegionalMoney,
   gatewayCurrencyForRegion,
-  regionalizeMoney,
-  regionalizeUsd,
+  toLedgerCurrency,
   usdMoney,
+  usdToLedgerCurrency,
   type ModelPriceQuote,
   type ModelPricingCatalog,
+  type MoneyCurrency,
   type RegionalMoney,
 } from '../../shared/regionalMoney.js';
 import { buildTurnUsageDetails, type TurnUsageDetails } from '../../shared/turnUsageDetails.js';
@@ -82,10 +83,15 @@ export function computeGatewayTurnCost(
   );
 }
 
+/**
+ * @param ledgerCurrency 本账号的账本币种（结算币种）。非 Gateway 来源的 USD 口径金额
+ *   按它投影，而不是按构建区域 —— 本地账本单币种，按区域投影会让以 USD 结算的账号在
+ *   CN 构建上收到 CNY 金额并被账本守卫整批丢弃。
+ */
 export function computePriceQuoteTurnMoney(
   tokens: TurnTokenDeltas,
   price: ModelPriceQuote | undefined,
-  region: CindyRegion,
+  ledgerCurrency: MoneyCurrency,
 ): RegionalMoney | null {
   if (!price) return null;
   const standardAmount = computeGatewayTurnCost(tokens, price);
@@ -111,15 +117,15 @@ export function computePriceQuoteTurnMoney(
         ? { estimateReasons: ['reference-price'] }
         : {}),
   };
-  // Gateway 报价的币种就是该账号的实际结算币种,必须原样记账才能与账单对账。
-  // 它不保证等于客户端发行区域:多数账号跟随区域(cn=CNY / global=USD),但也存在以 USD
-  // 结算的账号运行在 CN 构建上的正常情形。
+  // Gateway 报价的币种就是该账号的实际结算币种,原样记账才能与账单对账 —— 不做任何换算。
+  // 否则以 USD 结算的账号在 CN 构建上,turn 会被 USD_TO_CNY_FIXED_RATE 折成 CNY,而同一
+  // 界面的账号配额(走 gatewayMoney,不换算)仍是 USD 原值,造成同一行 $ / ¥ 混排且金额差
+  // 一个汇率倍数、无法与服务端账单核对。
   //
-  // 所以 gateway 来源一律不做区域换算 —— 否则这类账号的 turn 会被 USD_TO_CNY_FIXED_RATE
-  // 折成 CNY,而同一界面的账号配额(走 gatewayMoney,不换算)仍是 USD 原值,造成同一行
-  // $ / ¥ 混排且金额差一个汇率倍数、无法与服务端账单核对。
-  // 其余来源(第三方参考价、订阅价值估算)本就是 USD 口径,继续按区域投影到本地账本。
-  return price.source === 'gateway' ? money : regionalizeMoney(money, region);
+  // 其余来源(第三方参考价、订阅价值估算)是 USD 口径,投影到**账本币种**而不是构建区域:
+  // 账本是单币种的,按区域投影会让这些金额在 USD 结算账号上变成 CNY,继而被账本写入守卫
+  // 当异币种整批丢弃,订阅估算与自定义供应商花费就再也记不进来。
+  return price.source === 'gateway' ? money : toLedgerCurrency(money, ledgerCurrency);
 }
 
 export function resolveTurnCost(args: {
@@ -136,21 +142,20 @@ export function resolveTurnCost(args: {
     return { model, money: null, source: 'subscription' };
   }
 
+  // 本账号的账本币种:优先取目录里 xd 报价声明的币种(服务端按账号所属租户下发,不保证
+  // 等于发行区域),目录为空时才按区域推断。所有路由共用这一个口径,保证本函数产出的金额
+  // 必然与账本写入侧接受的币种一致。
+  const ledgerCurrency =
+    gatewayLedgerCurrency(pricing) ?? gatewayCurrencyForRegion(context.region);
+
   if (context.billingRoute === 'xd-gateway') {
     const quote = getModelPriceQuote(pricing, 'xd', model);
     if (!quote) {
       // 该模型没有报价(上游未登记,或目录还没同步下来)。SDK 的 costDelta 是 USD,
-      // 只有当本账号的 Gateway 结算币种同为 USD 时才能直接兜底记账。
+      // 只有账本币种同为 USD 时才能直接兜底记账 —— 这样以 USD 结算的账号不会漏记。
       //
-      // 判据取自同一目录里其它 xd 报价声明的币种 —— 服务端按账号所属租户下发，不保证
-      // 等于客户端发行区域。因此这里既不看构建区域,也不需要知道是哪类账号,
-      // USD 结算的账号自然被覆盖到、不会漏记。
-      // 目录整体为空(真冷启动)时退回按区域推断,保持原有行为。
-      //
-      // 币种不同(如 CN 个人租户的 CNY 账本)仍然不兜底:SDK 值既不是该账号的报价口径、
-      // 也不含 costDiscount,折算进去只会误记,宁可这一轮不记。
-      const ledgerCurrency =
-        gatewayLedgerCurrency(pricing) ?? gatewayCurrencyForRegion(context.region);
+      // 币种不同(CNY 账本)仍然不兜底:SDK 值既不是该账号的报价口径、也不含 costDiscount,
+      // 折算进去只会误记,宁可这一轮不记。
       const fallbackUsd = Math.max(0, sdkCostDelta ?? 0);
       return {
         model,
@@ -160,13 +165,15 @@ export function resolveTurnCost(args: {
     }
     return {
       model,
-      money: computePriceQuoteTurnMoney(tokens, quote, context.region),
+      money: computePriceQuoteTurnMoney(tokens, quote, ledgerCurrency),
       source: 'gateway',
     };
   }
 
+  // 第三方供应商 / 未知路由:SDK 值是 USD 口径,投影到账本币种而不是构建区域,
+  // 否则 USD 结算账号上这些花费会变成 CNY 并被账本守卫丢弃。
   const sdkAmount = Math.max(0, sdkCostDelta ?? 0);
-  const money = sdkAmount > 0 ? regionalizeUsd(sdkAmount, context.region) : null;
+  const money = sdkAmount > 0 ? usdToLedgerCurrency(sdkAmount, ledgerCurrency) : null;
   return {
     model,
     money,
@@ -222,16 +229,20 @@ export function resolveClaudeTurnCostSinks(
   };
 }
 
+/**
+ * @param ledgerCurrency 本账号账本币种。订阅参考价是 USD 口径，按它投影而不是按区域，
+ *   否则以 USD 结算的账号上这些估值会变成 CNY 并被账本守卫丢弃。
+ */
 export function estimateClaudeSubscriptionTurnValue(
   perModel: ResolvedModelCost[],
-  region: CindyRegion,
+  ledgerCurrency: MoneyCurrency,
 ): RegionalMoney | null {
   const values: RegionalMoney[] = [];
   for (const item of perModel) {
     if (!isAnthropicModel(item.model) || item.money?.amount) continue;
     const quote = providerReferencePriceQuote('anthropic', item.model);
     if (!quote) continue;
-    const value = computePriceQuoteTurnMoney(item.deltas, quote, region);
+    const value = computePriceQuoteTurnMoney(item.deltas, quote, ledgerCurrency);
     if (value && value.amount > 0) values.push(value);
   }
   return values.length > 0 ? addRegionalMoney(values) : null;
