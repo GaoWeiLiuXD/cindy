@@ -494,7 +494,6 @@ export async function readUsageHistoryWith(
   // 账本币种与写入侧同一事实源(currentLedgerCurrency)：由服务端按账号所属租户下发，
   // 不保证等于发行区域。按区域取会把以 USD 结算的账号在 CN 构建上的每一行判成异币种、
   // 整段归零成不计费。历史遗留的异币种行(换号 / 跨区)仍按 keepCompatibleMoney 归零。
-  const ledgerCurrency = currentLedgerCurrency();
   const [spendDayRows, pricing] = await Promise.all([
     deps.getAllSpendDays(),
     // pricing 不许阻塞首页首帧: 冷启动时 getModelPricing 是一次最长 5s 的网络请求,
@@ -505,6 +504,10 @@ export async function readUsageHistoryWith(
       new Promise<null>((resolve) => setTimeout(resolve, PRICING_WAIT_BUDGET_MS, null)),
     ]),
   ]);
+  // 必须在上面 pricing 恢复之后再读:hydrateFromDisk 会在磁盘缓存生效的同时回写账本币种,
+  // 而 prewarmModelPricing 与首页首次聚合是并发的。先读会拿到构建默认值,把该账号的日账与
+  // 模型行全部归零,还可能把这个错结果写进 usage-history 缓存。
+  const ledgerCurrency = currentLedgerCurrency();
   // 零值也用账本币种:无消费日的 today/空聚合不能把展示单位翻回默认币种。
   const zeroActual = (): RegionalMoney => ({
     amount: 0,
