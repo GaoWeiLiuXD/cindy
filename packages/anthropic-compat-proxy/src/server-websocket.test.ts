@@ -1,7 +1,7 @@
-import { createServer, type IncomingMessage } from 'node:http';
+import { ClientRequest, createServer, type IncomingMessage } from 'node:http';
 import { connect, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAnthropicCompatProxy } from './server.js';
 import { listenOnAvailableLoopbackPort } from './test-loopback-server.js';
@@ -219,6 +219,24 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(upstream.received.join('')).toContain('PING');
   });
 
+  it('uses a short timeout for the websocket handshake', async () => {
+    const setTimeoutSpy = vi.spyOn(ClientRequest.prototype, 'setTimeout');
+    try {
+      const upstream = await startUpgradeUpstream();
+      proxy = await createAnthropicCompatProxy({
+        upstream: 'http://unused.invalid',
+        transformRequest: [],
+        resolveWebSocketUpstream: () => upstream.url,
+      });
+
+      const response = await openUpgrade(proxy.url);
+      expect(response.head).toContain('HTTP/1.1 101 Switching Protocols');
+      expect(setTimeoutSpy.mock.calls.some(([timeout]) => timeout === 15_000)).toBe(true);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it('returns 426 as a complete HTTP response when the host requests HTTP fallback', async () => {
     proxy = await createAnthropicCompatProxy({
       upstream: 'http://unused.invalid',
@@ -404,7 +422,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(proxy.disconnectWebSocketsForThread?.('thread-missing')).toBe(0);
   });
 
-  it('can evict unscoped startup-prewarm sockets without closing other owned threads', async () => {
+  it('does not evict unscoped startup-prewarm sockets for another thread', async () => {
     const upstream = await startUpgradeUpstream();
     proxy = await createAnthropicCompatProxy({
       upstream: 'http://unused.invalid',
@@ -430,22 +448,20 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
       Buffer.alloc(0),
       ['Thread-Id: thread-other'],
     );
-    const unscopedClosed = new Promise<void>((resolve) => {
-      unscoped.socket.once('close', () => resolve());
-    });
     const targetClosed = new Promise<void>((resolve) => {
       target.socket.once('close', () => resolve());
     });
 
-    expect(proxy.disconnectWebSocketsForThread?.(
-      'thread-target',
-      { includeUnscoped: true },
-    )).toBe(2);
-    await Promise.all([unscopedClosed, targetClosed]);
-    expect(unscoped.socket.destroyed).toBe(true);
+    expect(proxy.disconnectWebSocketsForThread?.('thread-target')).toBe(1);
+    await targetClosed;
+    expect(unscoped.socket.destroyed).toBe(false);
     expect(target.socket.destroyed).toBe(true);
     expect(other.socket.destroyed).toBe(false);
 
+    unscoped.socket.write('PING');
+    await expect(
+      waitForSocketText(unscoped.socket, unscoped.rest, 'PONG'),
+    ).resolves.toContain('PONG');
     other.socket.write('PING');
     await expect(waitForSocketText(other.socket, other.rest, 'PONG')).resolves.toContain('PONG');
   });

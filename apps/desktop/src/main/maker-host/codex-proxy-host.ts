@@ -142,6 +142,20 @@ export function armCodexHttpRecovery(args: {
     });
     return null;
   }
+  httpRecoveryReasonByThread.set(threadId, rule.id);
+  const disconnectedWebSockets = _handle?.disconnectWebSocketsForThread?.(threadId) ?? 0;
+  if (disconnectedWebSockets === 0) {
+    httpRecoveryReasonByThread.delete(threadId);
+    // startup-prewarm 没有稳定 thread header，且 shared app-server 会跨业务 session
+    // 复用这些连接。不能为恢复 thread A 而全局断开匿名连接（可能正承载 thread B）；
+    // 无法精确定位时保留 Codex 原生错误语义，不自动重投，也不制造跨会话降级。
+    log.info('codex websocket recovery left to native transport; no scoped socket found', {
+      sessionId,
+      threadId,
+      reason: rule.id,
+    });
+    return null;
+  }
   if (sessionId && !existingSessionId) {
     // recovery 只需要让 unregister 能清掉 thread 标记，不能调用 bindThreadToSession：
     // 子 Agent thread 与主 thread 属于同一业务 session，但 bind 会把它当成主 thread
@@ -151,11 +165,6 @@ export function armCodexHttpRecovery(args: {
     sessionToThreads.set(sessionId, threads);
     threadToSession.set(threadId, sessionId);
   }
-  httpRecoveryReasonByThread.set(threadId, rule.id);
-  const disconnectedWebSockets = _handle?.disconnectWebSocketsForThread?.(
-    threadId,
-    { includeUnscoped: true },
-  ) ?? 0;
   log.info('codex websocket recovery fallback armed', {
     sessionId,
     threadId,

@@ -58,6 +58,10 @@ const REQUEST_TOO_LARGE_DRAIN_TIMEOUT_MS = 10 * 1000;
 // 转发请求的客户端不响应超时(socket 级别);LLM 请求经常 60s+,这里保守给 10 分钟。
 const UPSTREAM_SOCKET_TIMEOUT_MS = 10 * 60 * 1000;
 
+// WebSocket 这里只等 HTTP 101 握手，不应沿用允许长时间生成的 10 分钟超时。
+// 中间代理静默丢弃 Upgrade 时尽快回 426，让 Codex 原生 transport 降到 HTTP。
+const WEBSOCKET_UPGRADE_TIMEOUT_MS = 15 * 1000;
+
 // Happy Eyeballs 单地址连接尝试超时。Node 20+ 默认开启 autoSelectFamily(双栈并竞),
 // 但每个地址的 TCP 握手默认只给 250ms(net.getDefaultAutoSelectFamilyAttemptTimeout());
 // 高延迟网络下到 Cloudflare 系上游(chatgpt.com 等)握手经常 >250ms,DNS 解出的所有地址
@@ -1725,10 +1729,9 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
       });
       upstreamReqForEarlyClose = upstreamReq;
 
-      // 握手阶段必须有上限(上游可能既不回 101 也不回响应)。**建立成功后立刻解除** ——
-      // 否则这个 socket 级超时会在 10 分钟后把正常的长连接杀掉, 表现为"WS 隔一段固定
-      // 时间就断", 极难归因。
-      upstreamReq.setTimeout(UPSTREAM_SOCKET_TIMEOUT_MS, () => {
+      // 握手阶段必须有独立的秒级上限(上游可能既不回 101 也不回响应)。
+      // **建立成功后立刻解除**，避免任何握手 timer 误杀正常长连接。
+      upstreamReq.setTimeout(WEBSOCKET_UPGRADE_TIMEOUT_MS, () => {
         logger.warn?.('upgrade handshake timed out', { reqId, path: upstreamPath });
         if (!established && !settled) {
           settle('handshake-timeout');
@@ -1893,14 +1896,11 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
 
   return {
     url,
-    disconnectWebSocketsForThread(threadId, options) {
+    disconnectWebSocketsForThread(threadId) {
       const normalized = threadId.trim();
       if (!normalized) return 0;
       const matches = Array.from(liveWebSocketConnections)
-        .filter((connection) =>
-          connection.threadId === normalized
-          || (options?.includeUnscoped === true && connection.threadId === ''),
-        );
+        .filter((connection) => connection.threadId === normalized);
       for (const connection of matches) connection.closeForHostFallback();
       return matches.length;
     },

@@ -1608,13 +1608,40 @@ describe('codex proxy host', () => {
     expect(proxyOpts.resolveWebSocketUpstream(ctxForThread('thread-safe'))).toBe(
       'https://chatgpt.com/backend-api/codex',
     );
-    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith(
-      'thread-encrypted',
-      { includeUnscoped: true },
-    );
-    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith(
-      'thread-image',
-      { includeUnscoped: true },
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith('thread-encrypted');
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith('thread-image');
+  });
+
+  it('keeps native websocket behavior when no scoped socket can be recovered safely', async () => {
+    const host = await freshCodexProxyHost();
+    const disconnectWebSocketsForThread = vi.fn(() => 0);
+    mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
+      url: 'http://127.0.0.1:43210',
+      disconnectWebSocketsForThread,
+      dispose: vi.fn(async () => undefined),
+    });
+    await host.ensureCodexProxyReady();
+    host.setCodexProxyAuthInjection('oauth-bearer');
+
+    const proxyOpts = mockState.createAnthropicCompatProxy.mock.calls[0][0] as {
+      resolveWebSocketUpstream: (ctx: {
+        url: string;
+        headers: Readonly<Record<string, string>>;
+      }) => string | null;
+    };
+    const ctx = {
+      url: '/v1/responses',
+      headers: { 'thread-id': 'thread-unscoped' },
+    };
+
+    expect(host.armCodexHttpRecovery({
+      sessionId: 'session-unscoped',
+      threadId: 'thread-unscoped',
+      message: 'invalid_encrypted_content',
+    })).toBeNull();
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith('thread-unscoped');
+    expect(proxyOpts.resolveWebSocketUpstream(ctx)).toBe(
+      'https://chatgpt.com/backend-api/codex',
     );
   });
 
@@ -1642,10 +1669,7 @@ describe('codex proxy host', () => {
     expect(mockState.capturedRegistry?.get('thread-parent')).toBe('PRODUCT_PROMPT');
     expect(mockState.capturedRegistry?.get('thread-child')).toBe('PRODUCT_PROMPT');
     expect(mockState.capturedRegistry?.get('thread-sibling')).toBe('PRODUCT_PROMPT');
-    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith(
-      'thread-child',
-      { includeUnscoped: true },
-    );
+    expect(disconnectWebSocketsForThread).toHaveBeenCalledWith('thread-child');
 
     host.unregister('session-family');
     expect(mockState.capturedRegistry?.get('thread-parent')).toBeUndefined();
@@ -1657,6 +1681,7 @@ describe('codex proxy host', () => {
     const host = await freshCodexProxyHost();
     mockState.createAnthropicCompatProxy.mockResolvedValueOnce({
       url: 'http://127.0.0.1:43210',
+      disconnectWebSocketsForThread: vi.fn(() => 1),
       dispose: vi.fn(async () => undefined),
     });
     await host.ensureCodexProxyReady();
