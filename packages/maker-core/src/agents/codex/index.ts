@@ -2374,6 +2374,11 @@ export class CodexAgent extends BaseAgent {
       attempt: number;
       /** 同一逻辑 send 最多接管一次 WS→HTTP body recovery，避免坏响应形成重投环。 */
       httpRecoveryRetryAttempted: boolean;
+      /**
+       * `error` notification 只登记恢复意图；权威的 turn/completed 到达后才真正重投。
+       * 单一事实源放在 logical send 状态上，不再分散到各个 turn/start 请求条目。
+       */
+      pendingHttpRecovery: { deadTurnId: string; reason: string } | null;
       timer: ReturnType<typeof setTimeout> | null;
       /**
        * 重投的 turn/start RPC 是否在途。计时器到点后 `timer` 已清空、新 turn 又
@@ -2419,18 +2424,10 @@ export class CodexAgent extends BaseAgent {
      * 每个 per-request 的事实都住在自己的条目里, 请求 settle 时整条删掉, 天然不串味;
      * "有没有 start 在飞"一律由 `inFlightStarts.size` 派生, 不再有第二份真相。
      */
-    type DeferredHttpRecovery = {
-      deadTurnId: string;
-      reason: string;
-      sendGen: number;
-      terminalMessage: string;
-      responseMatched: boolean;
-    };
     const inFlightStarts = new Map<number, {
       quarantined: boolean;
       terminalSettled: boolean;
       sendGen: number;
-      deferredHttpRecovery: DeferredHttpRecovery | null;
     }>();
     /** 每次 turn/start RPC 的自增序号, 作为登记表的键。 */
     let turnStartSeq = 0;
@@ -2451,7 +2448,6 @@ export class CodexAgent extends BaseAgent {
         quarantined: false,
         terminalSettled: false,
         sendGen: ownerSendGen,
-        deferredHttpRecovery: null,
       });
       isTurnStartPending = true;
       return seq;
@@ -5380,14 +5376,15 @@ export class CodexAgent extends BaseAgent {
     };
 
     /**
-     * body recovery 的终态通知可能先于 turn/start RPC 响应到达。此时尚无
-     * turnOrigin，不能立即重投；只有唯一且属于本 send 的 start 在飞时才暂存，
-     * 等响应用同一个 turn id 建立权威归属后再走正常 HTTP recovery。
+     * 记录本 logical send 的一次 HTTP recovery 意图。
+     *
+     * `error` notification 只负责登记并保持 UI running；真正重投只由权威的
+     * turn/completed 驱动。这样无论 error / completed / turn-start response
+     * 如何乱序，都只有一个执行入口。
      */
-    const deferHttpRecoveryUntilTurnStartSettles = (
+    const recordHttpRecoveryIntent = (
       deadTurnId: string,
-      reason: string,
-      terminalMessage: string,
+      error: { message?: string; additionalDetails?: unknown } | null | undefined,
     ): boolean => {
       const state = overloadRetry;
       if (
@@ -5396,84 +5393,46 @@ export class CodexAgent extends BaseAgent {
         || closed
         || state.httpRecoveryRetryAttempted
         || state.isCancelled()
-        || (currentTurnId !== null && currentTurnId !== deadTurnId)
-        || inFlightStarts.size !== 1
         || state.timer !== null
         || state.deferredCapacityFailure !== null
         || producedOutputTurnIds.has(deadTurnId)
       ) {
         return false;
       }
-      const [startSeq, start] = Array.from(inFlightStarts.entries())[0] ?? [];
-      if (
-        startSeq === undefined
-        || !start
-        || start.sendGen !== state.sendGen
-        || start.quarantined
-        || start.terminalSettled
-        || start.deferredHttpRecovery !== null
-      ) {
+      if (state.pendingHttpRecovery) {
+        return state.pendingHttpRecovery.deadTurnId === deadTurnId;
+      }
+
+      const origin = turnOriginByTurnId.get(deadTurnId);
+      const [startSeq, start] =
+        inFlightStarts.size === 1
+          ? Array.from(inFlightStarts.entries())[0] ?? []
+          : [];
+      const ownedByCurrentSend = origin?.sendGen === state.sendGen;
+      const ownedBySolePendingStart =
+        origin === undefined
+        && (currentTurnId === null || currentTurnId === deadTurnId)
+        && startSeq !== undefined
+        && start?.sendGen === state.sendGen
+        && !start.quarantined
+        && !start.terminalSettled;
+      if (!ownedByCurrentSend && !ownedBySolePendingStart) {
         return false;
       }
 
-      start.deferredHttpRecovery = {
+      const reason = armHttpRecoveryForError(error);
+      if (!reason) return false;
+      state.pendingHttpRecovery = {
         deadTurnId,
         reason,
-        sendGen: state.sendGen,
-        terminalMessage,
-        responseMatched: false,
       };
-      // 挡住死 turn 在 RPC 响应前后的迟到事件；响应 id 对上后会补权威 origin，
-      // 并因这块墓碑拒绝重新激活。
-      terminalErroredTurnIds.add(deadTurnId);
-      dismissPendingUserInputForTurn(deadTurnId, 'turn_failed');
-      clearActiveToolContextsForTurn(deadTurnId);
-      stopActiveRolloutPlanFallback();
-      isTurnInFlight = false;
-      if (currentTurnId === deadTurnId) currentTurnId = null;
-      log.info('codex WS body recovery waiting for turn/start ownership', {
+      log.info('codex WS body recovery recorded; waiting for turn/completed', {
         threadId,
         deadTurnId,
         reason,
-        startSeq,
+        startSeq: startSeq ?? null,
       });
       return true;
-    };
-
-    const resumeDeferredHttpRecovery = (
-      deferred: DeferredHttpRecovery | null,
-      rpcSettledOk: boolean,
-    ): void => {
-      if (!deferred || !rpcSettledOk || !deferred.responseMatched) return;
-      const state = overloadRetry;
-      if (
-        !state
-        || closed
-        || state.sendGen !== deferred.sendGen
-        || state.isCancelled()
-      ) {
-        return;
-      }
-      if (retryTurnViaHttpRecovery(deferred.deadTurnId, deferred.reason)) return;
-
-      // 归属已经建立且本 send 仍有效时，重投若因意外状态无法接管，必须恢复原终态，
-      // 不能让被暂存的错误消失后把逻辑 turn 永久挂住。
-      log.error('deferred codex HTTP recovery could not start; surfacing original error', {
-        threadId,
-        deadTurnId: deferred.deadTurnId,
-        reason: deferred.reason,
-      });
-      discardOverloadRetry('deferred HTTP recovery could not start');
-      eventQueue.push({
-        type: 'error',
-        data: { message: deferred.terminalMessage, isTerminal: true },
-        source: 'codex',
-      });
-      eventQueue.push({
-        type: 'status',
-        data: { status: 'Done', ...usageTracker.snapshot(), isRunning: false },
-        source: 'codex',
-      });
     };
 
     /**
@@ -5492,27 +5451,60 @@ export class CodexAgent extends BaseAgent {
 
     function handleTurnCompleted(params: TurnCompletedParams): void {
       const turn = params.turn;
+      let recoveryState = overloadRetry;
+      let pendingRecovery =
+        recoveryState?.pendingHttpRecovery?.deadTurnId === turn.id
+          ? recoveryState.pendingHttpRecovery
+          : null;
       if (
-        turn.status === 'failed' &&
-        turn.error &&
-        !terminalErroredTurnIds.has(turn.id)
+        turn.status === 'failed'
+        && (!terminalErroredTurnIds.has(turn.id) || pendingRecovery)
       ) {
-        const recoveryReason = armHttpRecoveryForError(turn.error);
-        if (recoveryReason) {
-          if (retryTurnViaHttpRecovery(turn.id, recoveryReason)) return;
-          if (
-            deferHttpRecoveryUntilTurnStartSettles(
-              turn.id,
-              recoveryReason,
-              turn.error.message
-                || (typeof turn.error.additionalDetails === 'string'
-                  ? turn.error.additionalDetails
-                  : 'Codex turn failed before HTTP recovery could start'),
-            )
-          ) {
-            return;
-          }
+        if (!pendingRecovery && turn.error && recordHttpRecoveryIntent(turn.id, turn.error)) {
+          recoveryState = overloadRetry;
+          pendingRecovery =
+            recoveryState?.pendingHttpRecovery?.deadTurnId === turn.id
+              ? recoveryState.pendingHttpRecovery
+              : null;
         }
+        if (recoveryState && pendingRecovery) {
+          if (inFlightStarts.size > 0) {
+            const [start] = inFlightStarts.values();
+            if (
+              inFlightStarts.size === 1
+              && start?.sendGen === recoveryState.sendGen
+              && (currentTurnId === null || currentTurnId === turn.id)
+            ) {
+              // 权威 completed 已到、但对应 start RPC 仍未 settle。复用既有终态缓冲，
+              // 等响应建立 turn 归属后再由 completed 这一唯一入口重进并执行重投。
+              turnsCompletedBeforeStartResp.add(turn.id);
+              terminalErroredTurnIds.add(turn.id);
+              dismissPendingUserInputForTurn(turn.id, 'turn_failed');
+              clearActiveToolContextsForTurn(turn.id);
+              stopActiveRolloutPlanFallback();
+              isTurnInFlight = false;
+              if (currentTurnId === turn.id) currentTurnId = null;
+              deferredTerminalTurnCompletions.set(turn.id, params);
+              return;
+            }
+          }
+
+          recoveryState.pendingHttpRecovery = null;
+          if (retryTurnViaHttpRecovery(turn.id, pendingRecovery.reason)) return;
+          // 已登记但归属后来未能坐实时，恢复原终态处理；不能吞掉失败让 UI 悬空。
+          terminalErroredTurnIds.delete(turn.id);
+          log.warn('codex HTTP recovery intent could not be executed; surfacing turn failure', {
+            threadId,
+            deadTurnId: turn.id,
+            reason: pendingRecovery.reason,
+          });
+        }
+      }
+      if (pendingRecovery && recoveryState?.pendingHttpRecovery?.deadTurnId === turn.id) {
+        // 极端协议形状：先报可恢复 terminal error，最终 turn 却不是 failed。
+        // 以权威 completed 为准，取消本次恢复意图并正常收口。
+        recoveryState.pendingHttpRecovery = null;
+        terminalErroredTurnIds.delete(turn.id);
       }
       // turn/start RPC 响应未回时就收到终态 → 记墓碑, 阻止稍后到达的
       // handleTurnStartResp / 乱序 turnStarted 把已终结的 turn 重新置活。
@@ -5839,6 +5831,7 @@ export class CodexAgent extends BaseAgent {
      *   - `inFlight`：计时器已到点、重投 RPC 在途、新 turn 尚未激活；
      *   - `deferredCapacityFailure !== null`：失败已记账、等在途 turn/start settle 后
      *     补排（那一刻既没有计时器也没有 inFlight）。
+     *   - `pendingHttpRecovery !== null`：WS body 错误已登记、等权威 turn/completed。
      *
      * 抽成单一判据是因为它同时决定三件事: 会话忙不忙(isTurnRunning)、取消要不要收口
      * (signal abort)、权限收紧要不要作用到重投。前几轮每处各写一份, 第三种状态加进来
@@ -5848,7 +5841,12 @@ export class CodexAgent extends BaseAgent {
       state: typeof overloadRetry = overloadRetry,
     ): state is NonNullable<typeof overloadRetry> =>
       state != null
-      && (state.timer != null || state.inFlight || state.deferredCapacityFailure !== null);
+      && (
+        state.timer != null
+        || state.inFlight
+        || state.deferredCapacityFailure !== null
+        || state.pendingHttpRecovery !== null
+      );
 
     /**
      * 逻辑 send 被终态收口(terminal error + Done 都已推出)时, 撤销挂起 / 延后的重投。
@@ -6875,25 +6873,10 @@ export class CodexAgent extends BaseAgent {
         }
         const wasTurnRunning = isTurnInFlight || targetsPendingTurn;
         if (isTerminalError && targetsCurrentTurn && !isTransportError) {
-          const recoveryReason = armHttpRecoveryForError(effectiveParams.error);
-          if (recoveryReason) {
-            const recoveryTurnId = effectiveParams.turnId || currentTurnId || '';
-            if (retryTurnViaHttpRecovery(recoveryTurnId, recoveryReason)) return;
-            if (
-              (targetsPendingTurn
-                || (currentTurnId === recoveryTurnId && inFlightStarts.size === 1))
-              && deferHttpRecoveryUntilTurnStartSettles(
-                recoveryTurnId,
-                recoveryReason,
-                effectiveParams.error?.message
-                  || (typeof effectiveParams.error?.additionalDetails === 'string'
-                    ? effectiveParams.error.additionalDetails
-                    : 'Codex request failed before HTTP recovery could start'),
-              )
-            ) {
-              return;
-            }
-          }
+          const recoveryTurnId = effectiveParams.turnId || currentTurnId || '';
+          // error notification 只登记恢复意图并保持 logical turn 运行；
+          // 权威 turn/completed 才负责收口旧 turn 与发起一次 HTTP 重投。
+          if (recordHttpRecoveryIntent(recoveryTurnId, effectiveParams.error)) return;
         }
         // 服务过载(模型容量不足)时接管重投：translator 命中 capacity 才回调，
         // 拿到进度就把错误透成非终止状态，本函数随后跳过 Done 收口。
@@ -7168,23 +7151,18 @@ export class CodexAgent extends BaseAgent {
         const handleTurnStartResp = (resp: TurnStartResponse, ownerSeq: number): void => {
           if (resp.turn?.id) {
             const startEntry = inFlightStarts.get(ownerSeq);
-            const deferredHttpRecovery = startEntry?.deferredHttpRecovery;
-            if (deferredHttpRecovery) {
-              deferredHttpRecovery.responseMatched =
-                deferredHttpRecovery.deadTurnId === resp.turn.id;
-              if (deferredHttpRecovery.responseMatched) {
-                turnOriginByTurnId.set(resp.turn.id, {
-                  startSeq: ownerSeq,
-                  sendGen: deferredHttpRecovery.sendGen,
-                });
-              } else {
-                log.warn('deferred codex HTTP recovery did not match turn/start response', {
-                  threadId,
-                  errorTurnId: deferredHttpRecovery.deadTurnId,
-                  responseTurnId: resp.turn.id,
-                  ownerSeq,
-                });
-              }
+            const pendingHttpRecovery = overloadRetry?.pendingHttpRecovery;
+            if (
+              startEntry
+              && pendingHttpRecovery?.deadTurnId === resp.turn.id
+              && startEntry.sendGen === overloadRetry?.sendGen
+            ) {
+              // completed 已经把该 turn 记为终态，下面不会重新激活；这里仅补权威
+              // 归属，供 start finally flush completed 后的一次 HTTP 重投校验。
+              turnOriginByTurnId.set(resp.turn.id, {
+                startSeq: ownerSeq,
+                sendGen: startEntry.sendGen,
+              });
             }
             // 缓冲的歧义 started 对账 (codex R9 P2): 本响应确立在飞 RPC 的
             // turnId — 缓冲里 id 一致的是它的合法 started (下方正常激活),
@@ -7310,6 +7288,7 @@ export class CodexAgent extends BaseAgent {
         overloadRetry = {
           attempt: 0,
           httpRecoveryRetryAttempted: false,
+          pendingHttpRecovery: null,
           timer: null,
           inFlight: false,
           isCancelled: () => sendOpts?.signal?.aborted === true,
@@ -7385,12 +7364,12 @@ export class CodexAgent extends BaseAgent {
               rpcSettledOk = true;
             } finally {
               state.inFlight = false;
-              const deferredHttpRecovery =
-                inFlightStarts.get(retryStartSeq)?.deferredHttpRecovery ?? null;
+              if (!rpcSettledOk && overloadRetry === state) {
+                state.pendingHttpRecovery = null;
+              }
               // 注销本次请求(isTurnStartPending 由登记表重算, 不会误清别的请求的状态)。
               endTurnStart(retryStartSeq);
               flushDeferredTerminalTurnCompletionsIfIdle();
-              resumeDeferredHttpRecovery(deferredHttpRecovery, rpcSettledOk);
               // 在途期间又撞容量、当时被延后的那条失败在这里收尾。只有新 turn 确实
               // 没能激活时才补排（它被落了墓碑、响应因此拒绝激活）；turn 活了就说明
               // 那条错误针对的是别的 turn，不该重排。预算耗尽时必须自己推终态，
@@ -7483,6 +7462,7 @@ export class CodexAgent extends BaseAgent {
                 ...(threadModelProvider ? { modelProvider: threadModelProvider } : {}),
                 ...(resumeModel && resumeModel !== 'gpt-5' ? { model: resumeModel } : {}),
                 ...(mutableServiceTier !== undefined ? { serviceTier: mutableServiceTier } : {}),
+                ...(developerInstructions && !useProxyChannel ? { developerInstructions } : {}),
               };
               const resumeResp = await host.request<ThreadResumeResponse>(Method.ThreadResume, resumeParams, {
                 timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,
@@ -7557,7 +7537,12 @@ export class CodexAgent extends BaseAgent {
           // 条目即将被删, 先把"已由取消收口"取出来供下面的 finalErr 分支判断。
           const initialStartEntry = inFlightStarts.get(initialStartSeq);
           initialStartSettledByCancel = initialStartEntry?.terminalSettled === true;
-          const deferredHttpRecovery = initialStartEntry?.deferredHttpRecovery ?? null;
+          if (
+            !initialStartSettledOk
+            && overloadRetry?.sendGen === mySendGen
+          ) {
+            overloadRetry.pendingHttpRecovery = null;
+          }
           // 先注销本次请求(isTurnStartPending 由登记表重算) —— 无条件置 false 会在两个
           // start 并存时清掉属于**另一个**请求的状态(review #844 codex P1)。注销必须早于
           // flush: 后者按 idle 与否决定是否放行缓存的终态。
@@ -7569,7 +7554,6 @@ export class CodexAgent extends BaseAgent {
           // discardOverloadRetry + terminal error 收口。
           const armedState = overloadRetry;
           if (armedState) {
-            resumeDeferredHttpRecovery(deferredHttpRecovery, initialStartSettledOk);
             // rpcSettledOk 的本意是"我这次 RPC 失败了, 别在推终态之外再排一个计时器"。
             // 但延后的那条失败可能属于**另一轮仍然活着的** send(它的容量错误在我还在飞时
             // 到达, 于是只被记账): 那一轮的命运与我这次 RPC 成败无关, 用我的失败去压掉它
@@ -7777,7 +7761,7 @@ export class CodexAgent extends BaseAgent {
         // 用户点 Stop = 明确不想继续这一轮，挂起的过载重投必须一起撤掉。
         // 放在 currentTurnId 判空之前：重投等待期间 turn 已死、currentTurnId 为
         // null，此时正是最需要响应 Stop 的时刻（否则计时器到点又发一个新 turn）。
-        const hadPendingOverloadRetry = overloadRetryPending();
+        const hadPendingRetry = overloadRetryPending();
         discardOverloadRetry('aborted');
         if (closed) return;
         // 有挂起重投时的 Stop **必须**由这里显式收口逻辑 turn —— desktop 的
@@ -7792,8 +7776,8 @@ export class CodexAgent extends BaseAgent {
         //    cancelledMidFlight 把同一个 id 落墓碑, handleTurnCompleted 于是把唯一
         //    那条完成事件压掉, 派发闩永远不释放（review #844 codex P1）。这里自己
         //    落墓碑 + interrupt + 推终态, 保证恰好一次收口。
-        if (hadPendingOverloadRetry) {
-          teardownActiveTurnForCancellation('stopped while an overload retry was pending');
+        if (hadPendingRetry) {
+          teardownActiveTurnForCancellation('stopped while an automatic retry was pending');
           markInFlightStartsTerminallySettled();
           // turn/start 还在飞时按下 Stop: 这里马上会推终态事件, 而那个 RPC 的响应随后
           // 才回来。不武装隔离的话 handleTurnStartResp 会照常激活它 —— 用户看到
@@ -7802,7 +7786,7 @@ export class CodexAgent extends BaseAgent {
           eventQueue.push({
             type: 'error',
             data: {
-              message: 'Codex turn stopped while waiting to retry a model-capacity failure',
+              message: 'Codex turn stopped while waiting for an automatic retry',
               isTerminal: true,
               reason: 'codex-overload-retry-aborted',
             },
