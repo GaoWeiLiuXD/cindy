@@ -5498,7 +5498,21 @@ export class CodexAgent extends BaseAgent {
         !terminalErroredTurnIds.has(turn.id)
       ) {
         const recoveryReason = armHttpRecoveryForError(turn.error);
-        if (recoveryReason) retryTurnViaHttpRecovery(turn.id, recoveryReason);
+        if (recoveryReason) {
+          if (retryTurnViaHttpRecovery(turn.id, recoveryReason)) return;
+          if (
+            deferHttpRecoveryUntilTurnStartSettles(
+              turn.id,
+              recoveryReason,
+              turn.error.message
+                || (typeof turn.error.additionalDetails === 'string'
+                  ? turn.error.additionalDetails
+                  : 'Codex turn failed before HTTP recovery could start'),
+            )
+          ) {
+            return;
+          }
+        }
       }
       // turn/start RPC 响应未回时就收到终态 → 记墓碑, 阻止稍后到达的
       // handleTurnStartResp / 乱序 turnStarted 把已终结的 turn 重新置活。
