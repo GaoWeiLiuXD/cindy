@@ -13,7 +13,7 @@
  *      详见 dispose() 内注释。
  */
 
-import { createServer, request as httpRequest, type IncomingMessage, type RequestOptions, type Server, type ServerResponse } from 'node:http';
+import { createServer, request as httpRequest, type ClientRequest, type IncomingMessage, type RequestOptions, type Server, type ServerResponse } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { Socket, TcpSocketConnectOpts } from 'node:net';
 import { URL } from 'node:url';
@@ -258,6 +258,75 @@ function respondRoutingFailure(
     return;
   }
   res.destroy(err instanceof Error ? err : new Error(String(err)));
+}
+
+/**
+ * upgrade 阶段失败时写回一个明确的 HTTP 状态行再断开。
+ *
+ * **不能只 destroy socket**: codex 对裸断开会以 ~1s 间隔持续发 willRetry=true 的 error
+ * notification, 而客户端按协议对 willRetry 不收口 —— turn 永不结束、UI 的 generating
+ * 永不复位(远端 codex "永卡 generating" 就是这个形态, 见客户端仓 PR #715)。写回状态行
+ * 才能让 codex 走它自己的终态路径。
+ *
+ * 状态码语义(调用方按场景选):
+ *  - **426**: 让 codex 优雅退回 HTTP transport。这是它唯一认作降级信号的状态码,
+ *    用于宿主主动把某个会话导回 HTTP(见 ProxyOptions.resolveWebSocketUpstream)。
+ *  - 501: 本 proxy 不支持这种 upgrade(非 websocket 协议)。
+ *  - 502 / 503 / 504: 上游或本地转发失败。
+ */
+function writeUpgradeFailure(socket: Socket, status: number, message: string): void {
+  try {
+    // 先完整刷出状态行再断开。`write()` 后立刻 `destroy()` 在 Windows 上可能让尚未
+    // 进入内核发送缓冲的小响应变成 RST，codex 看不到 426 就不会切回 HTTP。
+    socket.end(
+      `HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`,
+      () => socket.destroy(),
+    );
+  } catch {
+    // socket 可能已经废了(客户端先断/写入竞态), 此处无可挽回也无需上报。
+    socket.destroy();
+  }
+}
+
+/**
+ * 非 101 响应是否更像「这条网络路径不支持 WebSocket」而非模型服务故障。
+ *
+ * 这些状态在 upgrade 阶段尚未创建模型响应，退回 HTTP 不会重复执行 turn：
+ * - 2xx/3xx/大多数 4xx：透明代理/WAF 拦了 upgrade、端点不支持 WS 等，旧 HTTP 可能可用；
+ * - 401：凭证本身失效，应保留原错误；
+ * - 429：真实限流/容量信号，应交给同版本 Codex；
+ * - 5xx：上游服务状态（含 at-capacity）应原样交给 Codex，不能被本地改写。
+ */
+function shouldFallbackToHttpAfterUpgradeResponse(status: number): boolean {
+  return status < 500 && status !== 401 && status !== 429;
+}
+
+/**
+ * 把上游响应的状态行与 header 序列化回原始 HTTP 报文头。
+ *
+ * upgrade 路径上客户端拿到的是裸 socket, 没有 ServerResponse 可用, 只能自己拼报文 ——
+ * 无论是成功的 101 还是上游拒绝时的普通响应, 都要原样回写状态码与 header。
+ */
+function serializeResponseHead(
+  res: IncomingMessage,
+  opts?: {
+    /** 要丢弃的 header 名(大小写不敏感)。 */
+    readonly dropHeaders?: readonly string[];
+    /** 追加/覆盖的 header。 */
+    readonly extraHeaders?: Readonly<Record<string, string>>;
+  },
+): string {
+  const dropped = new Set((opts?.dropHeaders ?? []).map((h) => h.toLowerCase()));
+  const statusLine = `HTTP/1.1 ${res.statusCode ?? 502} ${res.statusMessage ?? ''}\r\n`;
+  const lines = Object.entries(res.headers)
+    .flatMap(([key, value]) => {
+      if (value == null || dropped.has(key.toLowerCase())) return [];
+      return Array.isArray(value) ? value.map((v) => `${key}: ${v}`) : [`${key}: ${value}`];
+    });
+  for (const [key, value] of Object.entries(opts?.extraHeaders ?? {})) {
+    lines.push(`${key}: ${value}`);
+  }
+  return `${statusLine}${lines.join('\r\n')}\r\n\r\n`;
 }
 
 /** 路由层是最后的信任边界；任何调用方给出的路径覆盖都必须保持同源且不可注入 header。 */
@@ -1478,6 +1547,292 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
     );
   });
 
+  // 同时占用的 WS 数(正在握手 + 已建立),仅用于日志观测,不参与拒绝策略。
+  // 容量控制属于 Codex / 上游职责；proxy 自设上限会凭空制造本地 503,让 Cindy 的
+  // at-capacity 体验反而劣于同版本 Codex。刻意不并入 inflight —— WS 是长连接,
+  // 计入会让 dispose 的清零等待永不满足。
+  let liveWebSockets = 0;
+  interface LiveWebSocket {
+    readonly threadId: string;
+    readonly clientSocket: Socket;
+    upstreamSocket: Socket | null;
+    closeForHostFallback(): void;
+  }
+  const liveWebSocketConnections = new Set<LiveWebSocket>();
+
+  /**
+   * WebSocket upgrade 透传。
+   *
+   * **为什么需要**: bundled codex 的 Responses transport 自己负责 startup prewarm、
+   * 连接复用、重试与 HTTP fallback。proxy 不支持 upgrade 时只能给 provider 设
+   * supports_websockets=false,Cindy 就无法使用与同版本 Codex 相同的原生传输。
+   * 本层只做透明隧道,不自行解释或改写 at-capacity / 重连语义。
+   *
+   * **刻意只做 socket 级透传, 不解析 WS 帧**: requestTransform / routingTransform 的
+   * body 改写、recoveryRules、responseObserver 全部依赖读写一次性请求体, 而 WS 帧里
+   * 没有这个东西。需要那些能力的会话应由宿主在 resolveWebSocketUpstream 返回 null,
+   * 走 426 退回 HTTP(见 types.ts 该字段注释), 而不是在这里半解析。
+   *
+   * inflight 计数刻意不加: WS 是长连接, 计入会让 dispose 的清零等待永不满足。socket
+   * 本身由下面的 'connection' 监听收录进 inflightSockets, dispose 时统一 destroy。
+   */
+  server.on('upgrade', (req, clientSocket: Socket, head: Buffer) => {
+    const reqId = ++reqIdSeq;
+    const headers = flattenRequestHeaders(req.headers);
+    const url = req.url ?? '/';
+    const resolveWsUpstream = opts.resolveWebSocketUpstream;
+
+    // 不配 resolver = 本 proxy 不接 upgrade(Claude Code 侧就是这样, 行为与扩展前一致)。
+    if (!resolveWsUpstream) {
+      logger.debug?.('upgrade rejected — resolveWebSocketUpstream not configured', { reqId, url });
+      writeUpgradeFailure(clientSocket, 501, 'Not Implemented');
+      return;
+    }
+    // 只接 websocket; 其它 upgrade 协议(h2c 等)不猜语义。
+    if ((headers.upgrade ?? '').toLowerCase() !== 'websocket') {
+      logger.debug?.('upgrade rejected — not a websocket upgrade', {
+        reqId, url, upgrade: headers.upgrade ?? '',
+      });
+      writeUpgradeFailure(clientSocket, 501, 'Not Implemented');
+      return;
+    }
+    let upstreamUrl: string | null;
+    try {
+      upstreamUrl = resolveWsUpstream({ url, headers });
+    } catch (err) {
+      logger.warn?.('resolveWebSocketUpstream threw — falling back to HTTP', {
+        reqId,
+        url,
+        err: String(err),
+      });
+      writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+      return;
+    }
+    if (!upstreamUrl) {
+      // **426 而不是 501**: 这是 codex 唯一认作"退回 HTTP transport"的状态码, 且它的
+      // 降级是 session 级(一次即稳定)。宿主返回 null 的语义是"这个会话走 HTTP 更合适"
+      // (需要 recoveryRules / responseObserver), 不是拒绝服务 —— 用 501 会让 codex
+      // 直接报错而不是降级。
+      logger.debug?.('upgrade declined by host — signalling 426 to fall back to HTTP', { reqId, url });
+      writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+      return;
+    }
+
+    let target: UpstreamTarget;
+    try {
+      target = parseUpstream(upstreamUrl);
+    } catch (err) {
+      logger.error?.('resolveWebSocketUpstream returned an unusable url — falling back to HTTP', {
+        reqId,
+        err: String(err),
+      });
+      writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+      return;
+    }
+
+    // 异步出网前开始计数,让日志同时覆盖 pending 与 established。
+    liveWebSockets += 1;
+
+    let established = false;
+    let settled = false;
+    let upstreamReqForEarlyClose: ClientRequest | null = null;
+    const threadId = selectedHeaderValue(headers, DEFAULT_THREAD_ID_HEADERS);
+    const connection: LiveWebSocket = {
+      threadId,
+      clientSocket,
+      upstreamSocket: null,
+      closeForHostFallback: () => {
+        settle('host-http-fallback');
+        connection.upstreamSocket?.destroy();
+        clientSocket.destroy();
+        if (!established) upstreamReqForEarlyClose?.destroy();
+      },
+    };
+    const settle = (why: string, err?: Error): void => {
+      if (settled) return;
+      settled = true;
+      liveWebSockets -= 1;
+      liveWebSocketConnections.delete(connection);
+      logger.info?.('◀ websocket closed', {
+        reqId,
+        threadId: threadId || undefined,
+        why,
+        live: liveWebSockets,
+        err: err ? String(err) : undefined,
+      });
+    };
+    liveWebSocketConnections.add(connection);
+
+    // client 可能在 resolveOutboundForTarget 尚未返回时就离开。close 必须立即归还预占
+    // 槽位;若上游请求已经创建,同时终止它,避免无人接收的握手继续占网络资源。
+    clientSocket.on('close', () => {
+      settle('client-close');
+      if (!established) upstreamReqForEarlyClose?.destroy();
+    });
+    // resolver / PAC 解析本身是异步的。error listener 必须在 await 之前安装,否则
+    // Windows 代理切换、网络瞬断等事件若恰好落在这个窗口,Socket 的未监听 error
+    // 可能上抛到进程级。upstream request 尚未创建时只记账；创建后同时终止它。
+    clientSocket.on('error', (err) => {
+      if (established) return;
+      logger.debug?.('client socket error before upgrade established', { reqId, err: String(err) });
+      settle('client-error', err);
+      upstreamReqForEarlyClose?.destroy();
+    });
+
+    void (async () => {
+      const outbound = await resolveOutboundForTarget(target, reqId);
+      if (settled || clientSocket.destroyed) return;
+
+      // codex 构造 WS URL 的规则是 `base_url + "/responses"`。宿主给 codex 的 base_url
+      // 常带 `/v1` 前缀(OpenAI 兼容风格), 而真上游(如 chatgpt.com/backend-api/codex)
+      // 下**没有这一段** —— 带上去直接 403, 且上游对 path 严格、不会降级(2026-07-30
+      // 实测: .../codex/responses 拿到 101, .../codex/v1/responses 拿到 403)。所以这里
+      // 剥掉入站 path 的 /v1, 再拼上游自己的 basePath。
+      const inboundPath = url.replace(/^\/v1(?=\/|$)/, '') || '/';
+      const upstreamPath =
+        `${target.basePath}${inboundPath.startsWith('/') ? inboundPath : `/${inboundPath}`}`;
+      const reqFn = target.protocol === 'https:' ? httpsRequest : httpRequest;
+
+      // WS 是低频事件(一个 session 通常只建一两条长连接), 用 info 让它落盘 ——
+      // 这条链路出问题时"有没有建连 / 谁先关的 / 关在哪一步"是唯一有用的线索,
+      // debug 级别在打包版里拿不到。
+      logger.info?.('▶ upgrade to upstream', {
+        reqId,
+        upstreamBase: formatUpstreamBase(target),
+        path: upstreamPath,
+        viaProxy: outbound ? outbound.target.url : 'direct',
+      });
+
+      // flattenRequestHeaders 刻意剥掉 hop-by-hop header(connection / keep-alive /
+      // transfer-encoding …), 对普通转发是对的 —— 但 **WebSocket 握手必须带
+      // `Connection: Upgrade`**(RFC 6455), 缺了上游不会回 101。所以这里显式补回
+      // 握手必需的两个头; Sec-WebSocket-* 不属于 hop-by-hop, 已在 headers 里。
+      const upstreamReq = reqFn({
+        hostname: target.hostname,
+        port: target.port,
+        method: req.method ?? 'GET',
+        path: upstreamPath,
+        headers: {
+          ...headers,
+          host: formatHostHeader(target.hostname, target.port, target.protocol),
+          connection: 'Upgrade',
+          upgrade: 'websocket',
+        },
+        ...(outbound ? { agent: outbound.agent } : {}),
+      });
+      upstreamReqForEarlyClose = upstreamReq;
+
+      // 握手阶段必须有上限(上游可能既不回 101 也不回响应)。**建立成功后立刻解除** ——
+      // 否则这个 socket 级超时会在 10 分钟后把正常的长连接杀掉, 表现为"WS 隔一段固定
+      // 时间就断", 极难归因。
+      upstreamReq.setTimeout(UPSTREAM_SOCKET_TIMEOUT_MS, () => {
+        logger.warn?.('upgrade handshake timed out', { reqId, path: upstreamPath });
+        if (!established && !settled) {
+          settle('handshake-timeout');
+          writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+        }
+        upstreamReq.destroy();
+      });
+
+      upstreamReq.on('upgrade', (upstreamRes, upstreamSocket: Socket, upstreamHead: Buffer) => {
+        established = true;
+        connection.upstreamSocket = upstreamSocket;
+        // 解除握手超时(长连接不能被它杀掉)。
+        upstreamReq.setTimeout(0);
+        upstreamSocket.setTimeout(0);
+
+        clientSocket.write(serializeResponseHead(upstreamRes));
+        // 双向把握手时已缓冲的首包补上, 再对接。
+        if (upstreamHead?.length) clientSocket.write(upstreamHead);
+        if (head?.length) upstreamSocket.write(head);
+
+        clientSocket.setNoDelay(true);
+        upstreamSocket.setNoDelay(true);
+
+        // **正常关闭只记账, 绝不 destroy 对端**。
+        // pipe 的默认 end:true 已经负责把 FIN 传下去, 并且会先冲完缓冲里未写出的数据;
+        // 在 close 里主动 destroy 另一端会**立即丢弃这些缓冲** —— 实测表现为上游发完
+        // 最后一帧就 close 时, `response.completed` 被截掉: 模型文本已经完整输出
+        // (response.output_text.done 到了), 但 turn 永不收口, UI 卡在「正在生成」。
+        upstreamSocket.on('close', () => settle('upstream-close'));
+
+        // 只有出错才强拆两端 —— 那时缓冲里的数据已经没有意义。
+        const abort = (why: string) => (err?: Error): void => {
+          settle(why, err);
+          upstreamSocket.destroy();
+          clientSocket.destroy();
+        };
+        clientSocket.on('error', abort('client-error'));
+        upstreamSocket.on('error', abort('upstream-error'));
+
+        upstreamSocket.pipe(clientSocket);
+        clientSocket.pipe(upstreamSocket);
+        logger.info?.('◀ websocket established', {
+          reqId, status: upstreamRes.statusCode, live: liveWebSockets,
+          upstreamHeadBytes: upstreamHead?.length ?? 0,
+          clientHeadBytes: head?.length ?? 0,
+        });
+      });
+
+      // 上游没给 101 而是普通响应(403 / 426 / 503 等): **连 body 一起原样回写**。
+      // 只写状态行会丢掉 body 里的错误详情, 排查时无从下手; 而 426 更必须准确透传 ——
+      // 它是 codex 退回 HTTP transport 的信号。
+      upstreamReq.on('response', (upstreamRes) => {
+        settle('upstream-refused');
+        const status = upstreamRes.statusCode ?? 502;
+        logger.warn?.('upstream refused websocket upgrade', {
+          reqId,
+          status,
+          path: upstreamPath,
+        });
+        upstreamReq.setTimeout(0);
+        if (shouldFallbackToHttpAfterUpgradeResponse(status)) {
+          logger.info?.('websocket upgrade unsupported on current path — falling back to HTTP', {
+            reqId,
+            status,
+            path: upstreamPath,
+          });
+          upstreamRes.resume();
+          writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+          return;
+        }
+        try {
+          // 裸 socket 上**不能沿用上游的 framing 头**: upstreamRes 是 Node 已解码的流
+          // (chunked 已经解掉), 原样带 transfer-encoding: chunked 会让客户端拿一段
+          // 已解码的数据去解 chunk。改成 connection: close, 由 EOF 定界。
+          clientSocket.write(serializeResponseHead(upstreamRes, {
+            dropHeaders: ['transfer-encoding', 'content-length', 'connection', 'keep-alive'],
+            extraHeaders: { Connection: 'close' },
+          }));
+        } catch {
+          // socket 可能已废; body pipe 下面照常尝试, 失败由 socket 自己的 error 收口。
+        }
+        upstreamRes.pipe(clientSocket);
+      });
+
+      upstreamReq.on('error', (err) => {
+        logger.warn?.('upgrade upstream request failed — falling back to HTTP', {
+          reqId,
+          err: String(err),
+        });
+        if (!established && !settled) {
+          settle('upstream-error', err);
+          writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+        }
+      });
+
+      upstreamReq.end();
+    })().catch((err: unknown) => {
+      // 与 respondRoutingFailure 同款理由: 不让 async handler 的 rejection 漂成
+      // process-level unhandledRejection。
+      logger.error?.('websocket upgrade handler threw', { reqId, err: String(err) });
+      if (!established && !settled) {
+        settle('handler-error', err instanceof Error ? err : new Error(String(err)));
+        writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
+      }
+    });
+  });
+
   // 跟踪所有底层 socket,dispose 时强制 destroy
   server.on('connection', (socket) => {
     inflightSockets.add(socket);
@@ -1492,6 +1847,14 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
 
   return {
     url,
+    disconnectWebSocketsForThread(threadId) {
+      const normalized = threadId.trim();
+      if (!normalized) return 0;
+      const matches = Array.from(liveWebSocketConnections)
+        .filter((connection) => connection.threadId === normalized);
+      for (const connection of matches) connection.closeForHostFallback();
+      return matches.length;
+    },
     async dispose() {
       logger.debug?.('anthropic-compat-proxy disposing', { inflight });
       // 退出场景: 客户端(Claude Code 子进程)也即将被 SIGTERM, in-flight 请求保留无意义。

@@ -2207,8 +2207,13 @@ export class CodexAgent extends BaseAgent {
     });
 
     // ── Maker Memory: 启动时预拉 MEMORY.md 索引 + 写入规范段 ────────────────
-    // thread/start 仍把 developerInstructions 写入新 thread; thread/resume 在非 proxy
+    // thread/start 仍把 developerInstructions 写入新 thread; thread/resume 在普通非 proxy
     // 路径只在 host 明确告知历史未含产品 prompt 时补发一次,避免常规 resume 重复堆积。
+    // WS thread 恢复时则始终携带当前值:Codex 的 SessionMeta 不持久化该字段,冷恢复若只
+    // 依赖历史里的旧 developer message,后续 compact 重建 canonical context 时会丢产品
+    // prompt。Codex 0.145 对仍在内存中的 loaded thread 会忽略 resume override,且冷恢复
+    // 首轮的 steady-state diff 不补一条发生变化的 plain developer_instructions；正常
+    // resume 沿用同一份文本时历史里已有它,compact 也会从当前 cold-resume 配置重建。
     // proxy active 时两条路径都用同一份构建结果登记到 registry。跟 userPrompt 同语义 — 启动时快照,跨 session 不实时同步。
     let makerMemoryRules = '';
     let makerMemoryIndex = '';
@@ -2367,6 +2372,8 @@ export class CodexAgent extends BaseAgent {
     let overloadRetry: {
       retry: () => Promise<void>;
       attempt: number;
+      /** 同一逻辑 send 最多接管一次 WS→HTTP body recovery，避免坏响应形成重投环。 */
+      httpRecoveryRetryAttempted: boolean;
       timer: ReturnType<typeof setTimeout> | null;
       /**
        * 重投的 turn/start RPC 是否在途。计时器到点后 `timer` 已清空、新 turn 又
@@ -2998,8 +3005,6 @@ export class CodexAgent extends BaseAgent {
     };
 
     const hostUsesCodexProxy = host.isCodexProxyActive();
-    const isCodexProxyChannelReady = (): boolean =>
-      hostUsesCodexProxy && typeof this.deps.registerCodexSystemPromptForThread === 'function';
 
     // ── OpenAI 远端压缩身份(thread 级,start/resume 冻结)────────────────────
     // 仅当 ① host 是 oauth spawn 且下发了 OpenAI 身份 provider(见
@@ -3016,6 +3021,36 @@ export class CodexAgent extends BaseAgent {
       const family = credentialMode ?? this.hostEffectiveCredentialModes.get(currentHostKey);
       return family === 'oauth-bearer' ? providerIdFromHost : undefined;
     })();
+
+    /**
+     * 本 thread 的 Responses 请求是否走 WebSocket。
+     *
+     * 等价于「选了 OpenAI 身份 provider」:spawn args 里只有该 provider 打开了
+     * `supports_websockets`(见 desktop 侧 buildCodexProxySpawnArgs),cindy_gateway
+     * 与其余供应商一律 false。所以 threadModelProvider 非空 ⟺ 该 thread 走 WS。
+     *
+     * 单独起个名字而不是直接用 `!threadModelProvider`:两者当前等价但语义不同 ——
+     * 前者问"走不走 WS"(决定 prompt 注入通道),后者问"选没选那个 provider"
+     * (原本只为远端压缩)。哪天该 provider 不再开 WS,要改的是这里而不是下面的判定。
+     */
+    const threadUsesWebSocket = !!threadModelProvider;
+
+    /**
+     * proxy 的 registry 注入通道本 thread 是否可用。
+     *
+     * 除 host 侧条件外还要求**本 thread 不走 WebSocket**:proxy 的 WS 通道只做 socket
+     * 级透传、看不到请求体,registry 注入不会生效。这类 thread 必须改走 codex 原生的
+     * developerInstructions 字段(下面 thread/start 与 thread/resume 的
+     * `!useProxyChannel` 分支)。
+     *
+     * 刻意复用 threadUsesWebSocket 这一个判定,不另立一套「是不是订阅直连」的推导 ——
+     * 两处推导迟早漂移,而漂移的后果是 prompt 静默丢失(既不注入 registry、也不写
+     * developerInstructions)。
+     */
+    const isCodexProxyChannelReady = (): boolean =>
+      hostUsesCodexProxy
+      && !threadUsesWebSocket
+      && typeof this.deps.registerCodexSystemPromptForThread === 'function';
 
     let registeredDeveloperInstructions = '';
     const registerCodexDeveloperInstructions = (threadId: string, text: string): void => {
@@ -3169,6 +3204,14 @@ export class CodexAgent extends BaseAgent {
           });
         }
       }
+      // WS proxy 看不到请求体,不能像 HTTP registry 通道那样逐请求补 prompt。即使历史
+      // marker=true,冷恢复时也必须把当前值重新写进 Codex 的 session configuration,
+      // 保证自动 compact 后构建出来的 canonical developer context 仍含 Cindy 指令。
+      // loaded-thread resume 在 Codex 0.145 会忽略 override；同文本仍由既有历史保留。
+      const shouldSendNativeDeveloperInstructions =
+        !!developerInstructions
+        && !useProxyChannel
+        && (threadUsesWebSocket || opts.codexHistoryHasProductPrompt !== true);
       const params: ThreadResumeParams = {
         threadId: opts.resumeSessionId,
         ...(resumeExcludeTurnsSupported ? { excludeTurns: true } : {}),
@@ -3177,7 +3220,7 @@ export class CodexAgent extends BaseAgent {
         ...(threadModelProvider ? { modelProvider: threadModelProvider } : {}),
         ...(mutableModel && mutableModel !== 'gpt-5' ? { model: mutableModel } : {}),
         ...(mutableServiceTier !== undefined ? { serviceTier: mutableServiceTier } : {}),
-        ...(developerInstructions && !useProxyChannel && opts.codexHistoryHasProductPrompt !== true
+        ...(shouldSendNativeDeveloperInstructions
           ? { developerInstructions }
           : {}),
       };
@@ -3202,7 +3245,7 @@ export class CodexAgent extends BaseAgent {
         if (useProxyChannel) {
           registerCodexDeveloperInstructions(threadId, developerInstructions);
           codexProductPromptDelivery = { threadId, historyHasProductPrompt: false };
-        } else if (developerInstructions && opts.codexHistoryHasProductPrompt !== true) {
+        } else if (shouldSendNativeDeveloperInstructions) {
           codexProductPromptDelivery = { threadId, historyHasProductPrompt: true };
         }
         sdkSessionId = threadId;
@@ -5208,6 +5251,117 @@ export class CodexAgent extends BaseAgent {
       }
     };
 
+    const armHttpRecoveryForError = (
+      error: { message?: string; additionalDetails?: unknown } | null | undefined,
+    ): string | null => {
+      if (opts.remoteHostId || !this.deps.armCodexHttpRecovery) return null;
+      const message = typeof error?.message === 'string' ? error.message : '';
+      const additionalDetails =
+        typeof error?.additionalDetails === 'string' ? error.additionalDetails : null;
+      if (!message && !additionalDetails) return null;
+      try {
+        return this.deps.armCodexHttpRecovery({
+          sessionId: sid,
+          threadId,
+          message,
+          additionalDetails,
+        });
+      } catch (errorFromHost) {
+        log.warn('codex HTTP recovery arming failed; surfacing original error', {
+          threadId,
+          error: errorFromHost instanceof Error ? errorFromHost.message : String(errorFromHost),
+        });
+        return null;
+      }
+    };
+
+    /**
+     * 已确认是 HTTP proxy 可恢复的 WS 请求校验错误时，立即重投同一份冻结 turnParams。
+     * host 已把 thread 标成 HTTP-only；重投新建 transport 时会收到 426 并走既有
+     * recoveryRules。只接管本 logical send、零产出、无其它 start 在飞的明确 turn。
+     */
+    const retryTurnViaHttpRecovery = (deadTurnId: string, reason: string): boolean => {
+      const state = overloadRetry;
+      if (!state || closed || state.httpRecoveryRetryAttempted || state.isCancelled()) return false;
+      const origin = turnOriginByTurnId.get(deadTurnId);
+      if (origin?.sendGen !== state.sendGen) return false;
+      if (producedOutputTurnIds.has(deadTurnId)) {
+        log.info('codex WS body recovery error after partial output — not auto-retrying', {
+          threadId,
+          deadTurnId,
+          reason,
+        });
+        return false;
+      }
+      if (
+        inFlightStarts.size > 0 ||
+        state.timer !== null ||
+        state.inFlight ||
+        state.deferredCapacityFailure !== null
+      ) {
+        log.warn('codex WS body recovery retry skipped because another retry/start is pending', {
+          threadId,
+          deadTurnId,
+          reason,
+          inFlightStarts: inFlightStarts.size,
+        });
+        return false;
+      }
+
+      state.httpRecoveryRetryAttempted = true;
+      terminalErroredTurnIds.add(deadTurnId);
+      dismissPendingUserInputForTurn(deadTurnId, 'turn_failed');
+      clearActiveToolContextsForTurn(deadTurnId);
+      stopActiveRolloutPlanFallback();
+      isTurnInFlight = false;
+      if (currentTurnId === deadTurnId) currentTurnId = null;
+      if (
+        codexPermissionStrictnessRank(state.launchedPermissionMode)
+        < codexPermissionStrictnessRank(mutablePermissionMode)
+      ) {
+        pendingTightenInterrupt = true;
+      }
+      log.info('codex WS body recovery error — retrying turn through HTTP fallback', {
+        threadId,
+        deadTurnId,
+        reason,
+      });
+
+      void state.retry().catch((retryError) => {
+        if (closed || overloadRetry !== state || state.isCancelled()) {
+          log.info('codex HTTP recovery retry rejected after cancellation — not surfacing', {
+            threadId,
+            reason,
+            error: retryError instanceof Error ? retryError.message : String(retryError),
+          });
+          return;
+        }
+        log.error('codex HTTP recovery turn/start retry failed', {
+          threadId,
+          reason,
+          error: retryError instanceof Error ? retryError.message : String(retryError),
+        });
+        quarantineTurnsAfterStartFailure('HTTP recovery turn/start retry failed', {
+          ownsSession: sendGeneration === state.sendGen,
+        });
+        discardOverloadRetry('HTTP recovery retry failed');
+        eventQueue.push({
+          type: 'error',
+          data: {
+            message: `turn/start HTTP recovery retry failed: ${String(retryError)}`,
+            isTerminal: true,
+          },
+          source: 'codex',
+        });
+        eventQueue.push({
+          type: 'status',
+          data: { status: 'Done', ...usageTracker.snapshot(), isRunning: false },
+          source: 'codex',
+        });
+      });
+      return true;
+    };
+
     /**
      * 计划模式下拦截 plan item (proposed plan / <proposed_plan> 块): 记录最新文本,
      * 不进 translator —— 计划内容由 turn 结束后的 plan_review 卡片呈现, 不再渲染
@@ -5224,6 +5378,14 @@ export class CodexAgent extends BaseAgent {
 
     function handleTurnCompleted(params: TurnCompletedParams): void {
       const turn = params.turn;
+      if (
+        turn.status === 'failed' &&
+        turn.error &&
+        !terminalErroredTurnIds.has(turn.id)
+      ) {
+        const recoveryReason = armHttpRecoveryForError(turn.error);
+        if (recoveryReason) retryTurnViaHttpRecovery(turn.id, recoveryReason);
+      }
       // turn/start RPC 响应未回时就收到终态 → 记墓碑, 阻止稍后到达的
       // handleTurnStartResp / 乱序 turnStarted 把已终结的 turn 重新置活。
       if (isTurnStartPending) turnsCompletedBeforeStartResp.add(turn.id);
@@ -6584,6 +6746,18 @@ export class CodexAgent extends BaseAgent {
           }
         }
         const wasTurnRunning = isTurnInFlight || targetsPendingTurn;
+        if (isTerminalError && targetsCurrentTurn && !isTransportError) {
+          const recoveryReason = armHttpRecoveryForError(effectiveParams.error);
+          if (
+            recoveryReason &&
+            retryTurnViaHttpRecovery(
+              effectiveParams.turnId || currentTurnId || '',
+              recoveryReason,
+            )
+          ) {
+            return;
+          }
+        }
         // 服务过载(模型容量不足)时接管重投：translator 命中 capacity 才回调，
         // 拿到进度就把错误透成非终止状态，本函数随后跳过 Done 收口。
         let overloadRetryScheduled = false;
@@ -6979,6 +7153,7 @@ export class CodexAgent extends BaseAgent {
         // 计划模式状态错乱。
         overloadRetry = {
           attempt: 0,
+          httpRecoveryRetryAttempted: false,
           timer: null,
           inFlight: false,
           isCancelled: () => sendOpts?.signal?.aborted === true,
@@ -7087,7 +7262,8 @@ export class CodexAgent extends BaseAgent {
             // 判据用 attempt > 0 限定在"本轮确实被重投接管过"上: 没发生过重投的
             // 普通 send 里 signal 仍只是**受理前**的取消边界, 语义不变。
             const retryOwnsActiveTurn =
-              armedRetryState.attempt > 0 && (currentTurnId !== null || isTurnInFlight);
+              (armedRetryState.attempt > 0 || armedRetryState.httpRecoveryRetryAttempted)
+              && (currentTurnId !== null || isTurnInFlight);
             if (!overloadRetryPending(armedRetryState) && !retryOwnsActiveTurn) return;
             cancelOverloadRetry('send signal aborted');
             settleCancelledOverloadRetry(armedRetryState, 'send signal aborted');

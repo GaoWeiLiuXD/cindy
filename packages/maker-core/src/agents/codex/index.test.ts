@@ -1943,6 +1943,40 @@ describe('CodexAgent.startSession developerInstructions', () => {
     expect(unregisterCodexMcpThreadContext).toHaveBeenCalledWith('grandchild-thread-id');
   });
 
+  it('keeps thread/start developerInstructions on the websocket provider and skips proxy registration', async () => {
+    const registerCodexSystemPromptForThread = vi.fn();
+    const agent = new CodexAgent(createDeps(
+      { systemPrompt: 'HOST PRODUCT PROMPT' },
+      { registerCodexSystemPromptForThread },
+    ));
+    const host = installFakeHost(agent, undefined, {
+      codexProxyActive: true,
+      remoteCompactionProviderId: 'cindy_openai',
+    });
+
+    const handle = await agent.startSession({
+      sessionId: 'session-websocket-start',
+      model: 'gpt-5.4',
+      providerId: 'openai',
+      workingDir: '/repo',
+      userPrompt: 'USER PROMPT',
+    });
+    const params = host.request.mock.calls.find(([method]) => method === Method.ThreadStart)?.[1] as {
+      developerInstructions?: string;
+      modelProvider?: string;
+    };
+
+    expect(params.modelProvider).toBe('cindy_openai');
+    expect(params.developerInstructions).toContain('HOST PRODUCT PROMPT');
+    expect(params.developerInstructions).toContain('USER PROMPT');
+    expect(registerCodexSystemPromptForThread).not.toHaveBeenCalled();
+    expect(handle.codexProductPromptDelivery).toEqual({
+      threadId: 'start-thread-id',
+      historyHasProductPrompt: true,
+    });
+    await handle.close();
+  });
+
   it('omits thread/resume developerInstructions and registers prompt when codex proxy is active', async () => {
     const runtimeConfig = { systemPrompt: 'HOST PRODUCT PROMPT' };
     const userPrompt = [
@@ -1997,6 +2031,78 @@ describe('CodexAgent.startSession developerInstructions', () => {
 
     await startBaselineHandle.close();
     await proxyHandle.close();
+  });
+
+  it('keeps thread/resume developerInstructions on the websocket provider when history lacks them', async () => {
+    const registerCodexSystemPromptForThread = vi.fn();
+    const agent = new CodexAgent(createDeps(
+      { systemPrompt: 'HOST PRODUCT PROMPT' },
+      { registerCodexSystemPromptForThread },
+    ));
+    const host = installFakeHost(agent, undefined, {
+      codexProxyActive: true,
+      remoteCompactionProviderId: 'cindy_openai',
+    });
+
+    const handle = await agent.startSession({
+      sessionId: 'session-websocket-resume',
+      model: 'gpt-5.4',
+      providerId: 'openai',
+      workingDir: '/repo',
+      resumeSessionId: '123e4567-e89b-12d3-a456-426614174000',
+      codexHistoryHasProductPrompt: false,
+      userPrompt: 'USER PROMPT',
+    });
+    const params = host.request.mock.calls.find(([method]) => method === Method.ThreadResume)?.[1] as {
+      developerInstructions?: string;
+      modelProvider?: string;
+    };
+
+    expect(params.modelProvider).toBe('cindy_openai');
+    expect(params.developerInstructions).toContain('HOST PRODUCT PROMPT');
+    expect(params.developerInstructions).toContain('USER PROMPT');
+    expect(registerCodexSystemPromptForThread).not.toHaveBeenCalled();
+    expect(handle.codexProductPromptDelivery).toEqual({
+      threadId: 'resume-thread-id',
+      historyHasProductPrompt: true,
+    });
+    await handle.close();
+  });
+
+  it('keeps thread/resume developerInstructions on the websocket provider when history already contains them', async () => {
+    const registerCodexSystemPromptForThread = vi.fn();
+    const agent = new CodexAgent(createDeps(
+      { systemPrompt: 'HOST PRODUCT PROMPT' },
+      { registerCodexSystemPromptForThread },
+    ));
+    const host = installFakeHost(agent, undefined, {
+      codexProxyActive: true,
+      remoteCompactionProviderId: 'cindy_openai',
+    });
+
+    const handle = await agent.startSession({
+      sessionId: 'session-websocket-resume-existing-prompt',
+      model: 'gpt-5.4',
+      providerId: 'openai',
+      workingDir: '/repo',
+      resumeSessionId: '123e4567-e89b-12d3-a456-426614174000',
+      codexHistoryHasProductPrompt: true,
+      userPrompt: 'USER PROMPT',
+    });
+    const params = host.request.mock.calls.find(([method]) => method === Method.ThreadResume)?.[1] as {
+      developerInstructions?: string;
+      modelProvider?: string;
+    };
+
+    expect(params.modelProvider).toBe('cindy_openai');
+    expect(params.developerInstructions).toContain('HOST PRODUCT PROMPT');
+    expect(params.developerInstructions).toContain('USER PROMPT');
+    expect(registerCodexSystemPromptForThread).not.toHaveBeenCalled();
+    expect(handle.codexProductPromptDelivery).toEqual({
+      threadId: 'resume-thread-id',
+      historyHasProductPrompt: true,
+    });
+    await handle.close();
   });
 
   it('omits developerInstructions from thread/resume params when codex proxy is inactive and history already has product prompt', async () => {
@@ -4339,6 +4445,213 @@ describe('CodexAgent MCP thread context hooks', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('websocket body recovery auto-retry', () => {
+    const ENCRYPTED_ERROR =
+      'Encrypted content could not be decrypted or parsed. code=invalid_encrypted_content';
+
+    function installRecoveryHost(agent: CodexAgent): ReturnType<typeof installFakeHost> {
+      let turnSeq = 0;
+      return installFakeHost(agent, (method) => {
+        if (method === Method.TurnStart) {
+          turnSeq += 1;
+          return { turn: { id: `turn-${turnSeq}` } };
+        }
+        return undefined;
+      });
+    }
+
+    it('arms HTTP fallback and retries the same zero-output turn once', async () => {
+      const armCodexHttpRecovery = vi.fn(() => 'encrypted_content');
+      const agent = new CodexAgent(createDeps({}, { armCodexHttpRecovery }));
+      const host = installRecoveryHost(agent);
+      const handle = await agent.startSession({
+        sessionId: 'session-ws-body-recovery',
+        model: 'gpt-5.4',
+        workingDir: '/repo',
+      });
+      const events: AgentEvent[] = [];
+      void (async () => {
+        for await (const event of handle.events()) events.push(event);
+      })();
+
+      await handle.send({ type: 'user', content: 'hello' });
+      const handlers = host.getThreadHandlers();
+      if (!handlers?.error || !handlers.turnCompleted) throw new Error('expected handlers');
+
+      handlers.error({
+        threadId: 'start-thread-id',
+        turnId: 'turn-1',
+        willRetry: false,
+        error: {
+          message: 'Bad request',
+          additionalDetails: ENCRYPTED_ERROR,
+          codexErrorInfo: 'badRequest',
+        },
+      });
+
+      await waitForExpectation(() => {
+        expect(
+          host.request.mock.calls.filter(([method]) => method === Method.TurnStart),
+        ).toHaveLength(2);
+        expect(handle.getCurrentTurnId?.()).toBe('turn-2');
+      });
+      expect(armCodexHttpRecovery).toHaveBeenCalledWith({
+        sessionId: 'session-ws-body-recovery',
+        threadId: 'start-thread-id',
+        message: 'Bad request',
+        additionalDetails: ENCRYPTED_ERROR,
+      });
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'error' &&
+            (event.data as { isTerminal?: boolean }).isTerminal === true,
+        ),
+      ).toBe(false);
+
+      // 原 WS turn 的迟到终态已落墓碑，不得把 HTTP 重投收口掉。
+      handlers.turnCompleted({
+        threadId: 'start-thread-id',
+        turn: {
+          id: 'turn-1',
+          status: 'failed',
+          error: { message: ENCRYPTED_ERROR },
+        },
+      });
+      expect(handle.getCurrentTurnId?.()).toBe('turn-2');
+
+      handlers.turnCompleted({
+        threadId: 'start-thread-id',
+        turn: { id: 'turn-2', status: 'completed' },
+      });
+      await waitForExpectation(() => {
+        expect(events.some((event) => event.type === 'done')).toBe(true);
+      });
+      await handle.close();
+    });
+
+    it('does not replay a recovery error after the turn has produced output', async () => {
+      const armCodexHttpRecovery = vi.fn(() => 'image_generation_id');
+      const agent = new CodexAgent(createDeps({}, { armCodexHttpRecovery }));
+      const host = installRecoveryHost(agent);
+      const handle = await agent.startSession({
+        sessionId: 'session-ws-body-recovery-output',
+        model: 'gpt-5.4',
+        workingDir: '/repo',
+      });
+      await handle.send({ type: 'user', content: 'hello' });
+      const handlers = host.getThreadHandlers();
+      if (!handlers?.error || !handlers.reasoningTextDelta) throw new Error('expected handlers');
+
+      handlers.reasoningTextDelta({
+        threadId: 'start-thread-id',
+        turnId: 'turn-1',
+        itemId: 'reasoning-1',
+        contentIndex: 0,
+        delta: 'already produced output',
+      });
+      handlers.error({
+        threadId: 'start-thread-id',
+        turnId: 'turn-1',
+        willRetry: false,
+        error: {
+          message: 'Image generation items without `id` are not supported for this request.',
+          codexErrorInfo: 'badRequest',
+        },
+      });
+      await Promise.resolve();
+
+      expect(armCodexHttpRecovery).toHaveBeenCalledTimes(1);
+      expect(
+        host.request.mock.calls.filter(([method]) => method === Method.TurnStart),
+      ).toHaveLength(1);
+      expect(handle.isTurnRunning?.()).toBe(false);
+      await handle.close();
+    });
+
+    it('does not retry the same logical send again when the HTTP retry also fails', async () => {
+      const armCodexHttpRecovery = vi.fn(() => 'encrypted_content');
+      const agent = new CodexAgent(createDeps({}, { armCodexHttpRecovery }));
+      const host = installRecoveryHost(agent);
+      const handle = await agent.startSession({
+        sessionId: 'session-ws-body-recovery-once',
+        model: 'gpt-5.4',
+        workingDir: '/repo',
+      });
+      const events: AgentEvent[] = [];
+      void (async () => {
+        for await (const event of handle.events()) events.push(event);
+      })();
+
+      await handle.send({ type: 'user', content: 'hello' });
+      const handlers = host.getThreadHandlers();
+      if (!handlers?.error) throw new Error('expected error handler');
+
+      const failTurn = (turnId: string) => handlers.error?.({
+        threadId: 'start-thread-id',
+        turnId,
+        willRetry: false,
+        error: {
+          message: 'Bad request',
+          additionalDetails: ENCRYPTED_ERROR,
+          codexErrorInfo: 'badRequest',
+        },
+      });
+      failTurn('turn-1');
+      await waitForExpectation(() => {
+        expect(
+          host.request.mock.calls.filter(([method]) => method === Method.TurnStart),
+        ).toHaveLength(2);
+      });
+
+      failTurn('turn-2');
+      await waitForExpectation(() => {
+        expect(events.some(
+          (event) =>
+            event.type === 'error'
+            && (event.data as { isTerminal?: boolean }).isTerminal === true,
+        )).toBe(true);
+      });
+      expect(
+        host.request.mock.calls.filter(([method]) => method === Method.TurnStart),
+      ).toHaveLength(2);
+      expect(handle.isTurnRunning?.()).toBe(false);
+      await handle.close();
+    });
+
+    it('recovers from a failed turn/completed when no error notification was delivered', async () => {
+      const armCodexHttpRecovery = vi.fn(() => 'encrypted_content');
+      const agent = new CodexAgent(createDeps({}, { armCodexHttpRecovery }));
+      const host = installRecoveryHost(agent);
+      const handle = await agent.startSession({
+        sessionId: 'session-ws-body-recovery-completed-only',
+        model: 'gpt-5.4',
+        workingDir: '/repo',
+      });
+
+      await handle.send({ type: 'user', content: 'hello' });
+      const handlers = host.getThreadHandlers();
+      if (!handlers?.turnCompleted) throw new Error('expected turnCompleted handler');
+      handlers.turnCompleted({
+        threadId: 'start-thread-id',
+        turn: {
+          id: 'turn-1',
+          status: 'failed',
+          error: { message: ENCRYPTED_ERROR },
+        },
+      });
+
+      await waitForExpectation(() => {
+        expect(
+          host.request.mock.calls.filter(([method]) => method === Method.TurnStart),
+        ).toHaveLength(2);
+        expect(handle.getCurrentTurnId?.()).toBe('turn-2');
+      });
+      expect(armCodexHttpRecovery).toHaveBeenCalledTimes(1);
+      await handle.close();
+    });
   });
 
   // ── 服务过载（模型容量不足）退避重投 ──────────────────────────────────────

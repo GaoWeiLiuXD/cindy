@@ -83,6 +83,7 @@ const sessionToThread = new Map<string, string>();
 const sessionToThreads = new Map<string, Set<string>>();
 const threadToSession = new Map<string, string>();
 const reviewerModelBySession = new Map<string, string>();
+const httpRecoveryReasonByThread = new Map<string, string>();
 
 const CODEX_AUTO_REVIEW_MODEL = 'codex-auto-review';
 const CODEX_GUARDIAN_SUBAGENT = 'guardian';
@@ -95,6 +96,54 @@ let _disposeGeneration = 0;
 let dumpSeq = 0;
 
 const CODEX_RESPONSE_OBSERVER_MAX_BYTES = 2 * 1024 * 1024;
+
+const encryptedContentRecoveryRule = createEncryptedContentRecoveryRule({
+  enabled: () => readSilentEncryptedRetrySettings().enabled,
+  onRetry: (threadId, model) => encryptedStripController.markActive(threadId, model),
+});
+const imageGenerationIdRecoveryRule = createImageGenerationIdRecoveryRule({
+  onRetry: (threadId, model) => imageGenerationStripController.markActive(threadId, model),
+});
+const CODEX_BODY_RECOVERY_RULES = [
+  encryptedContentRecoveryRule,
+  imageGenerationIdRecoveryRule,
+] as const;
+
+/**
+ * WS 已建立后 proxy 只转发 socket，真正的上游请求错误会由 app-server 报给 maker-core。
+ * maker-core 把错误文本回传到这里，由与 HTTP recovery 完全相同的 rule 判定并登记：
+ * 下一次 upgrade 返回 426，Codex 原生 transport 随即切到 HTTP，既有 strip+retry 接管。
+ */
+export function armCodexHttpRecovery(args: {
+  sessionId: string;
+  threadId: string;
+  message: string;
+  additionalDetails?: string | null;
+}): string | null {
+  const threadId = args.threadId.trim();
+  if (!threadId) return null;
+  const errorText = [args.message, args.additionalDetails]
+    .filter((part): part is string => typeof part === 'string' && part.length > 0)
+    .join('\n');
+  if (!errorText) return null;
+
+  const rule = CODEX_BODY_RECOVERY_RULES.find(
+    (candidate) => candidate.enabled() && candidate.matches(errorText),
+  );
+  if (!rule) return null;
+
+  const sessionId = args.sessionId.trim();
+  if (sessionId) bindThreadToSession(sessionId, threadId);
+  httpRecoveryReasonByThread.set(threadId, rule.id);
+  const disconnectedWebSockets = _handle?.disconnectWebSocketsForThread?.(threadId) ?? 0;
+  log.info('codex websocket recovery fallback armed', {
+    sessionId,
+    threadId,
+    reason: rule.id,
+    disconnectedWebSockets,
+  });
+  return rule.id;
+}
 
 // codex 走 Responses API,每轮**全量重发**整个 thread 历史;导入的存量长会话
 // (贴图 base64 + 加密 reasoning blob,字节数膨胀远快于 token 数)单次请求体可以
@@ -2194,17 +2243,40 @@ function createCodexProxyHandle(
     ),
     maxRequestBodyBytes: CODEX_PROXY_MAX_REQUEST_BODY_BYTES,
     debugDumpRequestBody: process.env.XDT_PROXY_DUMP_REQUEST_BODY === '1',
-    recoveryRules: [
-      createEncryptedContentRecoveryRule({
-        enabled: () => readSilentEncryptedRetrySettings().enabled,
-        onRetry: (threadId, model) => encryptedStripController.markActive(threadId, model),
-      }),
-      createImageGenerationIdRecoveryRule({
-        onRetry: (threadId, model) => imageGenerationStripController.markActive(threadId, model),
-      }),
-    ],
+    recoveryRules: [...CODEX_BODY_RECOVERY_RULES],
     logger: log,
     resolveOutboundProxy: resolveDesktopOutboundProxy,
+    /**
+     * WS upgrade 的上游固定为 ChatGPT 订阅后端。
+     *
+     * 为什么可以固定: 只有订阅直连 provider(CODEX_OPENAI_COMPACT_PROVIDER_ID)打开了
+     * supports_websockets, 网关 / xAI / 自定义供应商一律保持 false 且永不发出 upgrade
+     * 请求 —— 所以任何进到这里的 upgrade 必然属于订阅直连路由, 上游是确定的, 不需要
+     * 像 HTTP 路径那样按 model 推导(upgrade 也没有 body 可供推导)。
+     *
+     * 非 oauth-bearer 态返回 null → proxy 回 426 → codex 退回 HTTP transport:
+     * 该 provider 只在 oauth spawn 时定义(见 buildCodexProxySpawnArgs), env-key /
+     * provider-oauth 进程本不该有 upgrade 进来; 真收到就让它降级, 而不是拿一个凭据
+     * 形态不匹配的连接去打订阅后端。
+     *
+     * WS 内首次命中 body recovery 错误后，maker-core 调 armCodexHttpRecovery 登记
+     * thread；下一次 upgrade 在这里回 426，Codex 原生 transport 按 session 级稳定
+     * 降到 HTTP，再由上面的 recoveryRules 清理并透明重试。没有实际命中过错误的
+     * thread 不预扫描、不降级，继续保留原生 WS 容量体验。
+     */
+    resolveWebSocketUpstream: ({ headers }) => {
+      if ((frozenAuthInjection ?? getCodexProxyAuthInjection()) !== 'oauth-bearer') return null;
+      const threadId = selectedThreadIdFromHeaders(headers);
+      const recoveryReason = httpRecoveryReasonByThread.get(threadId);
+      if (recoveryReason) {
+        log.info('codex websocket declined for HTTP body recovery', {
+          threadId,
+          reason: recoveryReason,
+        });
+        return null;
+      }
+      return CODEX_OAUTH_UPSTREAM;
+    },
   });
 }
 
@@ -2427,6 +2499,7 @@ function clearSessionThreads(sessionId: string): string[] {
     if (threadToSession.get(threadId) === sessionId) {
       threadToSession.delete(threadId);
       registry.delete(threadId);
+      httpRecoveryReasonByThread.delete(threadId);
     }
   }
   return threadIds;
@@ -2469,6 +2542,7 @@ export async function disposeCodexProxy(): Promise<void> {
   sessionToThreads.clear();
   threadToSession.clear();
   reviewerModelBySession.clear();
+  httpRecoveryReasonByThread.clear();
 
   if (_startPromise) {
     await _startPromise.catch(() => undefined);
