@@ -2419,7 +2419,19 @@ export class CodexAgent extends BaseAgent {
      * 每个 per-request 的事实都住在自己的条目里, 请求 settle 时整条删掉, 天然不串味;
      * "有没有 start 在飞"一律由 `inFlightStarts.size` 派生, 不再有第二份真相。
      */
-    const inFlightStarts = new Map<number, { quarantined: boolean; terminalSettled: boolean }>();
+    type DeferredHttpRecovery = {
+      deadTurnId: string;
+      reason: string;
+      sendGen: number;
+      terminalMessage: string;
+      responseMatched: boolean;
+    };
+    const inFlightStarts = new Map<number, {
+      quarantined: boolean;
+      terminalSettled: boolean;
+      sendGen: number;
+      deferredHttpRecovery: DeferredHttpRecovery | null;
+    }>();
     /** 每次 turn/start RPC 的自增序号, 作为登记表的键。 */
     let turnStartSeq = 0;
     /**
@@ -2433,9 +2445,14 @@ export class CodexAgent extends BaseAgent {
     let sendGeneration = 0;
 
     /** 登记一次即将发出的 turn/start, 返回它的序号。 */
-    const beginTurnStart = (): number => {
+    const beginTurnStart = (ownerSendGen: number): number => {
       const seq = ++turnStartSeq;
-      inFlightStarts.set(seq, { quarantined: false, terminalSettled: false });
+      inFlightStarts.set(seq, {
+        quarantined: false,
+        terminalSettled: false,
+        sendGen: ownerSendGen,
+        deferredHttpRecovery: null,
+      });
       isTurnStartPending = true;
       return seq;
     };
@@ -5363,6 +5380,103 @@ export class CodexAgent extends BaseAgent {
     };
 
     /**
+     * body recovery 的终态通知可能先于 turn/start RPC 响应到达。此时尚无
+     * turnOrigin，不能立即重投；只有唯一且属于本 send 的 start 在飞时才暂存，
+     * 等响应用同一个 turn id 建立权威归属后再走正常 HTTP recovery。
+     */
+    const deferHttpRecoveryUntilTurnStartSettles = (
+      deadTurnId: string,
+      reason: string,
+      terminalMessage: string,
+    ): boolean => {
+      const state = overloadRetry;
+      if (
+        !deadTurnId
+        || !state
+        || closed
+        || state.httpRecoveryRetryAttempted
+        || state.isCancelled()
+        || (currentTurnId !== null && currentTurnId !== deadTurnId)
+        || inFlightStarts.size !== 1
+        || state.timer !== null
+        || state.deferredCapacityFailure !== null
+        || producedOutputTurnIds.has(deadTurnId)
+      ) {
+        return false;
+      }
+      const [startSeq, start] = Array.from(inFlightStarts.entries())[0] ?? [];
+      if (
+        startSeq === undefined
+        || !start
+        || start.sendGen !== state.sendGen
+        || start.quarantined
+        || start.terminalSettled
+        || start.deferredHttpRecovery !== null
+      ) {
+        return false;
+      }
+
+      start.deferredHttpRecovery = {
+        deadTurnId,
+        reason,
+        sendGen: state.sendGen,
+        terminalMessage,
+        responseMatched: false,
+      };
+      // 挡住死 turn 在 RPC 响应前后的迟到事件；响应 id 对上后会补权威 origin，
+      // 并因这块墓碑拒绝重新激活。
+      terminalErroredTurnIds.add(deadTurnId);
+      dismissPendingUserInputForTurn(deadTurnId, 'turn_failed');
+      clearActiveToolContextsForTurn(deadTurnId);
+      stopActiveRolloutPlanFallback();
+      isTurnInFlight = false;
+      if (currentTurnId === deadTurnId) currentTurnId = null;
+      log.info('codex WS body recovery waiting for turn/start ownership', {
+        threadId,
+        deadTurnId,
+        reason,
+        startSeq,
+      });
+      return true;
+    };
+
+    const resumeDeferredHttpRecovery = (
+      deferred: DeferredHttpRecovery | null,
+      rpcSettledOk: boolean,
+    ): void => {
+      if (!deferred || !rpcSettledOk || !deferred.responseMatched) return;
+      const state = overloadRetry;
+      if (
+        !state
+        || closed
+        || state.sendGen !== deferred.sendGen
+        || state.isCancelled()
+      ) {
+        return;
+      }
+      if (retryTurnViaHttpRecovery(deferred.deadTurnId, deferred.reason)) return;
+
+      // 归属已经建立且本 send 仍有效时，重投若因意外状态无法接管，必须恢复原终态，
+      // 不能让被暂存的错误消失后把逻辑 turn 永久挂住。
+      log.error('deferred codex HTTP recovery could not start; surfacing original error', {
+        threadId,
+        deadTurnId: deferred.deadTurnId,
+        reason: deferred.reason,
+      });
+      discardOverloadRetry('deferred HTTP recovery could not start');
+      eventQueue.push({
+        type: 'error',
+        data: { message: deferred.terminalMessage, isTerminal: true },
+        source: 'codex',
+      });
+      eventQueue.push({
+        type: 'status',
+        data: { status: 'Done', ...usageTracker.snapshot(), isRunning: false },
+        source: 'codex',
+      });
+    };
+
+    /**
      * 计划模式下拦截 plan item (proposed plan / <proposed_plan> 块): 记录最新文本,
      * 不进 translator —— 计划内容由 turn 结束后的 plan_review 卡片呈现, 不再渲染
      * update_plan 工具行 (避免同一份计划在聊天里出现两次)。
@@ -6748,14 +6862,23 @@ export class CodexAgent extends BaseAgent {
         const wasTurnRunning = isTurnInFlight || targetsPendingTurn;
         if (isTerminalError && targetsCurrentTurn && !isTransportError) {
           const recoveryReason = armHttpRecoveryForError(effectiveParams.error);
-          if (
-            recoveryReason &&
-            retryTurnViaHttpRecovery(
-              effectiveParams.turnId || currentTurnId || '',
-              recoveryReason,
-            )
-          ) {
-            return;
+          if (recoveryReason) {
+            const recoveryTurnId = effectiveParams.turnId || currentTurnId || '';
+            if (retryTurnViaHttpRecovery(recoveryTurnId, recoveryReason)) return;
+            if (
+              (targetsPendingTurn
+                || (currentTurnId === recoveryTurnId && inFlightStarts.size === 1))
+              && deferHttpRecoveryUntilTurnStartSettles(
+                recoveryTurnId,
+                recoveryReason,
+                effectiveParams.error?.message
+                  || (typeof effectiveParams.error?.additionalDetails === 'string'
+                    ? effectiveParams.error.additionalDetails
+                    : 'Codex request failed before HTTP recovery could start'),
+              )
+            ) {
+              return;
+            }
           }
         }
         // 服务过载(模型容量不足)时接管重投：translator 命中 capacity 才回调，
@@ -7030,6 +7153,25 @@ export class CodexAgent extends BaseAgent {
         // 普通 LLM 错误 / 超时 / auth 失败照原路径报错。
         const handleTurnStartResp = (resp: TurnStartResponse, ownerSeq: number): void => {
           if (resp.turn?.id) {
+            const startEntry = inFlightStarts.get(ownerSeq);
+            const deferredHttpRecovery = startEntry?.deferredHttpRecovery;
+            if (deferredHttpRecovery) {
+              deferredHttpRecovery.responseMatched =
+                deferredHttpRecovery.deadTurnId === resp.turn.id;
+              if (deferredHttpRecovery.responseMatched) {
+                turnOriginByTurnId.set(resp.turn.id, {
+                  startSeq: ownerSeq,
+                  sendGen: deferredHttpRecovery.sendGen,
+                });
+              } else {
+                log.warn('deferred codex HTTP recovery did not match turn/start response', {
+                  threadId,
+                  errorTurnId: deferredHttpRecovery.deadTurnId,
+                  responseTurnId: resp.turn.id,
+                  ownerSeq,
+                });
+              }
+            }
             // 缓冲的歧义 started 对账 (codex R9 P2): 本响应确立在飞 RPC 的
             // turnId — 缓冲里 id 一致的是它的合法 started (下方正常激活),
             // 不一致的是失败 RPC 的孤儿 (interrupt + 墓碑, 没人消费)。
@@ -7176,7 +7318,7 @@ export class CodexAgent extends BaseAgent {
             // RPC 在途也算忙（见 isTurnRunning 注释）：计时器已清、turn 未激活的
             // 这段窗口若报 idle，并发 send 会把原消息挤掉。
             state.inFlight = true;
-            const retryStartSeq = beginTurnStart();
+            const retryStartSeq = beginTurnStart(state.sendGen);
             // RPC 是否走完了成功路径。补排延后的容量失败**只能**在成功路径上做:
             // finally 先于外层 state.retry().catch 执行, 若 RPC 已经 reject 却在这里
             // 排上新计时器, 紧随其后的 catch 会推终态 error + Done 收口 UI, 而那个
@@ -7229,9 +7371,12 @@ export class CodexAgent extends BaseAgent {
               rpcSettledOk = true;
             } finally {
               state.inFlight = false;
+              const deferredHttpRecovery =
+                inFlightStarts.get(retryStartSeq)?.deferredHttpRecovery ?? null;
               // 注销本次请求(isTurnStartPending 由登记表重算, 不会误清别的请求的状态)。
               endTurnStart(retryStartSeq);
               flushDeferredTerminalTurnCompletionsIfIdle();
+              resumeDeferredHttpRecovery(deferredHttpRecovery, rpcSettledOk);
               // 在途期间又撞容量、当时被延后的那条失败在这里收尾。只有新 turn 确实
               // 没能激活时才补排（它被落了墓碑、响应因此拒绝激活）；turn 活了就说明
               // 那条错误针对的是别的 turn，不该重排。预算耗尽时必须自己推终态，
@@ -7276,7 +7421,7 @@ export class CodexAgent extends BaseAgent {
         let finalErr: unknown = null;
         // 初始 RPC 在飞期间到达的空 id 容量拒绝只会被"延后"(不排计时器), 由下面的
         // finally 在响应处理完之后补排 —— 保证任一时刻只有一个 turn/start 在飞。
-        const initialStartSeq = beginTurnStart();
+        const initialStartSeq = beginTurnStart(mySendGen);
         let initialStartSettledOk = false;
         /** 本次请求是否已被 Stop / 撤单收口过(条目会在 finally 里删掉, 所以先取出来)。 */
         let initialStartSettledByCancel = false;
@@ -7396,8 +7541,9 @@ export class CodexAgent extends BaseAgent {
           }
         } finally {
           // 条目即将被删, 先把"已由取消收口"取出来供下面的 finalErr 分支判断。
-          initialStartSettledByCancel =
-            inFlightStarts.get(initialStartSeq)?.terminalSettled === true;
+          const initialStartEntry = inFlightStarts.get(initialStartSeq);
+          initialStartSettledByCancel = initialStartEntry?.terminalSettled === true;
+          const deferredHttpRecovery = initialStartEntry?.deferredHttpRecovery ?? null;
           // 先注销本次请求(isTurnStartPending 由登记表重算) —— 无条件置 false 会在两个
           // start 并存时清掉属于**另一个**请求的状态(review #844 codex P1)。注销必须早于
           // flush: 后者按 idle 与否决定是否放行缓存的终态。
@@ -7409,6 +7555,7 @@ export class CodexAgent extends BaseAgent {
           // discardOverloadRetry + terminal error 收口。
           const armedState = overloadRetry;
           if (armedState) {
+            resumeDeferredHttpRecovery(deferredHttpRecovery, initialStartSettledOk);
             // rpcSettledOk 的本意是"我这次 RPC 失败了, 别在推终态之外再排一个计时器"。
             // 但延后的那条失败可能属于**另一轮仍然活着的** send(它的容量错误在我还在飞时
             // 到达, 于是只被记账): 那一轮的命运与我这次 RPC 成败无关, 用我的失败去压掉它

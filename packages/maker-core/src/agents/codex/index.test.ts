@@ -4532,6 +4532,74 @@ describe('CodexAgent MCP thread context hooks', () => {
       await handle.close();
     });
 
+    it.each([false, true])(
+      'defers HTTP fallback until an early recovery error gets turn/start ownership (started=%s)',
+      async (startedBeforeError) => {
+        const firstStart = deferred<{ turn: { id: string } }>();
+        let turnStarts = 0;
+        const armCodexHttpRecovery = vi.fn(() => 'encrypted_content');
+        const agent = new CodexAgent(createDeps({}, { armCodexHttpRecovery }));
+        const host = installFakeHost(agent, (method) => {
+          if (method !== Method.TurnStart) return undefined;
+          turnStarts += 1;
+          if (turnStarts === 1) return firstStart.promise;
+          return { turn: { id: `turn-${turnStarts}` } };
+        });
+        const handle = await agent.startSession({
+          sessionId: 'session-ws-body-recovery-before-start-response',
+          model: 'gpt-5.4',
+          workingDir: '/repo',
+        });
+        const events: AgentEvent[] = [];
+        void (async () => {
+          for await (const event of handle.events()) events.push(event);
+        })();
+
+        const sendPromise = handle.send({ type: 'user', content: 'hello' });
+        await waitForExpectation(() => expect(turnStarts).toBe(1));
+        const handlers = host.getThreadHandlers();
+        if (!handlers?.error || !handlers.turnStarted) throw new Error('expected handlers');
+        if (startedBeforeError) {
+          handlers.turnStarted({
+            threadId: 'start-thread-id',
+            turn: { id: 'turn-1' },
+          });
+        }
+        handlers.error({
+          threadId: 'start-thread-id',
+          turnId: 'turn-1',
+          willRetry: false,
+          error: {
+            message: 'Bad request',
+            additionalDetails: ENCRYPTED_ERROR,
+            codexErrorInfo: 'badRequest',
+          },
+        });
+
+        await Promise.resolve();
+        expect(turnStarts).toBe(1);
+        expect(events.some(
+          (event) =>
+            event.type === 'error'
+            && (event.data as { isTerminal?: boolean }).isTerminal === true,
+        )).toBe(false);
+
+        firstStart.resolve({ turn: { id: 'turn-1' } });
+        await sendPromise;
+        await waitForExpectation(() => {
+          expect(turnStarts).toBe(2);
+          expect(handle.getCurrentTurnId?.()).toBe('turn-2');
+        });
+        expect(armCodexHttpRecovery).toHaveBeenCalledTimes(1);
+        expect(events.some(
+          (event) =>
+            event.type === 'error'
+            && (event.data as { isTerminal?: boolean }).isTerminal === true,
+        )).toBe(false);
+        await handle.close();
+      },
+    );
+
     it('does not replay a recovery error after the turn has produced output', async () => {
       const armCodexHttpRecovery = vi.fn(() => 'image_generation_id');
       const agent = new CodexAgent(createDeps({}, { armCodexHttpRecovery }));

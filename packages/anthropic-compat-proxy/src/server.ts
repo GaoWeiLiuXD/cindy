@@ -1674,7 +1674,14 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
     // 槽位;若上游请求已经创建,同时终止它,避免无人接收的握手继续占网络资源。
     clientSocket.on('close', () => {
       settle('client-close');
-      if (!established) upstreamReqForEarlyClose?.destroy();
+      if (!established) {
+        upstreamReqForEarlyClose?.destroy();
+        return;
+      }
+      // 正常 FIN 会先触发 end/readableEnded，pipe 负责把写侧冲完并结束上游；
+      // destroy/RST 则只有 close，Node 不会把 source close 传播成 destination end。
+      // 后一种必须显式拆上游，否则 dispose 或客户端崩溃会留下远端 WS 与事件循环。
+      if (!clientSocket.readableEnded) connection.upstreamSocket?.destroy();
     });
     // resolver / PAC 解析本身是异步的。error listener 必须在 await 之前安装,否则
     // Windows 代理切换、网络瞬断等事件若恰好落在这个窗口,Socket 的未监听 error
@@ -1762,7 +1769,11 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         // 在 close 里主动 destroy 另一端会**立即丢弃这些缓冲** —— 实测表现为上游发完
         // 最后一帧就 close 时, `response.completed` 被截掉: 模型文本已经完整输出
         // (response.output_text.done 到了), 但 turn 永不收口, UI 卡在「正在生成」。
-        upstreamSocket.on('close', () => settle('upstream-close'));
+        upstreamSocket.on('close', () => {
+          settle('upstream-close');
+          // 与下游同理：正常 FIN 交给 pipe 冲完；只有无 end 的异常销毁才强拆对端。
+          if (!upstreamSocket.readableEnded) clientSocket.destroy();
+        });
 
         // 只有出错才强拆两端 —— 那时缓冲里的数据已经没有意义。
         const abort = (why: string) => (err?: Error): void => {
@@ -1913,6 +1924,11 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
       // 副作用: in-flight 请求那一侧 (Claude Code 子进程) 会收 ECONNRESET。bootstrap-electron
       // 注释 (onQuit 'anthropic-compat-proxy' 段) 已显式接受此语义: "session 本来就在 close
       // 路径上, 这种 error 直接被吞, 影响可接受"。
+      // 已建立的 WS 上游不属于 server 的入站 socket 集；先显式关闭隧道两端，
+      // 避免只 destroy 下游后把远端连接留在事件循环里。
+      for (const connection of Array.from(liveWebSocketConnections)) {
+        connection.closeForHostFallback();
+      }
       for (const s of inflightSockets) {
         try { s.destroy(); } catch { /* no-op */ }
       }

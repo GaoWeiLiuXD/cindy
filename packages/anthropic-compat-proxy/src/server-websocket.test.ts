@@ -137,12 +137,15 @@ function startUpgradeUpstream(opts: { handshakeDelayMs?: number } = {}): Promise
   url: string;
   requests: IncomingMessage[];
   received: string[];
+  connections: Duplex[];
 }> {
   const requests: IncomingMessage[] = [];
   const received: string[] = [];
+  const connections: Duplex[] = [];
   const server = createServer();
   server.on('upgrade', (req, socket) => {
     sockets.add(socket);
+    connections.push(socket);
     requests.push(req);
     setTimeout(() => {
       socket.write([
@@ -166,7 +169,7 @@ function startUpgradeUpstream(opts: { handshakeDelayMs?: number } = {}): Promise
   });
   return listenOnAvailableLoopbackPort(server).then((port) => {
     cleanups.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
-    return { url: `http://127.0.0.1:${port}`, requests, received };
+    return { url: `http://127.0.0.1:${port}`, requests, received, connections };
   });
 }
 
@@ -509,7 +512,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(upstream.requests[0].url).toBe('/backend-api/codex/responses');
   });
 
-  it('dispose closes established websocket clients instead of waiting on the long connection', async () => {
+  it('dispose closes both sides of established websockets instead of leaking the upstream', async () => {
     const upstream = await startUpgradeUpstream();
     proxy = await createAnthropicCompatProxy({
       upstream: 'http://unused.invalid',
@@ -517,12 +520,16 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
       resolveWebSocketUpstream: () => upstream.url,
     });
     const response = await openUpgrade(proxy.url);
-    const closed = new Promise<void>((resolve) => response.socket.once('close', () => resolve()));
+    const upstreamSocket = upstream.connections[0];
+    if (!upstreamSocket) throw new Error('expected established upstream socket');
+    const clientClosed = new Promise<void>((resolve) => response.socket.once('close', () => resolve()));
+    const upstreamClosed = new Promise<void>((resolve) => upstreamSocket.once('close', () => resolve()));
 
     await proxy.dispose();
     proxy = null;
-    await closed;
+    await Promise.all([clientClosed, upstreamClosed]);
 
     expect(response.socket.destroyed).toBe(true);
+    expect(upstreamSocket.destroyed).toBe(true);
   });
 });
