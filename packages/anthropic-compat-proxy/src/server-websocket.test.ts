@@ -283,6 +283,7 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
   });
 
   it('closes the client when a preserved refusal body fails mid-stream', async () => {
+    const warns: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
     const upstream = createServer((_req, res) => {
       res.writeHead(503, {
         'content-type': 'application/json',
@@ -298,11 +299,16 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
       upstream: 'http://unused.invalid',
       transformRequest: [],
       resolveWebSocketUpstream: () => `http://127.0.0.1:${port}`,
+      logger: { warn: (msg, ctx) => warns.push({ msg, ctx }) },
     });
 
     const response = await readUpgradeFailure(proxy.url);
     expect(response).toContain('HTTP/1.1 503 Service Unavailable');
     expect(response).toContain('{"error":"partial');
+    expect(warns).toContainEqual(expect.objectContaining({
+      msg: 'websocket refusal response body failed',
+      ctx: expect.objectContaining({ reason: 'aborted', status: 503 }),
+    }));
   });
 
   it('falls back to HTTP when the network path refuses websocket upgrades', async () => {

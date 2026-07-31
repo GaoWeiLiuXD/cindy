@@ -1856,16 +1856,35 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         // 中途断开，必须自己结束客户端写侧；否则 Codex 会一直等 EOF，未监听的
         // IncomingMessage error 还可能升级为进程级异常。用 end 而不是立即 destroy，
         // 先尽量刷出已经收到的状态行和错误详情。
-        upstreamRes.once('error', (err) => {
+        let refusalBodyTerminal = false;
+        const failRefusalBody = (
+          reason: 'error' | 'aborted' | 'close',
+          err?: Error,
+        ): void => {
+          if (refusalBodyTerminal) return;
+          refusalBodyTerminal = true;
           logger.warn?.('websocket refusal response body failed', {
             reqId,
             status,
             path: upstreamPath,
-            err: String(err),
+            reason,
+            err: err ? String(err) : undefined,
           });
           if (!clientSocket.destroyed) {
             clientSocket.end(() => clientSocket.destroy());
           }
+        };
+        upstreamRes.once('end', () => {
+          refusalBodyTerminal = true;
+        });
+        upstreamRes.once('error', (err) => failRefusalBody('error', err));
+        // IncomingMessage 对提前断流的事件形态取决于 Node/代理/平台：可能有 error，
+        // 也可能只有 aborted 或 incomplete close。三路必须汇入同一个幂等收口，
+        // 否则裸 socket 没有 EOF，Codex 会一直等拒绝响应结束。
+        upstreamRes.once('aborted', () => failRefusalBody('aborted'));
+        upstreamRes.once('close', () => {
+          if (refusalBodyTerminal || upstreamRes.complete) return;
+          failRefusalBody('close');
         });
         upstreamRes.pipe(clientSocket);
       });
