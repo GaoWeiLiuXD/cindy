@@ -1738,19 +1738,21 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
       });
 
       upstreamReq.on('upgrade', (upstreamRes, upstreamSocket: Socket, upstreamHead: Buffer) => {
-        established = true;
-        connection.upstreamSocket = upstreamSocket;
         // 解除握手超时(长连接不能被它杀掉)。
         upstreamReq.setTimeout(0);
         upstreamSocket.setTimeout(0);
 
-        clientSocket.write(serializeResponseHead(upstreamRes));
-        // 双向把握手时已缓冲的首包补上, 再对接。
-        if (upstreamHead?.length) clientSocket.write(upstreamHead);
-        if (head?.length) upstreamSocket.write(head);
+        // 客户端可能恰好在上游 101 到达前断开。此时 close listener 已经 settle，
+        // 或 socket 已 destroy 但 close 事件尚未派发；都不能再把上游连接接入隧道。
+        if (settled || clientSocket.destroyed || upstreamSocket.destroyed) {
+          settle('upgrade-raced-with-close');
+          upstreamSocket.destroy();
+          clientSocket.destroy();
+          return;
+        }
 
-        clientSocket.setNoDelay(true);
-        upstreamSocket.setNoDelay(true);
+        established = true;
+        connection.upstreamSocket = upstreamSocket;
 
         // **正常关闭只记账, 绝不 destroy 对端**。
         // pipe 的默认 end:true 已经负责把 FIN 传下去, 并且会先冲完缓冲里未写出的数据;
@@ -1767,6 +1769,21 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
         };
         clientSocket.on('error', abort('client-error'));
         upstreamSocket.on('error', abort('upstream-error'));
+
+        try {
+          clientSocket.write(serializeResponseHead(upstreamRes));
+          // 双向把握手时已缓冲的首包补上, 再对接。
+          if (upstreamHead?.length) clientSocket.write(upstreamHead);
+          if (head?.length) upstreamSocket.write(head);
+
+          clientSocket.setNoDelay(true);
+          upstreamSocket.setNoDelay(true);
+        } catch (err) {
+          abort('handshake-forward-error')(
+            err instanceof Error ? err : new Error(String(err)),
+          );
+          return;
+        }
 
         upstreamSocket.pipe(clientSocket);
         clientSocket.pipe(upstreamSocket);
