@@ -11,7 +11,6 @@ import {
 } from '../../shared/modelPriceQuote.js';
 import {
   addRegionalMoney,
-  gatewayCurrencyForRegion,
   toLedgerCurrency,
   usdMoney,
   usdToLedgerCurrency,
@@ -22,6 +21,7 @@ import {
 } from '../../shared/regionalMoney.js';
 import { buildTurnUsageDetails, type TurnUsageDetails } from '../../shared/turnUsageDetails.js';
 import { isSubscriptionDirectModel } from '../../shared/subscriptionModels.js';
+import { currentLedgerCurrency } from './ledgerCurrency.js';
 import type { ModelUsageDeltaEntry } from './modelUsageDelta.js';
 
 export interface TurnTokenDeltas {
@@ -142,11 +142,10 @@ export function resolveTurnCost(args: {
     return { model, money: null, source: 'subscription' };
   }
 
-  // 本账号的账本币种:优先取目录里 xd 报价声明的币种(服务端按账号所属租户下发,不保证
-  // 等于发行区域),目录为空时才按区域推断。所有路由共用这一个口径,保证本函数产出的金额
-  // 必然与账本写入侧接受的币种一致。
-  const ledgerCurrency =
-    gatewayLedgerCurrency(pricing) ?? gatewayCurrencyForRegion(context.region);
+  // 本账号的账本币种:目录里有报价时以报价声明为准；目录为空时沿用模型同步已经写入的
+  // 活动账本币种。不能重新按构建区域推断——目录可能只是因为模型都缺标准价格而为空，
+  // 但账号结算币种仍已由完整模型目录确定，按区域回落会让金额被账本守卫拒收。
+  const ledgerCurrency = gatewayLedgerCurrency(pricing) ?? currentLedgerCurrency();
 
   if (context.billingRoute === 'xd-gateway') {
     const quote = getModelPriceQuote(pricing, 'xd', model);

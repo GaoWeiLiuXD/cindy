@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { ModelUsageDeltaEntry } from '../modelUsageDelta';
 import {
+  __resetActiveLedgerCurrencyForTesting,
+  setActiveLedgerCurrency,
+} from '../ledgerCurrency';
+import {
   buildClaudeTurnUsageDetails,
   computeGatewayTurnCost,
   estimateClaudeSubscriptionTurnValue,
@@ -276,25 +280,20 @@ describe('resolveTurnCost', () => {
     expect(result.money).toBeNull();
   });
 
-  it('falls back to region inference when the pricing catalog is entirely empty', () => {
-    // 真冷启动:目录里一条报价都没有，推不出结算币种，退回按区域推断以保持原行为。
-    const cn = resolveTurnCost({
-      rawModel: 'unquoted-model',
-      tokens: { inputTokens: 1_000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0 },
-      sdkCostDelta: 1.23,
-      pricing: {},
-      context: XD_GATEWAY_CN,
-    });
-    expect(cn.money).toBeNull();
-
-    const global = resolveTurnCost({
-      rawModel: 'unquoted-model',
-      tokens: { inputTokens: 1_000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0 },
-      sdkCostDelta: 1.23,
-      pricing: {},
-      context: XD_GATEWAY,
-    });
-    expect(global.money).toMatchObject({ amount: 1.23, currency: 'USD' });
+  it('uses the active ledger currency when the pricing catalog is entirely empty', () => {
+    try {
+      setActiveLedgerCurrency('USD');
+      const result = resolveTurnCost({
+        rawModel: 'unquoted-model',
+        tokens: { inputTokens: 1_000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0 },
+        sdkCostDelta: 1.23,
+        pricing: {},
+        context: XD_GATEWAY_CN,
+      });
+      expect(result.money).toMatchObject({ amount: 1.23, currency: 'USD' });
+    } finally {
+      __resetActiveLedgerCurrencyForTesting();
+    }
   });
 
   it('applies an ordinary Gateway model costDiscount exactly once', () => {
