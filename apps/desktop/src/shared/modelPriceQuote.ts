@@ -93,19 +93,22 @@ export function gatewayPricingCatalog(
   models: readonly ModelAccessGatewayModel[],
   region: CindyRegion,
 ): ModelPricingCatalog {
-  // 目录级币种优先于区域回落:同一账号的目录币种是统一的,个别模型省略 currency 时应跟随
-  // 同一目录里已声明的币种,而不是各自回落构建区域。否则新旧字段混合的响应(一条声明
-  // USD、一条省略)会产出跨币种目录 —— 账号币种被判成 USD,而回落成 CNY 的那些模型金额
-  // 会被账本写入守卫当异币种整批丢弃。只有整个目录都没声明时才回落区域。
+  // 整份目录必须是单一币种。
+  //
+  // 同一账号的目录币种本就统一，所以个别模型省略 currency 时跟随同目录已声明的币种，
+  // 而不是各自回落构建区域 —— 否则新旧字段混合的响应(一条声明 USD、一条省略)会产出
+  // 跨币种目录，那些回落成区域币种的模型金额会被账本写入守卫当异币种丢弃。
+  //
+  // 出现两种以上显式声明则整份拒绝:此时 resolveGatewayAccountCurrency 已判定该目录不可信
+  // 并让账本回退构建币种，若这里继续产出混币 catalog，非账本币种的那部分模型会被守卫
+  // 选择性丢弃 —— 形成"按模型漏记账"，比整份没有报价更难发现。
   const declared = new Set(
     models
       .map((model) => model.currency)
       .filter((currency): currency is MoneyCurrency => currency === 'CNY' || currency === 'USD'),
   );
-  const fallbackCurrency =
-    declared.size === 1
-      ? (declared.values().next().value ?? gatewayCurrencyForRegion(region))
-      : gatewayCurrencyForRegion(region);
+  if (declared.size > 1) return {};
+  const fallbackCurrency = declared.values().next().value ?? gatewayCurrencyForRegion(region);
   const xd: Record<string, ModelPriceQuote> = {};
   for (const model of models) {
     const quote = gatewayModelPriceQuote(model, region, fallbackCurrency);

@@ -43,11 +43,16 @@ const REFRESH_INTERVAL_MS = 60_000;
  * 本 hook 走 invoke 拉取、没有 main→renderer 的推送通道，不像 useClaudeAccountUsage
  * 那样会被新账号的广播覆盖，因此必须自己做这层隔离。
  */
-let cache: { accountId: string; usage: ModelAccessCreditUsage } | null = null;
+interface CreditUsageSnapshot {
+  accountId: string;
+  usage: ModelAccessCreditUsage;
+}
 
-function readCache(accountId: string | null): ModelAccessCreditUsage | null {
+let cache: CreditUsageSnapshot | null = null;
+
+function readCache(accountId: string | null): CreditUsageSnapshot | null {
   if (!accountId || cache?.accountId !== accountId) return null;
-  return cache.usage;
+  return cache;
 }
 
 function isCreditPool(v: unknown): boolean {
@@ -75,14 +80,11 @@ export function useModelAccessCreditUsage(
   enabled: boolean,
 ): ModelAccessCreditUsage | null {
   const { dataOwnerId } = useAuth();
-  const [usage, setUsage] = useState<ModelAccessCreditUsage | null>(() =>
-    enabled ? readCache(dataOwnerId) : null,
+  // state 连账号 id 一起存，隔离在**渲染期**完成而不是 effect 里:effect 要等本轮渲染
+  // 提交后才执行，靠它清空会让切号后的首帧仍把上一个账号的额度渲染出去。
+  const [snapshot, setSnapshot] = useState<CreditUsageSnapshot | null>(() =>
+    readCache(dataOwnerId),
   );
-
-  // 账号切换（或禁用）立即丢弃上一个账号的额度，不等请求返回。
-  useEffect(() => {
-    setUsage(enabled ? readCache(dataOwnerId) : null);
-  }, [enabled, dataOwnerId]);
 
   useEffect(() => {
     if (!enabled || !dataOwnerId) return;
@@ -95,7 +97,7 @@ export function useModelAccessCreditUsage(
           if (cancelled) return;
           if (!isCreditUsage(res)) return;
           cache = { accountId: dataOwnerId, usage: res };
-          setUsage(res);
+          setSnapshot(cache);
         })
         .catch(() => {
           /* 租户不提供该查询 / 未开户 / 上游不可用 → 保持本账号上一次值, 不清空 */
@@ -110,5 +112,7 @@ export function useModelAccessCreditUsage(
     };
   }, [enabled, dataOwnerId]);
 
-  return usage;
+  // 账号不匹配 / 未启用 → 当作没有数据。切号当帧即生效。
+  if (!enabled || !dataOwnerId || snapshot?.accountId !== dataOwnerId) return null;
+  return snapshot.usage;
 }
