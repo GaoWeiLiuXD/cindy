@@ -54,6 +54,11 @@ vi.mock('../../secrets/providerSecretStore', () => ({
 }));
 
 import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
+import { DEFAULT_USAGE_CURRENCY } from '../../../shared/regionalMoney';
+import {
+  __resetActiveLedgerCurrencyForTesting,
+  currentLedgerCurrency,
+} from '../ledgerCurrency';
 import {
   __resetModelPricingCacheForTesting,
   clearGatewayModelPricing,
@@ -253,6 +258,36 @@ describe('pricing cache lifecycle', () => {
     __resetModelPricingCacheForTesting();
     await expect(getModelPricing()).resolves.toEqual(pricing);
     await prewarmModelPricing();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('restores the active ledger currency when only the disk cache is hydrated', async () => {
+    // review 证据:计费热路径(turn 记账 / prewarm)走 getModelPricing，不经过可选的账号
+    // 配额查询。所以币种恢复必须发生在 hydrateFromDisk 里 —— 否则冷启动只命中磁盘缓存
+    // (/models 尚未完成或失败)时 currentLedgerCurrency() 回落构建默认，用缓存报价算出的
+    // 金额会被账本守卫当异币种丢弃，等于这段时间完全不计费。
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    replaceGatewayModelPricing([
+      {
+        id: 'gpt-5.5',
+        currency: 'USD',
+        inputCostPerToken: 0.000005,
+        outputCostPerToken: 0.00003,
+      },
+    ]);
+    await vi.waitFor(async () => {
+      await readFile(userDataPath('cache', 'model-pricing.json'), 'utf8');
+    });
+
+    // 模拟重启:清掉内存缓存与账本币种，只留磁盘缓存
+    __resetModelPricingCacheForTesting();
+    __resetActiveLedgerCurrencyForTesting();
+    expect(currentLedgerCurrency()).toBe(DEFAULT_USAGE_CURRENCY);
+
+    await getModelPricing();
+
+    expect(currentLedgerCurrency()).toBe('USD');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -218,6 +218,17 @@ async function hydrateFromDisk(scope: string): Promise<ModelPricingCatalog | nul
       cache = pricing;
       cacheScope = scope;
       cacheAt = Number(raw.fetchedAt);
+      // 账本币种必须在这里恢复,而不是只在 getGatewayAccountCurrency 里:那个函数只服务
+      // 可选的账号配额查询,而计费热路径(register.ts 的 turn 记账、prewarm)走的是
+      // getModelPricing / getModelPricingForModel。冷启动只命中磁盘缓存(/models 尚未
+      // 完成或失败)时若不在此同步,currentLedgerCurrency() 会回落构建默认币种,把该账号
+      // 用缓存报价算出的金额当异币种丢弃 —— 等于这一段时间完全不计费。
+      const derived = gatewayLedgerCurrency(pricing);
+      if (derived) {
+        gatewayAccountCurrency = derived;
+        gatewayAccountCurrencyScope = scope;
+        setActiveLedgerCurrency(derived);
+      }
       log.debug(`hydrated model pricing cache: ${Object.keys(pricing.xd ?? {}).length} XD quotes`);
       return pricing;
     } catch (err) {
@@ -336,19 +347,12 @@ export async function getGatewayAccountCurrency(
   await waitForModelPricingSync();
   const scope = currentScope(authenticatedUserId);
   if (gatewayAccountCurrencyScope === scope) return gatewayAccountCurrency;
-  // 本轮 /models 没跑成(冷启动尚未完成 / 同步失败)时,磁盘缓存里的报价同样能定出币种。
-  // 主动 hydrate 一次:只读本地文件,不联网。
-  const pricing = await getModelPricing();
-  if (cacheScope !== scope) return null;
-  const derived = gatewayLedgerCurrency(pricing);
-  if (!derived) return null;
-  // 推导结果写回缓存与账本事实源。少了这一步,只命中磁盘缓存的启动路径里
-  // currentLedgerCurrency() 会一直回落构建默认币种,把该账号的金额当异币种丢弃,
-  // 直到下一次 replaceGatewayModelPricing 成功才恢复。
-  gatewayAccountCurrency = derived;
-  gatewayAccountCurrencyScope = scope;
-  setActiveLedgerCurrency(derived);
-  return derived;
+  // 本轮 /models 没跑成时，磁盘缓存里的报价同样能定出币种。hydrateFromDisk 内部会在
+  // 落盘缓存生效的同时把币种写回缓存与账本事实源（那里才是所有取价路径的共同入口），
+  // 所以这里只需触发一次 hydrate 再读结果。
+  await getModelPricing();
+  if (gatewayAccountCurrencyScope === scope) return gatewayAccountCurrency;
+  return cacheScope === scope ? gatewayLedgerCurrency(cache) : null;
 }
 
 /**
