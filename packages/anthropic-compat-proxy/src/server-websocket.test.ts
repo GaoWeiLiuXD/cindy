@@ -304,6 +304,30 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     );
   });
 
+  it('still falls back when the discarded refusal body fails mid-stream', async () => {
+    const upstream = createServer((_req, res) => {
+      res.writeHead(403, {
+        'content-type': 'text/plain',
+        'transfer-encoding': 'chunked',
+      });
+      const socket = res.socket;
+      res.write('websocket blocked', () => socket?.destroy());
+    });
+    const port = await listenOnAvailableLoopbackPort(upstream);
+    cleanups.push(() => new Promise<void>((resolve) => upstream.close(() => resolve())));
+
+    proxy = await createAnthropicCompatProxy({
+      upstream: 'http://unused.invalid',
+      transformRequest: [],
+      resolveWebSocketUpstream: () => `http://127.0.0.1:${port}`,
+    });
+
+    const response = await readUpgradeFailure(proxy.url);
+    expect(response).toBe(
+      'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n',
+    );
+  });
+
   it.each([
     [401, 'Unauthorized'],
     [429, 'Too Many Requests'],

@@ -1795,6 +1795,17 @@ export async function createAnthropicCompatProxy(opts: ProxyOptions): Promise<Pr
             status,
             path: upstreamPath,
           });
+          // 客户端已经只需要 426，仍要消费上游 body 才能复用/释放连接；但 resume
+          // 不会吞掉源流 error。代理/WAF 若在 403 body 中途断开，监听并记日志，
+          // 避免 IncomingMessage error 上升成进程级未处理异常。
+          upstreamRes.once('error', (err) => {
+            logger.warn?.('websocket fallback response body failed', {
+              reqId,
+              status,
+              path: upstreamPath,
+              err: String(err),
+            });
+          });
           upstreamRes.resume();
           writeUpgradeFailure(clientSocket, 426, 'Upgrade Required');
           return;
