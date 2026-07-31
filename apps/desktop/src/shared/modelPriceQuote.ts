@@ -7,6 +7,7 @@ import {
   gatewayCurrencyForRegion,
   type ModelPriceQuote,
   type ModelPricingCatalog,
+  type MoneyCurrency,
 } from './regionalMoney.js';
 import { CHATGPT_MODEL_PREFIX, XAI_MODEL_PREFIX } from './subscriptionModels.js';
 
@@ -172,6 +173,25 @@ export function getModelPriceQuote(
     pricing?.[normalizedProvider]?.[normalizedModel] ??
     providerReferencePriceQuote(normalizedProvider, normalizedModel)
   );
+}
+
+/**
+ * 从报价目录推断当前账号的 Gateway 结算币种。
+ *
+ * 结算币种由服务端按账号所属租户下发,不保证等于客户端发行区域：多数账号跟随区域
+ * (cn=CNY / global=USD),但也存在以 USD 结算的账号运行在 CN 构建上的正常情形。
+ * 所以凡是需要判断"这个账号按什么币种记账"的地方都应问本函数,既不看 region,
+ * 也不需要判断账号属于哪类租户。
+ *
+ * 同一账号的目录币种是统一的,所以任取一条即可;目录为空或出现混合币种(目录本身不可信)
+ * 时返回 null,由调用方回落到构建默认值。与 main 侧 modelPricing.getGatewayAccountCurrency
+ * 的判定口径一致。
+ */
+export function gatewayLedgerCurrency(
+  pricing: ModelPricingCatalog | null | undefined,
+): MoneyCurrency | null {
+  const currencies = new Set(Object.values(pricing?.xd ?? {}).map((quote) => quote.currency));
+  return currencies.size === 1 ? (currencies.values().next().value ?? null) : null;
 }
 
 export function subscriptionDirectPriceQuote(modelId: string): ModelPriceQuote | undefined {

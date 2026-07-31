@@ -242,7 +242,9 @@ describe('pricing cache lifecycle', () => {
     await vi.waitFor(async () => {
       const raw = JSON.parse(await readFile(userDataPath('cache', 'model-pricing.json'), 'utf8'));
       expect(raw).toMatchObject({
-        version: 6,
+        // 报价缓存加入 currency 后升到 7:旧缓存没有币种，复用会让计费落到错误币种，
+        // 必须靠版本号失效掉。改缓存结构时同步这里。
+        version: 7,
         scope: expectedScope(),
         pricing,
       });

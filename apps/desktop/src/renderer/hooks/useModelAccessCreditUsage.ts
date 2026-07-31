@@ -1,26 +1,24 @@
 /**
- * useModelAccessCreditUsage — 订阅个人租户在 AIGateway 上的额度池账本
- * (plan / purchased / promotional 三池的 remaining / used / total)。
+ * useModelAccessCreditUsage — 订阅当前账号的额度池账本
+ * (订阅 / 充值 / 赠送三池的 remaining / used / total)。
  *
  * 为什么不复用 useClaudeAccountUsage:
- *   两者是**不同租户的不同额度语义**,不是同一份数据的两个入口。
- *     - XD 企业 (Nova 控制面签发 LiteLLM token): 语义是 spend / max_budget,
- *       有月度周期,由 useClaudeAccountUsage 走推理入口的 LiteLLM 管理面接口拿。
- *     - 个人租户 (Server 直连自研 AIGateway /api/v1): 语义是三池账本,买断 + 赠送制,
- *       没有月度周期。推理入口 (laxa) 不提供管理面接口,只能经 Server 的
- *       /api/model-access/credit-usage 拿 —— 即本 hook。
- *   见 model-access-server/src/services/tenants.ts 的租户分流注释。
+ *   两者是**两种不同的额度语义**,不是同一份数据的两个入口。服务端按账号所属租户
+ *   二选一提供:
+ *     - 周期配额语义(spend / max_budget,有月度周期):由 useClaudeAccountUsage
+ *       直接向推理入口查询。
+ *     - 额度池账本语义(三池,发放 + 充值 + 赠送制,没有周期):推理入口不提供该查询,
+ *       只能经服务端的 /api/model-access/credit-usage 拿 —— 即本 hook。
  *
  * 数据通道: billingApi.getCreditUsage() → IPC billing:get-credit-usage
- *   → main/billing GET /api/model-access/credit-usage (Server 侧带 master key
- *   查 Gateway 账本)。是 invoke 拉取,没有 push 通道。
+ *   → main/billing GET /api/model-access/credit-usage。是 invoke 拉取,没有 push 通道。
  *
  * 刷新: mount 拉一次 + enabled 期间定时轮询。额度只在跑 turn 后变化,轮询周期取
  * 得比较松 —— 这是状态栏的辅助信息,不值得为它加高频请求。
  *
  * 失败一律返 null (消费方隐藏该指标,不显示会误导的 0):
- *   - XD 企业身份 → Server 抛 BALANCE_NOT_SUPPORTED (Nova 控制面没有账本 contract)
- *   - 账号未在 Gateway 开户 / Gateway 不可用 / 网络失败
+ *   - 账号所属租户不提供该查询 → 服务端返回 BALANCE_NOT_SUPPORTED
+ *   - 账号尚未开户 / 上游不可用 / 网络失败
  *
  * module-local cache 让切换会话时 chip 不闪空 (与 useClaudeAccountUsage 同做法)。
  */
@@ -81,7 +79,7 @@ export function useModelAccessCreditUsage(
           setUsage(res);
         })
         .catch(() => {
-          /* 企业身份 NOT_SUPPORTED / 未开户 / 网关不可用 → 保持上一次值, 不清空 */
+          /* 租户不提供该查询 / 未开户 / 上游不可用 → 保持上一次值, 不清空 */
         });
     };
 

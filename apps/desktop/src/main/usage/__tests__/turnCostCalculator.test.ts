@@ -208,6 +208,70 @@ describe('resolveTurnCost', () => {
     });
   });
 
+  it('falls back to the SDK USD amount for a USD-settled account on a CN build', () => {
+    // 结算币种由目录里其它 xd 报价声明,不看构建区域、也不按租户判断。
+    // 以 USD 结算的账号在某个模型缺报价时同样要记账,不能漏计。
+    const result = resolveTurnCost({
+      rawModel: 'unquoted-model',
+      tokens: {
+        inputTokens: 1_000,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheCreateTokens: 0,
+      },
+      sdkCostDelta: 1.23,
+      pricing: catalog(quote('some-other-model', 3, 15)),
+      context: XD_GATEWAY_CN,
+    });
+    expect(result.source).toBe('sdk-fallback');
+    expect(result.money).toEqual({
+      amount: 1.23,
+      currency: 'USD',
+      approximate: false,
+      kind: 'actual-cost',
+    });
+  });
+
+  it('omits the SDK USD fallback for a CNY-settled account (wrong currency, no discount)', () => {
+    // CNY 账本下 SDK 的 USD 既不是该账号的报价口径、也不含 costDiscount，
+    // 折算进去只会误记，这一轮宁可不记。
+    const result = resolveTurnCost({
+      rawModel: 'unquoted-model',
+      tokens: {
+        inputTokens: 1_000,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheCreateTokens: 0,
+      },
+      sdkCostDelta: 1.23,
+      pricing: catalog(quote('some-other-model', 3, 15, { currency: 'CNY' })),
+      context: XD_GATEWAY_CN,
+    });
+    expect(result.source).toBe('sdk-fallback');
+    expect(result.money).toBeNull();
+  });
+
+  it('falls back to region inference when the pricing catalog is entirely empty', () => {
+    // 真冷启动:目录里一条报价都没有，推不出结算币种，退回按区域推断以保持原行为。
+    const cn = resolveTurnCost({
+      rawModel: 'unquoted-model',
+      tokens: { inputTokens: 1_000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0 },
+      sdkCostDelta: 1.23,
+      pricing: {},
+      context: XD_GATEWAY_CN,
+    });
+    expect(cn.money).toBeNull();
+
+    const global = resolveTurnCost({
+      rawModel: 'unquoted-model',
+      tokens: { inputTokens: 1_000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0 },
+      sdkCostDelta: 1.23,
+      pricing: {},
+      context: XD_GATEWAY,
+    });
+    expect(global.money).toMatchObject({ amount: 1.23, currency: 'USD' });
+  });
+
   it('applies an ordinary Gateway model costDiscount exactly once', () => {
     const result = resolveTurnCost({
       rawModel: 'discounted-model',
@@ -230,6 +294,30 @@ describe('resolveTurnCost', () => {
       amount: 0.5,
       currency: 'CNY',
       approximate: false,
+    });
+  });
+
+  it('keeps a USD Gateway quote unconverted on a CN build (XD enterprise settles in USD)', () => {
+    // 存在恒以 USD 结算的账号,即便客户端是 CN 构建也不能按
+    // USD_TO_CNY_FIXED_RATE 折成人民币:账号配额那条路径(gatewayMoney)保留 USD 原值,
+    // turn 若被换算就会在同一行出现 $ / ¥ 混排,且金额差一个汇率倍数、无法与账单核对。
+    const result = resolveTurnCost({
+      rawModel: 'gpt-5.5',
+      tokens: {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreateTokens: 0,
+      },
+      pricing: catalog(quote('gpt-5.5', 3, 15)),
+      context: XD_GATEWAY_CN,
+    });
+    expect(result.source).toBe('gateway');
+    expect(result.money).toMatchObject({
+      amount: 3,
+      currency: 'USD',
+      approximate: false,
+      kind: 'actual-cost',
     });
   });
 

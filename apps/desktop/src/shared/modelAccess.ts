@@ -84,7 +84,7 @@ export const MODEL_ACCESS_STATUS_CHANNEL = 'model-access:status-change';
 
 /**
  * 服务端下发的网关聊天模型条目(model-access-server GET /models):
- * Gateway / Nova model-groups 的公开字段 + 服务端生成的旧客户端兼容字段。
+ * 上游 model-groups 的公开字段 + 服务端生成的旧客户端兼容字段。
  * 新字段优先转换为客户端 Catalog 能力；字段缺失时才回退兼容字段。
  */
 /** 单个 runtime tab 上与基线不同的能力字段(服务端 perAgent 覆盖块,客户端按 agent 应用)。 */

@@ -26,6 +26,7 @@ import {
   type MoneyCurrency,
 } from '../../shared/regionalMoney.js';
 import { getCurrentDbClientUserId } from '../localDb/client/current.js';
+import { setActiveLedgerCurrency } from './ledgerCurrency.js';
 import { createLogger } from '../logger.js';
 import { getClientEndpoint } from '../clientEndpointsService.js';
 import { resolveOwnerScopedSecretStorageKey } from '../secrets/providerSecretStore.js';
@@ -266,6 +267,9 @@ export function replaceGatewayModelPricing(
   cacheAt = Date.now();
   gatewayAccountCurrency = resolveGatewayAccountCurrency(models);
   gatewayAccountCurrencyScope = scope;
+  // 账本写入层据此判断"这一笔是不是本账号的结算币种"。目录为空(登出 / clear)或混合
+  // 币种时 resolveGatewayAccountCurrency 返回 null，账本随之回落构建默认值。
+  setActiveLedgerCurrency(gatewayAccountCurrency);
   hydratedScopes.add(scope);
   void writeDiskCache(scope, pricing, cacheAt);
   broadcastPricing(pricing);

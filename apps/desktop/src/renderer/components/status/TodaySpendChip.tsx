@@ -113,8 +113,8 @@ const CLAUDE_USAGE_DASHBOARD_URL = 'https://claude.ai/settings/usage';
 const METRIC_KEYS = ['daily', 'monthly', 'credit', 'session'] as const;
 type MetricKey = (typeof METRIC_KEYS)[number];
 // credit 排在 session 左边 —— 账号额度是"还能用多少"的前提, 本对话花费是它的增量。
-// daily / monthly 只有 LiteLLM 语义的租户(企业 Nova 签发 key)拿得到, credit 只有
-// 三池账本语义的租户(个人)拿得到, 两组互斥, 同一形态下不会都占位。
+// daily / monthly 与 credit 来自服务端两种不同的额度语义(周期配额 vs 额度池账本),
+// 按账号所属租户二选一下发, 两组互斥, 同一形态下不会都占位。
 const PRIMARY_GATEWAY_METRICS: readonly MetricKey[] = ['daily', 'credit', 'session'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MONEY_SYMBOL = DEFAULT_USAGE_CURRENCY === 'CNY' ? '¥' : '$';

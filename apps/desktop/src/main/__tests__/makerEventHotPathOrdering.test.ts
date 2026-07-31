@@ -299,7 +299,11 @@ describe('maker:event hot path ordering', () => {
     expect(codexDoneSource).toContain('(sessionProvider === \'xd\' && hasGatewayKey)');
     expect(codexDoneSource).toContain('const isSubscriptionValue = isRemoteCodexSession ||');
     expect(codexDoneSource).toContain('isCodexXaiProviderRoute ||');
-    expect(codexDoneSource).toContain("(codexAuthInjection === 'oauth-bearer' && !hasEffectiveGatewayRoute)");
+    // 用正则而非整串匹配:这段条件已按多行排版,单行字面量会因换行/缩进调整而假失败。
+    // 要守的语义是——订阅计价只在「OpenAI 供应商 + oauth-bearer 注入 + 无生效网关路由」时成立。
+    expect(codexDoneSource).toMatch(
+      /isCodexOpenAiProviderRoute\s*&&\s*codexAuthInjection === 'oauth-bearer'\s*&&\s*!hasEffectiveGatewayRoute/,
+    );
     expect(codexDoneSource).toContain('const modelUsageKey = isSubscriptionValue');
     expect(codexDoneSource).toContain('? codexSubscriptionUsageModelKey(pricingModel)');
     expect(codexDoneSource).toContain(': codexApiUsageModelKey(pricingModel)');

@@ -4,11 +4,17 @@
 
 import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
 
-import { getModelPriceQuote, providerReferencePriceQuote } from '../../shared/modelPriceQuote.js';
+import {
+  gatewayLedgerCurrency,
+  getModelPriceQuote,
+  providerReferencePriceQuote,
+} from '../../shared/modelPriceQuote.js';
 import {
   addRegionalMoney,
+  gatewayCurrencyForRegion,
   regionalizeMoney,
   regionalizeUsd,
+  usdMoney,
   type ModelPriceQuote,
   type ModelPricingCatalog,
   type RegionalMoney,
@@ -31,6 +37,7 @@ export interface TurnPricingContext {
   billingRoute: BillingRoute;
   region: CindyRegion;
 }
+
 
 export type TurnCostSource = 'sdk' | 'gateway' | 'sdk-fallback' | 'subscription';
 
@@ -93,20 +100,26 @@ export function computePriceQuoteTurnMoney(
       : 0;
   const amount = standardAmount * (1 - discount);
   const valueEstimate = price.source === 'subscription-reference';
-  return regionalizeMoney(
-    {
-      amount: Math.max(0, amount),
-      currency: price.currency,
-      approximate: price.approximate || valueEstimate,
-      kind: valueEstimate ? 'value-estimate' : 'actual-cost',
-      ...(valueEstimate
-        ? { estimateReasons: ['subscription-value', 'reference-price'] }
-        : price.approximate
-          ? { estimateReasons: ['reference-price'] }
-          : {}),
-    },
-    region,
-  );
+  const money: RegionalMoney = {
+    amount: Math.max(0, amount),
+    currency: price.currency,
+    approximate: price.approximate || valueEstimate,
+    kind: valueEstimate ? 'value-estimate' : 'actual-cost',
+    ...(valueEstimate
+      ? { estimateReasons: ['subscription-value', 'reference-price'] }
+      : price.approximate
+        ? { estimateReasons: ['reference-price'] }
+        : {}),
+  };
+  // Gateway 报价的币种就是该账号的实际结算币种,必须原样记账才能与账单对账。
+  // 它不保证等于客户端发行区域:多数账号跟随区域(cn=CNY / global=USD),但也存在以 USD
+  // 结算的账号运行在 CN 构建上的正常情形。
+  //
+  // 所以 gateway 来源一律不做区域换算 —— 否则这类账号的 turn 会被 USD_TO_CNY_FIXED_RATE
+  // 折成 CNY,而同一界面的账号配额(走 gatewayMoney,不换算)仍是 USD 原值,造成同一行
+  // $ / ¥ 混排且金额差一个汇率倍数、无法与服务端账单核对。
+  // 其余来源(第三方参考价、订阅价值估算)本就是 USD 口径,继续按区域投影到本地账本。
+  return price.source === 'gateway' ? money : regionalizeMoney(money, region);
 }
 
 export function resolveTurnCost(args: {
@@ -126,15 +139,22 @@ export function resolveTurnCost(args: {
   if (context.billingRoute === 'xd-gateway') {
     const quote = getModelPriceQuote(pricing, 'xd', model);
     if (!quote) {
-      // Global 的 SDK costUSD 与账本同为 USD，可在冷缓存时保底；CN/Dev 的
-      // Gateway 报价原生 CNY，SDK USD 既不是该报价也没有 costDiscount，不能误记。
+      // 该模型没有报价(上游未登记,或目录还没同步下来)。SDK 的 costDelta 是 USD,
+      // 只有当本账号的 Gateway 结算币种同为 USD 时才能直接兜底记账。
+      //
+      // 判据取自同一目录里其它 xd 报价声明的币种 —— 服务端按账号所属租户下发，不保证
+      // 等于客户端发行区域。因此这里既不看构建区域,也不需要知道是哪类账号,
+      // USD 结算的账号自然被覆盖到、不会漏记。
+      // 目录整体为空(真冷启动)时退回按区域推断,保持原有行为。
+      //
+      // 币种不同(如 CN 个人租户的 CNY 账本)仍然不兜底:SDK 值既不是该账号的报价口径、
+      // 也不含 costDiscount,折算进去只会误记,宁可这一轮不记。
+      const ledgerCurrency =
+        gatewayLedgerCurrency(pricing) ?? gatewayCurrencyForRegion(context.region);
       const fallbackUsd = Math.max(0, sdkCostDelta ?? 0);
       return {
         model,
-        money:
-          context.region === 'global' && fallbackUsd > 0
-            ? regionalizeUsd(fallbackUsd, context.region)
-            : null,
+        money: ledgerCurrency === 'USD' && fallbackUsd > 0 ? usdMoney(fallbackUsd) : null,
         source: 'sdk-fallback',
       };
     }
