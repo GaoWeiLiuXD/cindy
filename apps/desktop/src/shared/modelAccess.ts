@@ -163,9 +163,19 @@ export interface ModelGroupPricing {
  */
 export interface ModelAccessGatewayModel extends ModelGroupPricing {
   id: string;
-  /** Gateway 能力字段；均为可选，缺失表示上游未声明。 */
+  /**
+   * Gateway 原生 mode(issue #882:权威分类字段,字段值不改名)。原样透传,可能
+   * 缺省(旧缓存 / 服务端尚未覆盖到的模型)——**不代表**本条目已被服务端判定
+   * 为聊天模型,是否可进 Agent availableModels 仍由客户端 isChatEligible 判定
+   * (mode==='chat' 才算;缺省时回退 classification.ts 的 id 正则兜底),见
+   * @cindy/model-providers classifyModel / isChatEligible。
+   */
   mode?: string;
-  /** Gateway 原生价格币种；旧版服务端未下发时按运行区域回退。 */
+  /**
+   * Gateway 原生价格币种,是该账号计价与记账的权威来源;旧版服务端未下发时才按
+   * 运行区域回退。它不保证等于构建区域 —— 结算币种由服务端按账号所属租户下发,
+   * 消费方一律以本字段(或其派生的 currentLedgerCurrency)为准,不按区域推断。
+   */
   currency?: 'USD' | 'CNY';
   /** 进哪些 runtime tab;缺省 = 仅 claude-code(网关 /v1/messages 翻译覆盖面最广)。 */
   agents?: ('claude-code' | 'codex')[];

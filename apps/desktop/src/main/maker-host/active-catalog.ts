@@ -58,9 +58,18 @@ export interface XdGatewayAgentOverride {
   defaultEnabled?: boolean;
 }
 
-/** Model Access 条目转换为客户端能力后的子集。 */
+/**
+ * 服务端下发的 XD 网关模型条目(shared/modelAccess ModelAccessGatewayModel 的子集)。
+ * 命名沿用历史("聊天"),但条目本身不保证是聊天模型——是否聊天模型看 mode,
+ * 服务端目前只透传已经过它自己 chat 过滤的条目,过滤范围以后可能放开(issue #882);
+ * 客户端一律用 isChatEligible 判定,不依赖本类型名字或服务端过滤范围。
+ *
+ * 能力字段已由服务端一次归一化,客户端不再二次转换(见 model-access/index.ts)。
+ */
 export interface XdGatewayModelInfo {
   id: string;
+  /** Gateway 原生 mode(issue #882,权威分类字段;缺省时下游按 id 正则兜底)。 */
+  mode?: string;
   /** AIGateway 折扣比例(0..1),折后价 = 原价 × (1 - costDiscount)。 */
   costDiscount?: number;
   /** AIGateway 标准 token 单价(per token)。 */
@@ -537,9 +546,14 @@ function computeMerged(): Catalog {
           group: gm.group ?? 'custom:xd',
           contextWindow: ov.contextWindow ?? gm.contextWindow ?? 200_000,
           ...(gm.maxOutputTokens !== undefined ? { maxOutput: gm.maxOutputTokens } : {}),
+          // override 或 gateway 模型显式给了才算真实上限;落到 200_000 兜底的不标记。
+          ...(ov.contextWindow !== undefined || gm.contextWindow !== undefined
+            ? { contextWindowVerified: true }
+            : {}),
           efforts,
           defaultEffort,
           supportsFastMode: ov.supportsFastMode ?? gm.supportsFastMode ?? false,
+          ...(gm.mode !== undefined ? { mode: gm.mode } : {}),
           ...(gm.description !== undefined ? { description: gm.description } : {}),
           ...(gm.sortOrder !== undefined ? { sortOrder: gm.sortOrder } : {}),
           ...(defaultEnabled !== undefined ? { defaultEnabled } : {}),
