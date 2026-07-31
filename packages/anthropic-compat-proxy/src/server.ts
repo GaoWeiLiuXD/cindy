@@ -279,6 +279,10 @@ function respondRoutingFailure(
  *  - 502 / 503 / 504: 上游或本地转发失败。
  */
 function writeUpgradeFailure(socket: Socket, status: number, message: string): void {
+  // 这些失败有一部分发生在 upgrade handler 安装通用 socket error listener 之前。
+  // end() 的写失败是异步 error 事件，try/catch 捕不到；客户端若恰好取消预热或退出，
+  // 必须在写入前就收口 EPIPE/ECONNRESET，避免错误冒泡终止 Desktop main 进程。
+  socket.once('error', () => socket.destroy());
   try {
     // 先完整刷出状态行再断开。`write()` 后立刻 `destroy()` 在 Windows 上可能让尚未
     // 进入内核发送缓冲的小响应变成 RST，codex 看不到 426 就不会切回 HTTP。

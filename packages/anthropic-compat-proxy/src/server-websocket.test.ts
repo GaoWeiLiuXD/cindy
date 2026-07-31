@@ -1,5 +1,5 @@
 import { ClientRequest, createServer, type IncomingMessage } from 'node:http';
-import { connect, type Socket } from 'node:net';
+import { connect, Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -251,6 +251,64 @@ describe('anthropic-compat-proxy websocket upgrades', () => {
     expect(response).toBe(
       'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n',
     );
+  });
+
+  it('handles an asynchronous socket error while writing an early 426 response', async () => {
+    const originalEnd = Socket.prototype.end;
+    let injectedWriteError = false;
+    const endSpy = vi.spyOn(Socket.prototype, 'end');
+    const implementation = function (
+      this: Socket,
+      chunk?: unknown,
+      ...rest: unknown[]
+    ): Socket {
+      if (
+        !injectedWriteError
+        && typeof chunk === 'string'
+        && chunk.startsWith('HTTP/1.1 426 Upgrade Required')
+      ) {
+        injectedWriteError = true;
+        queueMicrotask(() => {
+          const error = Object.assign(new Error('simulated early upgrade write failure'), {
+            code: 'EPIPE',
+          });
+          this.emit('error', error);
+        });
+        return this;
+      }
+      return Reflect.apply(originalEnd, this, [chunk, ...rest]) as Socket;
+    };
+    endSpy.mockImplementation(implementation as typeof Socket.prototype.end);
+
+    try {
+      proxy = await createAnthropicCompatProxy({
+        upstream: 'http://unused.invalid',
+        transformRequest: [],
+        resolveWebSocketUpstream: () => null,
+      });
+      const endpoint = new URL(proxy.url);
+      await new Promise<void>((resolve, reject) => {
+        const socket = connect(Number(endpoint.port), endpoint.hostname);
+        sockets.add(socket);
+        const timeout = setTimeout(() => {
+          socket.destroy();
+          reject(new Error('timed out waiting for failed upgrade socket to close'));
+        }, 2_000);
+        socket.once('error', () => {
+          // Server-side simulated EPIPE may surface as a reset to this test client.
+        });
+        socket.once('close', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        socket.once('connect', () => {
+          socket.write(upgradeRequest('/v1/responses', endpoint.host));
+        });
+      });
+      expect(injectedWriteError).toBe(true);
+    } finally {
+      endSpy.mockRestore();
+    }
   });
 
   it('forwards an upstream at-capacity response without stale chunk framing', async () => {
