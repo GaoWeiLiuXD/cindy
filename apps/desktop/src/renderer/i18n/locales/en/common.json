@@ -8524,7 +8524,7 @@
     }
   },
   "billing": {
-    "sidebar": "Balance & Plans",
+    "sidebar": "Quota & plans",
     "settings": {
       "title": "Usage and billing",
       "subscriptionCard": {
@@ -8539,13 +8539,13 @@
         "portalAction": "Manage in Stripe",
         "portalFailed": "Couldn't open Stripe subscription management. Try again later.",
         "priceInterval": "{{price}} / {{interval}}",
-        "includedCredits": "Includes {{amount}} per {{interval}}",
+        "includedCredits": "Includes a quota of {{amount}} per {{interval}}",
         "renewsAt": "Renews {{date}}",
         "endsAt": "Plan ends {{date}}",
         "cancelAction": "Cancel Subscription",
         "cancelConfirmTitle": "Cancel Your Current Subscription?",
-        "cancelConfirmDescription": "This action does not issue a refund or immediately change your balance. Your current plan stays available through {{date}}, then it will not renew. Cancellation cannot be undone in the app, and you cannot purchase a new plan until this billing period ends.",
-        "cancelConfirmDescriptionWithoutDate": "This action does not issue a refund or immediately change your balance. Your current plan stays available through the end of this billing period, then it will not renew. Cancellation cannot be undone in the app, and you cannot purchase a new plan until this billing period ends.",
+        "cancelConfirmDescription": "This action does not issue a refund or immediately change your quota. Your current plan stays available through {{date}}, then it will not renew. Cancellation cannot be undone in the app, and you cannot purchase a new plan until this billing period ends.",
+        "cancelConfirmDescriptionWithoutDate": "This action does not issue a refund or immediately change your quota. Your current plan stays available through the end of this billing period, then it will not renew. Cancellation cannot be undone in the app, and you cannot purchase a new plan until this billing period ends.",
         "cancelConfirmAction": "Confirm Cancellation",
         "cancelSuccess": "Auto-renewal is canceled. Your current plan remains available through {{date}}.",
         "cancelSuccessWithoutDate": "Auto-renewal is canceled. Your current plan will end after this billing period.",
@@ -8553,33 +8553,33 @@
         "cancelFailed": "Could not cancel the subscription. Try again later."
       },
       "topupCard": {
-        "action": "Add Funds"
+        "action": "Buy quota"
       }
     },
     "balance": {
       "title": "Available balance",
-      "plan": "Plan Balance",
-      "purchased": "Top-up Balance",
-      "promotional": "Promotional Balance",
-      "notProvisioned": "Balance has not been enabled for this account.",
+      "plan": "Plan quota",
+      "purchased": "Purchased quota",
+      "promotional": "Promotional quota",
+      "notProvisioned": "Quota has not been enabled for this account.",
       "notSupported": "Balance lookup is not supported for this account.",
       "unavailable": "Balance is temporarily unavailable. Refresh to try again."
     },
     "usage": {
-      "title": "Balance Usage",
+      "title": "Quota usage",
       "observedAt": "Balance updated {{date}}",
       "poolDetail": "Used {{used}} · Total {{total}}",
       "remaining": "Remaining",
       "progressLabel": "{{label}} usage",
-      "noPlanCredits": "No plan balance because there is no active subscription.",
+      "noPlanCredits": "No subscription quota because there is no active subscription.",
       "historyUnavailable": "Usage history is incomplete. Only the remaining balance is available.",
       "detailsUnavailable": "Usage details are temporarily unavailable. Current balances are shown instead.",
       "promotionalDetails": {
-        "title": "Promotional Balance Details",
+        "title": "Promotional Quota Details",
         "count": "{{count}} grants",
-        "empty": "No promotional grants are available.",
+        "empty": "No promotional quota grants are available.",
         "incomplete": "There are many grant records. Only the latest {{count}} are shown.",
-        "unnamed": "Promotional Grant",
+        "unnamed": "Promotional quota",
         "original": "Original",
         "used": "Used",
         "remaining": "Remaining",
@@ -8597,7 +8597,7 @@
         "title": "Choose a subscription plan"
       },
       "topup": {
-        "title": "Add Funds"
+        "title": "Buy quota"
       }
     },
     "steps": {
@@ -8614,7 +8614,7 @@
     },
     "catalog": {
       "errorTitle": "Plans are temporarily unavailable",
-      "errorDescription": "Check your connection and retry. Local fallback plans will not be used.",
+      "errorDescription": "Check your connection and try again.",
       "emptyTitle": "Coming soon. Stay tuned.",
       "currentPlan": "Current Plan",
       "unavailableReasons": {
@@ -8624,6 +8624,7 @@
     },
     "amount": {
       "custom": "Custom amount",
+      "startingAt": "From {{price}} / {{interval}}",
       "label": "Top-up amount",
       "placeholder": "Enter an amount",
       "rangeHint": "Enter between {{min}} and {{max}}",
@@ -8634,7 +8635,7 @@
       "MONTH": "month",
       "YEAR": "year"
     },
-    "credits": "Includes {{amount}}",
+    "credits": "Quota {{amount}}",
     "confirm": {
       "channel": "Pay with {{provider}}"
     },
@@ -8667,7 +8668,7 @@
       "failedTitle": "Unable to complete",
       "expiredTitle": "Payment expired",
       "canceledTitle": "Payment canceled",
-      "topupSubtitle": "Balance Top-up",
+      "topupSubtitle": "Quota top-up",
       "subscriptionSubtitle": "Subscription",
       "creatingBody": "Confirming the order with the payment service…",
       "qrAlt": "Payment QR code",
@@ -8678,7 +8679,7 @@
       "openPayment": "Open payment page",
       "refreshingAction": "Loading payment instructions…",
       "paymentCompleted": "Your payment was completed.",
-      "requestFailed": "The request failed. Retry safely; an uncertain create result keeps the original idempotency key.",
+      "requestFailed": "The request failed. Try again later.",
       "expiredBody": "This payment link expired. Create a new payment to continue.",
       "actionExpiredBody": "This code expired. Close this window and choose again to generate a new one.",
       "canceledBody": "This payment was canceled.",
@@ -8690,12 +8691,12 @@
       "sameLevelBadge": "Same tier",
       "downgradeBadge": "Downgrade",
       "emptyTitle": "No plans available to switch to",
-      "emptyDescription": "The server has not configured another plan for your current payment method.",
+      "emptyDescription": "There are no other plans available to switch to.",
       "quotingTitle": "Preparing plan change",
-      "quotingBody": "Fetching the price and effective time from the server…",
+      "quotingBody": "Confirming the price and effective time…",
       "quoteTitle": "Confirm plan change",
       "confirmingTitle": "Submitting plan change",
-      "confirmingBody": "Submitting your plan change to the server…",
+      "confirmingBody": "Submitting your plan change…",
       "pendingProviderTitle": "Processing plan change",
       "pendingProviderBody": "The payment provider is processing this change. Cindy will keep checking the result…",
       "awaitingTitle": "Pay the difference",
@@ -8712,7 +8713,7 @@
       "requestFailed": "The plan change request couldn’t be completed. Refresh your subscription status and try again.",
       "quoteRejected": "This plan isn’t available for your current subscription. Choose another plan.",
       "chooseAnotherPlan": "Choose Another Plan",
-      "resyncHint": "The confirmation result could not be verified. Syncing the latest status from the server…",
+      "resyncHint": "The result could not be confirmed yet. Checking the latest status again…",
       "upgradeDueNow": "Pay {{amount}} now for the remainder of this period",
       "upgradeNoAmount": "The upgrade takes effect immediately after confirmation.",
       "upgradeHint": "The upgrade takes effect immediately after payment. The renewal price becomes the new plan price.",

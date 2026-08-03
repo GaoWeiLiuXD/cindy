@@ -8511,7 +8511,7 @@
     }
   },
   "billing": {
-    "sidebar": "残高とプラン",
+    "sidebar": "クォータとプラン",
     "settings": {
       "title": "使用量と請求",
       "subscriptionCard": {
@@ -8526,13 +8526,13 @@
         "portalAction": "Stripe で管理",
         "portalFailed": "Stripeのサブスクリプション管理を開けませんでした。しばらくしてからもう一度お試しください。",
         "priceInterval": "{{price}} / {{interval}}",
-        "includedCredits": "毎{{interval}} {{amount}} 分を付与",
+        "includedCredits": "毎{{interval}}のクォータ：{{amount}}",
         "renewsAt": "次回更新日: {{date}}",
         "endsAt": "{{date}} にプラン終了",
         "cancelAction": "サブスクリプションを解約",
         "cancelConfirmTitle": "現在のサブスクリプションを解約しますか？",
-        "cancelConfirmDescription": "この操作による返金や残高の即時変更はありません。現在のプランは {{date}} まで利用でき、その後は更新されません。キャンセルはアプリ内では元に戻せません。また、この請求期間が終了するまで新しいプランは購入できません。",
-        "cancelConfirmDescriptionWithoutDate": "この操作による返金や残高の即時変更はありません。現在のプランは請求期間の終了まで利用でき、その後は更新されません。キャンセルはアプリ内では元に戻せません。また、この請求期間が終了するまで新しいプランは購入できません。",
+        "cancelConfirmDescription": "この操作による返金やクォータの即時変更はありません。現在のプランは {{date}} まで利用でき、その後は更新されません。キャンセルはアプリ内では元に戻せません。また、この請求期間が終了するまで新しいプランは購入できません。",
+        "cancelConfirmDescriptionWithoutDate": "この操作による返金やクォータの即時変更はありません。現在のプランは請求期間の終了まで利用でき、その後は更新されません。キャンセルはアプリ内では元に戻せません。また、この請求期間が終了するまで新しいプランは購入できません。",
         "cancelConfirmAction": "解約を確定",
         "cancelSuccess": "自動更新を停止しました。現在のプランは {{date}} まで利用できます。",
         "cancelSuccessWithoutDate": "自動更新を停止しました。現在のプランはこの請求期間の終了後に終了します。",
@@ -8540,33 +8540,33 @@
         "cancelFailed": "サブスクリプションを解約できませんでした。しばらくしてからもう一度お試しください。"
       },
       "topupCard": {
-        "action": "残高チャージ"
+        "action": "クォータを購入"
       }
     },
     "balance": {
       "title": "利用可能残高",
-      "plan": "プラン残高",
-      "purchased": "チャージ残高",
-      "promotional": "特典残高",
-      "notProvisioned": "このアカウントでは残高がまだ有効になっていません。",
+      "plan": "プランクォータ",
+      "purchased": "購入済みクォータ",
+      "promotional": "特典クォータ",
+      "notProvisioned": "このアカウントではクォータがまだ有効になっていません。",
       "notSupported": "このアカウントでは残高照会を利用できません。",
       "unavailable": "残高を取得できません。更新してもう一度お試しください。"
     },
     "usage": {
-      "title": "残高使用量",
+      "title": "クォータ使用量",
       "observedAt": "残高更新: {{date}}",
       "poolDetail": "使用済み {{used}} · 合計 {{total}}",
       "remaining": "残り",
       "progressLabel": "{{label}}の使用量",
-      "noPlanCredits": "有効なサブスクリプションがないため、プラン残高はありません。",
-      "historyUnavailable": "使用履歴が完全ではないため、残高のみ表示しています。",
+      "noPlanCredits": "有効なサブスクリプションがないため、サブスクリプションのクォータはありません。",
+      "historyUnavailable": "使用履歴が完全ではないため、残りの残高のみ表示しています。",
       "detailsUnavailable": "使用量の詳細を取得できないため、現在の残高のみ表示しています。",
       "promotionalDetails": {
-        "title": "特典残高明細",
+        "title": "特典クォータ明細",
         "count": "{{count}}件",
-        "empty": "特典の付与履歴はありません。",
+        "empty": "特典クォータの付与履歴はありません。",
         "incomplete": "付与履歴が多いため、最新の{{count}}件のみ表示しています。",
-        "unnamed": "特典残高",
+        "unnamed": "特典クォータ",
         "original": "付与額",
         "used": "使用済み",
         "remaining": "残り",
@@ -8584,7 +8584,7 @@
         "title": "サブスクリプションプランを選択"
       },
       "topup": {
-        "title": "残高チャージ"
+        "title": "クォータを購入"
       }
     },
     "steps": {
@@ -8601,7 +8601,7 @@
     },
     "catalog": {
       "errorTitle": "プランを取得できません",
-      "errorDescription": "接続を確認して再試行してください。ローカルの代替プランは表示しません。",
+      "errorDescription": "接続を確認して、もう一度お試しください。",
       "emptyTitle": "近日公開予定です。お楽しみに。",
       "currentPlan": "現在のプラン",
       "unavailableReasons": {
@@ -8611,6 +8611,7 @@
     },
     "amount": {
       "custom": "金額を指定",
+      "startingAt": "{{price}} / {{interval}}から",
       "label": "チャージ金額",
       "placeholder": "金額を入力",
       "rangeHint": "{{min}}〜{{max}}を入力",
@@ -8621,7 +8622,7 @@
       "MONTH": "月",
       "YEAR": "年"
     },
-    "credits": "{{amount}} 分を付与",
+    "credits": "クォータ {{amount}}",
     "confirm": {
       "channel": "{{provider}}で支払う"
     },
@@ -8654,7 +8655,7 @@
       "failedTitle": "完了できませんでした",
       "expiredTitle": "支払い期限切れ",
       "canceledTitle": "支払いキャンセル済み",
-      "topupSubtitle": "残高チャージ",
+      "topupSubtitle": "クォータチャージ",
       "subscriptionSubtitle": "サブスクリプション",
       "creatingBody": "支払いサービスで注文を確認しています…",
       "qrAlt": "支払いQRコード",
@@ -8665,7 +8666,7 @@
       "openPayment": "支払いページを開く",
       "refreshingAction": "支払い情報を取得中…",
       "paymentCompleted": "支払いが完了しました。",
-      "requestFailed": "リクエストに失敗しました。不明な作成結果では同じ冪等キーで安全に再試行します。",
+      "requestFailed": "リクエストに失敗しました。しばらくしてからもう一度お試しください。",
       "expiredBody": "支払いリンクの期限が切れました。新しい支払いを作成してください。",
       "actionExpiredBody": "コードの有効期限が切れました。閉じてから再度選択し、新しい支払いを作成してください。",
       "canceledBody": "この支払いはキャンセルされました。",
@@ -8677,12 +8678,12 @@
       "sameLevelBadge": "同じレベル",
       "downgradeBadge": "ダウングレード",
       "emptyTitle": "切り替え可能なプランがありません",
-      "emptyDescription": "現在の支払い方法で切り替え可能なプランがまだ設定されていません。",
+      "emptyDescription": "現在、切り替え可能な他のプランはありません。",
       "quotingTitle": "プラン変更を準備中",
-      "quotingBody": "サーバーから金額と適用時期を取得しています…",
+      "quotingBody": "金額と適用時期を確認しています…",
       "quoteTitle": "プラン変更の確認",
       "confirmingTitle": "変更を送信中",
-      "confirmingBody": "プラン変更をサーバーに送信しています…",
+      "confirmingBody": "プラン変更を送信しています…",
       "pendingProviderTitle": "プラン変更を処理中",
       "pendingProviderBody": "決済プロバイダーが変更を処理しています。Cindy が結果を確認し続けます…",
       "awaitingTitle": "差額のお支払い",
@@ -8699,7 +8700,7 @@
       "requestFailed": "プラン変更リクエストを完了できませんでした。サブスクリプションの状態を更新して、もう一度お試しください。",
       "quoteRejected": "現在のサブスクリプションではこのプランに変更できません。別のプランを選択してください。",
       "chooseAnotherPlan": "別のプランを選択",
-      "resyncHint": "確認結果を検証できませんでした。サーバーから最新の状態を同期しています…",
+      "resyncHint": "結果をまだ確認できません。最新の状態をもう一度確認しています…",
       "upgradeDueNow": "今期の差額 {{amount}} をお支払いください",
       "upgradeNoAmount": "確認後、アップグレードは即時適用されます。",
       "upgradeHint": "お支払い完了後にアップグレードが即時適用され、以降は新プランの価格で更新されます。",

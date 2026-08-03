@@ -8511,7 +8511,7 @@
     }
   },
   "billing": {
-    "sidebar": "잔액 및 요금제",
+    "sidebar": "할당량 및 요금제",
     "settings": {
       "title": "사용량 및 결제",
       "subscriptionCard": {
@@ -8526,13 +8526,13 @@
         "portalAction": "Stripe에서 관리",
         "portalFailed": "Stripe 구독 관리 페이지를 열 수 없습니다. 잠시 후 다시 시도하세요.",
         "priceInterval": "{{price}} / {{interval}}",
-        "includedCredits": "매{{interval}} {{amount}} 포함",
+        "includedCredits": "매{{interval}} 할당량 {{amount}} 포함",
         "renewsAt": "다음 갱신일 {{date}}",
         "endsAt": "{{date}}에 요금제 종료",
         "cancelAction": "구독 취소",
         "cancelConfirmTitle": "현재 구독을 취소할까요?",
-        "cancelConfirmDescription": "이 작업으로 환불되거나 잔액이 즉시 변경되지 않습니다. 현재 요금제는 {{date}}까지 사용할 수 있으며 이후에는 갱신되지 않습니다. 취소는 앱에서 되돌릴 수 없으며, 이번 결제 기간이 끝날 때까지 새 요금제를 구매할 수 없습니다.",
-        "cancelConfirmDescriptionWithoutDate": "이 작업으로 환불되거나 잔액이 즉시 변경되지 않습니다. 현재 요금제는 이번 결제 기간이 끝날 때까지 사용할 수 있으며 이후에는 갱신되지 않습니다. 취소는 앱에서 되돌릴 수 없으며, 이번 결제 기간이 끝날 때까지 새 요금제를 구매할 수 없습니다.",
+        "cancelConfirmDescription": "이 작업으로 환불되거나 할당량이 즉시 변경되지 않습니다. 현재 요금제는 {{date}}까지 사용할 수 있으며 이후에는 갱신되지 않습니다. 취소는 앱에서 되돌릴 수 없으며, 이번 결제 기간이 끝날 때까지 새 요금제를 구매할 수 없습니다.",
+        "cancelConfirmDescriptionWithoutDate": "이 작업으로 환불되거나 할당량이 즉시 변경되지 않습니다. 현재 요금제는 이번 결제 기간이 끝날 때까지 사용할 수 있으며 이후에는 갱신되지 않습니다. 취소는 앱에서 되돌릴 수 없으며, 이번 결제 기간이 끝날 때까지 새 요금제를 구매할 수 없습니다.",
         "cancelConfirmAction": "취소 확인",
         "cancelSuccess": "자동 갱신을 취소했습니다. 현재 요금제는 {{date}}까지 사용할 수 있습니다.",
         "cancelSuccessWithoutDate": "자동 갱신을 취소했습니다. 현재 요금제는 이번 결제 기간이 끝난 후 종료됩니다.",
@@ -8540,33 +8540,33 @@
         "cancelFailed": "구독을 취소하지 못했습니다. 잠시 후 다시 시도해 주세요."
       },
       "topupCard": {
-        "action": "잔액 충전"
+        "action": "할당량 구매"
       }
     },
     "balance": {
       "title": "사용 가능 잔액",
-      "plan": "요금제 잔액",
-      "purchased": "충전 잔액",
-      "promotional": "프로모션 잔액",
-      "notProvisioned": "이 계정에는 아직 잔액이 활성화되지 않았습니다.",
+      "plan": "요금제 할당량",
+      "purchased": "구매한 할당량",
+      "promotional": "프로모션 할당량",
+      "notProvisioned": "이 계정에는 아직 할당량이 활성화되지 않았습니다.",
       "notSupported": "이 계정에서는 잔액 조회를 지원하지 않습니다.",
       "unavailable": "잔액을 불러올 수 없습니다. 새로고침 후 다시 시도하세요."
     },
     "usage": {
-      "title": "잔액 사용량",
+      "title": "할당량 사용량",
       "observedAt": "잔액 업데이트: {{date}}",
       "poolDetail": "사용 {{used}} · 전체 {{total}}",
       "remaining": "잔여",
       "progressLabel": "{{label}} 사용량",
-      "noPlanCredits": "활성 구독이 없어 요금제 잔액이 없습니다.",
-      "historyUnavailable": "사용 기록이 완전하지 않아 남은 잔액만 표시합니다.",
+      "noPlanCredits": "활성 구독이 없어 구독 할당량이 없습니다.",
+      "historyUnavailable": "사용 기록이 완전하지 않아 잔여 잔액만 표시합니다.",
       "detailsUnavailable": "사용량 상세를 불러올 수 없어 현재 잔액만 표시합니다.",
       "promotionalDetails": {
-        "title": "프로모션 잔액 상세",
+        "title": "프로모션 할당량 상세",
         "count": "{{count}}건",
-        "empty": "프로모션 지급 내역이 없습니다.",
+        "empty": "프로모션 할당량 지급 내역이 없습니다.",
         "incomplete": "지급 내역이 많아 최근 {{count}}건만 표시합니다.",
-        "unnamed": "프로모션 잔액",
+        "unnamed": "프로모션 할당량",
         "original": "지급액",
         "used": "사용",
         "remaining": "잔여",
@@ -8584,7 +8584,7 @@
         "title": "구독 요금제 선택"
       },
       "topup": {
-        "title": "잔액 충전"
+        "title": "할당량 구매"
       }
     },
     "steps": {
@@ -8601,7 +8601,7 @@
     },
     "catalog": {
       "errorTitle": "요금제를 불러올 수 없습니다",
-      "errorDescription": "네트워크를 확인하고 다시 시도하세요. 로컬 대체 요금제는 표시하지 않습니다.",
+      "errorDescription": "네트워크를 확인한 후 다시 시도하세요.",
       "emptyTitle": "곧 출시됩니다. 기대해 주세요.",
       "currentPlan": "현재 요금제",
       "unavailableReasons": {
@@ -8611,6 +8611,7 @@
     },
     "amount": {
       "custom": "금액 직접 입력",
+      "startingAt": "{{price}} / {{interval}}부터",
       "label": "충전 금액",
       "placeholder": "금액 입력",
       "rangeHint": "{{min}}~{{max}} 입력",
@@ -8621,7 +8622,7 @@
       "MONTH": "월",
       "YEAR": "년"
     },
-    "credits": "{{amount}} 포함",
+    "credits": "할당량 {{amount}}",
     "confirm": {
       "channel": "{{provider}}로 결제"
     },
@@ -8654,7 +8655,7 @@
       "failedTitle": "완료할 수 없음",
       "expiredTitle": "결제 만료",
       "canceledTitle": "결제 취소됨",
-      "topupSubtitle": "잔액 충전",
+      "topupSubtitle": "할당량 충전",
       "subscriptionSubtitle": "구독",
       "creatingBody": "결제 서비스에서 주문을 확인하고 있습니다…",
       "qrAlt": "결제 QR 코드",
@@ -8665,7 +8666,7 @@
       "openPayment": "결제 페이지 열기",
       "refreshingAction": "결제 정보를 불러오는 중…",
       "paymentCompleted": "결제가 완료되었습니다.",
-      "requestFailed": "요청에 실패했습니다. 결과가 불확실한 생성 요청은 같은 멱등성 키로 안전하게 재시도합니다.",
+      "requestFailed": "요청에 실패했습니다. 잠시 후 다시 시도하세요.",
       "expiredBody": "결제 링크가 만료되었습니다. 새 결제를 생성하세요.",
       "actionExpiredBody": "코드가 만료되었습니다. 창을 닫고 다시 선택하여 새 결제를 생성하세요.",
       "canceledBody": "이 결제가 취소되었습니다.",
@@ -8677,12 +8678,12 @@
       "sameLevelBadge": "동일 등급",
       "downgradeBadge": "다운그레이드",
       "emptyTitle": "전환 가능한 플랜이 없습니다",
-      "emptyDescription": "현재 결제 수단으로 전환할 수 있는 다른 플랜이 아직 설정되지 않았습니다.",
+      "emptyDescription": "현재 전환할 수 있는 다른 요금제가 없습니다.",
       "quotingTitle": "플랜 변경 준비 중",
-      "quotingBody": "서버에서 금액과 적용 시점을 가져오는 중…",
+      "quotingBody": "금액과 적용 시점을 확인하는 중…",
       "quoteTitle": "플랜 변경 확인",
       "confirmingTitle": "변경 제출 중",
-      "confirmingBody": "플랜 변경을 서버에 제출하는 중…",
+      "confirmingBody": "요금제 변경을 제출하는 중…",
       "pendingProviderTitle": "요금제 변경 처리 중",
       "pendingProviderBody": "결제 제공자에서 변경을 처리하고 있습니다. Cindy가 결과를 계속 확인합니다…",
       "awaitingTitle": "차액 결제",
@@ -8699,7 +8700,7 @@
       "requestFailed": "플랜 변경 요청을 완료하지 못했습니다. 구독 상태를 새로고침한 후 다시 시도하세요.",
       "quoteRejected": "현재 구독에서는 이 플랜으로 변경할 수 없습니다. 다른 플랜을 선택하세요.",
       "chooseAnotherPlan": "다른 플랜 선택",
-      "resyncHint": "확인 결과를 검증할 수 없습니다. 서버에서 최신 상태를 동기화하는 중…",
+      "resyncHint": "결과를 아직 확인할 수 없습니다. 최신 상태를 다시 확인하는 중…",
       "upgradeDueNow": "이번 기간 차액 {{amount}}을(를) 결제하세요",
       "upgradeNoAmount": "확인 후 업그레이드가 즉시 적용됩니다.",
       "upgradeHint": "결제 완료 후 업그레이드가 즉시 적용되며 이후 새 플랜 가격으로 갱신됩니다.",

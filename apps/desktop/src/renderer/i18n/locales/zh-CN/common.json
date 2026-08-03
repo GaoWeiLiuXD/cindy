@@ -8511,7 +8511,7 @@
     }
   },
   "billing": {
-    "sidebar": "余额与订阅",
+    "sidebar": "配额与订阅",
     "settings": {
       "title": "用量和计费",
       "subscriptionCard": {
@@ -8526,13 +8526,13 @@
         "portalAction": "Stripe 管理",
         "portalFailed": "无法打开 Stripe 订阅管理页，请稍后重试。",
         "priceInterval": "{{price}} / {{interval}}",
-        "includedCredits": "每{{interval}}包含 {{amount}}",
+        "includedCredits": "每{{interval}}配额 {{amount}}",
         "renewsAt": "下次续费 {{date}}",
         "endsAt": "套餐将于 {{date}} 结束",
         "cancelAction": "取消订阅",
         "cancelConfirmTitle": "取消当前订阅？",
-        "cancelConfirmDescription": "本次操作不会退款，也不会立即调整余额。当前套餐权益可继续使用至 {{date}}，之后不再续费。取消后无法在应用内恢复，本计费周期结束前也无法购买新套餐。",
-        "cancelConfirmDescriptionWithoutDate": "本次操作不会退款，也不会立即调整余额。当前套餐权益可继续使用至本计费周期结束，之后不再续费。取消后无法在应用内恢复，本计费周期结束前也无法购买新套餐。",
+        "cancelConfirmDescription": "本次操作不会退款，也不会立即调整配额。当前套餐权益可继续使用至 {{date}}，之后不再续费。取消后无法在应用内恢复，本计费周期结束前也无法购买新套餐。",
+        "cancelConfirmDescriptionWithoutDate": "本次操作不会退款，也不会立即调整配额。当前套餐权益可继续使用至本计费周期结束，之后不再续费。取消后无法在应用内恢复，本计费周期结束前也无法购买新套餐。",
         "cancelConfirmAction": "确认取消",
         "cancelSuccess": "已取消自动续费，当前套餐可使用至 {{date}}。",
         "cancelSuccessWithoutDate": "已取消自动续费，当前套餐将在本计费周期结束后到期。",
@@ -8540,34 +8540,34 @@
         "cancelFailed": "取消订阅失败，请稍后重试。"
       },
       "topupCard": {
-        "action": "余额充值"
+        "action": "购买配额"
       }
     },
     "balance": {
       "title": "可用余额",
-      "plan": "订阅余额",
-      "purchased": "充值余额",
-      "promotional": "赠送余额",
-      "notProvisioned": "当前账户尚未开通余额。",
+      "plan": "订阅配额",
+      "purchased": "已购配额",
+      "promotional": "赠送配额",
+      "notProvisioned": "当前账户尚未开通配额。",
       "notSupported": "当前账户暂不支持余额查询。",
       "unavailable": "暂时无法获取余额，请刷新后重试。"
     },
     "usage": {
-      "title": "余额用量",
+      "title": "配额用量",
       "observedAt": "余额更新于 {{date}}",
       "poolDetail": "已用 {{used}} · 总额 {{total}}",
       "remaining": "剩余",
       "progressLabel": "{{label}}使用进度",
-      "noPlanCredits": "当前无生效订阅，因此没有订阅余额。",
+      "noPlanCredits": "当前无生效订阅，因此没有订阅配额。",
       "historyUnavailable": "历史记录不完整，暂时仅显示剩余余额。",
       "detailsUnavailable": "用量明细暂时不可用，当前仅显示各类余额。",
       "promotionalDetails": {
-        "title": "赠送余额明细",
+        "title": "赠送配额明细",
         "count": "{{count}} 笔",
-        "empty": "当前没有赠送记录。",
+        "empty": "当前没有赠送配额记录。",
         "incomplete": "赠送记录较多，当前仅显示最近的 {{count}} 笔。",
-        "unnamed": "赠送余额",
-        "original": "原始金额",
+        "unnamed": "赠送配额",
+        "original": "原始配额",
         "used": "已用",
         "remaining": "剩余",
         "expiresAt": "有效期至 {{date}}",
@@ -8584,7 +8584,7 @@
         "title": "选择订阅套餐"
       },
       "topup": {
-        "title": "余额充值"
+        "title": "购买配额"
       }
     },
     "steps": {
@@ -8601,7 +8601,7 @@
     },
     "catalog": {
       "errorTitle": "暂时无法获取套餐",
-      "errorDescription": "请检查网络后重试。不会使用本地套餐替代。",
+      "errorDescription": "请检查网络后重试。",
       "emptyTitle": "即将上线，敬请期待",
       "currentPlan": "当前套餐",
       "unavailableReasons": {
@@ -8611,6 +8611,7 @@
     },
     "amount": {
       "custom": "自定义金额",
+      "startingAt": "{{price}} / {{interval}}起",
       "label": "充值金额",
       "placeholder": "输入金额",
       "rangeHint": "可输入 {{min}} 至 {{max}}",
@@ -8621,7 +8622,7 @@
       "MONTH": "月",
       "YEAR": "年"
     },
-    "credits": "含 {{amount}}",
+    "credits": "配额 {{amount}}",
     "confirm": {
       "channel": "通过 {{provider}} 支付"
     },
@@ -8654,7 +8655,7 @@
       "failedTitle": "暂时无法完成",
       "expiredTitle": "支付已过期",
       "canceledTitle": "支付已取消",
-      "topupSubtitle": "余额充值",
+      "topupSubtitle": "配额充值",
       "subscriptionSubtitle": "订阅套餐",
       "creatingBody": "正在向支付服务确认订单…",
       "qrAlt": "支付二维码",
@@ -8665,7 +8666,7 @@
       "openPayment": "打开支付页面",
       "refreshingAction": "正在获取支付方式…",
       "paymentCompleted": "支付已完成。",
-      "requestFailed": "请求失败。可以重试；结果不确定时会继续复用原幂等请求。",
+      "requestFailed": "请求失败，请稍后重试。",
       "expiredBody": "支付链接已过期，请重新创建支付。",
       "actionExpiredBody": "二维码已过期，请关闭后重新选择以生成新的支付。",
       "canceledBody": "本次支付已取消。",
@@ -8677,12 +8678,12 @@
       "sameLevelBadge": "同等级",
       "downgradeBadge": "降级",
       "emptyTitle": "暂无可切换的套餐",
-      "emptyDescription": "服务端尚未为当前支付方式配置其他可切换套餐。",
+      "emptyDescription": "当前没有其他可切换的套餐。",
       "quotingTitle": "正在准备套餐变更",
-      "quotingBody": "正在向服务端获取价格与生效时间…",
+      "quotingBody": "正在确认价格与生效时间…",
       "quoteTitle": "确认套餐变更",
       "confirmingTitle": "正在提交变更",
-      "confirmingBody": "正在向服务端提交套餐变更…",
+      "confirmingBody": "正在提交套餐变更…",
       "pendingProviderTitle": "正在处理套餐变更",
       "pendingProviderBody": "支付渠道正在处理本次变更，Cindy 会持续确认最新结果…",
       "awaitingTitle": "支付差价",
@@ -8699,7 +8700,7 @@
       "requestFailed": "套餐变更请求未完成，请刷新订阅状态后重试。",
       "quoteRejected": "当前订阅无法切换到这个套餐，请选择其他套餐。",
       "chooseAnotherPlan": "选择其他套餐",
-      "resyncHint": "确认结果暂时无法核实，正在从服务端同步最新状态…",
+      "resyncHint": "确认结果暂时无法核实，正在重新确认最新状态…",
       "upgradeDueNow": "本期需支付差价 {{amount}}",
       "upgradeNoAmount": "确认后升级立即生效。",
       "upgradeHint": "支付完成后升级立即生效，后续按新套餐价格续费。",
