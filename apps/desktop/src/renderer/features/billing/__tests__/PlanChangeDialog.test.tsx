@@ -294,6 +294,7 @@ describe('PlanChangeTargetDialog product-first selection', () => {
     expect(screen.queryByText('max_month_more')).toBeNull();
     expect(firstOffer.getAttribute('aria-pressed')).toBe('true');
     expect(secondOffer.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('billing.planChange.back').closest('button')).toBeTruthy();
 
     fireEvent.click(secondOffer);
     fireEvent.click(screen.getByText('billing.settings.subscriptionCard.changeAction'));

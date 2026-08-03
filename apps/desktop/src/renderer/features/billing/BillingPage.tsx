@@ -1983,7 +1983,13 @@ function SubscriptionProductAccordion({
                     </p>
                     {priceOffer.creditAmount && (
                       <p className="text-12 text-[var(--text-secondary)]">
-                        {t('billing.credits', { amount: priceOffer.creditAmount })}
+                        {t('billing.credits', {
+                          amount: formatMoney(
+                            priceOffer.creditAmount,
+                            priceOffer.currency,
+                            billingLocale,
+                          ),
+                        })}
                       </p>
                     )}
                   </div>
@@ -2027,7 +2033,13 @@ function SubscriptionProductAccordion({
                     </p>
                     {priceOffer.creditAmount && (
                       <p className="text-12 text-[var(--text-secondary)]">
-                        {t('billing.credits', { amount: priceOffer.creditAmount })}
+                        {t('billing.credits', {
+                          amount: formatMoney(
+                            priceOffer.creditAmount,
+                            priceOffer.currency,
+                            billingLocale,
+                          ),
+                        })}
                       </p>
                     )}
                   </div>
@@ -2102,7 +2114,13 @@ function SubscriptionProductAccordion({
                           </p>
                           <p className="text-12 text-[var(--text-secondary)]">
                             {offer.creditAmount
-                              ? t('billing.credits', { amount: offer.creditAmount })
+                              ? t('billing.credits', {
+                                  amount: formatMoney(
+                                    offer.creditAmount,
+                                    offer.currency,
+                                    billingLocale,
+                                  ),
+                                })
                               : null}
                           </p>
                         </div>

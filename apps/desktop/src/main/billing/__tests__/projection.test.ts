@@ -452,6 +452,7 @@ describe('billing response projection', () => {
             },
             {
               code: 'available',
+              name: 'x'.repeat(129),
               salesState: 'AVAILABLE',
               purchasable: true,
               unavailableReason: null,
@@ -520,6 +521,7 @@ describe('billing response projection', () => {
     ]);
     expect(projected.products[0]?.offers[0]).not.toHaveProperty('name');
     expect(projected.products[0]?.offers[1]).not.toHaveProperty('name');
+    expect(projected.products[0]?.offers[2]).not.toHaveProperty('name');
   });
 
   it('enforces the server contract that offer codes are globally unique', () => {

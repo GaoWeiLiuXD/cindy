@@ -178,16 +178,6 @@ export function PlanChangeTargetDialog({
         >
           <div className="flex items-center justify-between gap-4 px-6 pb-4 pt-5">
             <div className="flex min-w-0 items-center gap-2">
-              {selectedGroup && (
-                <button
-                  type="button"
-                  onClick={backToProducts}
-                  className="grid size-8 shrink-0 place-items-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover-soft)] hover:text-[var(--text-primary)]"
-                  aria-label={t('settings.back')}
-                >
-                  <ArrowLeft size={16} />
-                </button>
-              )}
               <Dialog.Title className="truncate text-16 font-medium tracking-[-0.01em]">
                 {selectedGroup?.product.name ?? t('billing.planChange.targetTitle')}
               </Dialog.Title>
@@ -310,7 +300,7 @@ export function PlanChangeTargetDialog({
                             'flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors',
                             'hover:bg-[var(--surface-hover-soft)] focus-visible:outline-none',
                             'focus-visible:ring-2 focus-visible:ring-inset',
-                            'focus-visible:ring-[var(--text-primary)]',
+                            'focus-visible:ring-[var(--focus-ring)]',
                           )}
                         >
                           <div className="min-w-0 flex-1">
@@ -360,14 +350,22 @@ export function PlanChangeTargetDialog({
           </div>
 
           {selectedGroup && (
-            <div className="flex min-h-16 items-center justify-end gap-4 border-t border-[var(--border-default)] px-6 py-3">
+            <div className="flex min-h-16 items-center justify-between gap-4 border-t border-[var(--border-default)] px-6 py-3">
+              <button
+                type="button"
+                onClick={backToProducts}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md px-1 text-13 font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+              >
+                <ArrowLeft size={15} />
+                {t('billing.planChange.back')}
+              </button>
               <button
                 type="button"
                 disabled={selectedCandidate === null}
                 onClick={() => {
                   if (selectedCandidate) onSelect(selectedCandidate);
                 }}
-                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--text-primary)] px-5 text-13 font-medium text-[var(--surface)] transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--text-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-elevated)] disabled:cursor-not-allowed disabled:opacity-35"
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--text-primary)] px-5 text-13 font-medium text-[var(--surface)] transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-elevated)] disabled:cursor-not-allowed disabled:opacity-35"
               >
                 {t('billing.settings.subscriptionCard.changeAction')}
                 <ArrowUpRight size={15} />

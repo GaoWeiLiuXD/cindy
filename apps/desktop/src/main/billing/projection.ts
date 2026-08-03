@@ -403,9 +403,7 @@ function projectOffer(
 ): BillingCatalogOffer | null {
   if (!isRecord(value) || !Array.isArray(value.purchaseOptions)) return null;
   const offerCode = code(value.code);
-  const offerNameMissing =
-    value.name == null || (typeof value.name === 'string' && value.name.trim() === '');
-  const offerName = offerNameMissing ? undefined : boundedString(value.name, 128);
+  const offerName = boundedString(value.name, 128) ?? undefined;
   const offerCurrency = currency(value.currency);
   const amount = nullable(value.amount, decimal);
   const minAmount = nullable(value.minAmount, decimal);
@@ -418,7 +416,6 @@ function projectOffer(
       : undefined;
   if (
     !offerCode ||
-    (!offerNameMissing && !offerName) ||
     !offerCurrency ||
     interval === undefined ||
     amount === undefined ||

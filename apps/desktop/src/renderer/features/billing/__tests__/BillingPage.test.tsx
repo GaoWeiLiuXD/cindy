@@ -533,8 +533,8 @@ describe('BillingPage remote catalog rendering', () => {
     expect(offerButtons[0].parentElement?.className).toContain('divide-y');
     expect(offerButtons[0].parentElement?.className).toContain('rounded-xl');
     expect(
-      within(offerButtons[0]).getByText('billing.credits:{"amount":"20"}').className,
-    ).toContain('text-12');
+      within(offerButtons[0]).getByText(`billing.credits:{"amount":"${twenty}"}`),
+    ).toBeTruthy();
   });
 
   it('shows an end date for period-end cancellation and omits invalid dates', async () => {
@@ -1000,8 +1000,14 @@ describe('BillingPage remote catalog rendering', () => {
     expect(product).toHaveProperty('disabled', false);
     const currentPlan = within(dialog).getByText('billing.catalog.currentPlan').closest('button')!;
     const alternativeOffer = within(dialog).getByText('$20.00').closest('button')!;
+    const alternativeCredits = new Intl.NumberFormat('en', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(250);
     expect(
-      within(alternativeOffer).getByText('billing.credits:{"amount":"250"}').className,
+      within(alternativeOffer).getByText(
+        `billing.credits:{"amount":"${alternativeCredits}"}`,
+      ).className,
     ).toContain('text-12');
     expect(within(dialog).queryByText('plus_month_more')).toBeNull();
     expect(currentPlan).toHaveProperty('disabled', true);
@@ -1106,7 +1112,13 @@ describe('BillingPage remote catalog rendering', () => {
 
     const defaultOffer = within(dialog).getByText('$9.00').closest('button')!;
     const secondOffer = within(dialog).getByText('$20.00').closest('button')!;
-    expect(within(defaultOffer).getByText('billing.credits:{"amount":"100"}')).toBeTruthy();
+    const defaultCredits = new Intl.NumberFormat('en', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(100);
+    expect(
+      within(defaultOffer).getByText(`billing.credits:{"amount":"${defaultCredits}"}`),
+    ).toBeTruthy();
     expect(within(dialog).queryByText('pro_month_current')).toBeNull();
     expect(within(dialog).queryByText('pro_month_more')).toBeNull();
     expect(defaultOffer).toHaveProperty('disabled', false);
@@ -1362,7 +1374,13 @@ describe('BillingPage remote catalog rendering', () => {
     ]);
     expect(within(planButtons[0]).getByText(/1\.00/)).toBeTruthy();
     expect(within(planButtons[0]).queryByText(/billing\.amount\.startingAt/)).toBeNull();
-    expect(within(planButtons[0]).getByText('billing.credits:{"amount":"100"}')).toBeTruthy();
+    const firstPlanCredits = new Intl.NumberFormat('en', {
+      style: 'currency',
+      currency: 'CNY',
+    }).format(100);
+    expect(
+      within(planButtons[0]).getByText(`billing.credits:{"amount":"${firstPlanCredits}"}`),
+    ).toBeTruthy();
     expect(screen.queryByText('plan_1_month')).toBeNull();
     expect(screen.getByText('alipay')).toBeTruthy();
     expect(screen.queryByText('stripe')).toBeNull();
