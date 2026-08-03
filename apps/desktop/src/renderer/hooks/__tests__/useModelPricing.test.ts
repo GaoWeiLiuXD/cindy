@@ -126,6 +126,32 @@ describe('useModelPricing', () => {
     expect(hook.result.current.gateway).toEqual(gatewayPricing);
   });
 
+  it('accepts agent-scoped user overrides in the reference catalog', async () => {
+    const referencePricing: ModelPricingCatalog = {
+      anthropic: {
+        ['claude-sonnet-5\u0000claude-code']: {
+          providerId: 'anthropic',
+          modelId: 'claude-sonnet-5',
+          currency: 'USD',
+          source: 'user-override',
+          approximate: true,
+          inputPerMtok: 3,
+          outputPerMtok: 15,
+        },
+      },
+    };
+    const usage = {
+      getReferenceModelPricing: vi.fn(async () => referencePricing),
+      onReferenceModelPricingChanged: vi.fn(() => () => undefined),
+    };
+    (window as unknown as { electronAPI: { maker: { usage: typeof usage } } }).electronAPI = {
+      maker: { usage },
+    };
+
+    const hook = renderHook(() => useReferenceModelPricing());
+    await waitFor(() => expect(hook.result.current).toEqual(referencePricing));
+  });
+
   it('reloads both pricing chains after the data owner changes', async () => {
     const gatewayA: ModelPricingCatalog = {
       xd: {

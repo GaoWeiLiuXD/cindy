@@ -64,11 +64,12 @@ function isNonNegativeFinite(value: unknown): value is number {
 function isValidQuote(
   value: unknown,
   providerId: string,
-  modelId: string,
+  catalogKey: string,
   kind: PricingKind,
 ): value is ModelPriceQuote {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const quote = value as Partial<ModelPriceQuote>;
+  const modelId = kind === 'reference' ? catalogKey.split('\u0000', 1)[0] : catalogKey;
   const sourceMatches =
     kind === 'gateway'
       ? providerId === 'xd' && quote.source === 'gateway' && quote.approximate === false

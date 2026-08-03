@@ -3551,7 +3551,7 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
               const claudeEstimated = estimateClaudeSubscriptionTurnValue(
                 perModel,
                 currentLedgerCurrency(),
-                getReferenceModelPricing(),
+                pricing,
               );
               if (claudeEstimated?.amount) estimatedValues.push(claudeEstimated);
             }

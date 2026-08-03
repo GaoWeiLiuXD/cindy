@@ -577,6 +577,9 @@ describe('maker:event hot path ordering', () => {
     expect(claudeDoneSource).toContain(
       "m.source === 'subscription' && isSubscriptionDirectModel(m.model)",
     );
+    expect(claudeDoneSource).toMatch(
+      /estimateClaudeSubscriptionTurnValue\(\s*perModel,\s*currentLedgerCurrency\(\),\s*pricing,\s*\)/,
+    );
     // 订阅判定对齐 proxy 路由: 显式选 Anthropic, 或默认路由优先按 observed route, 未观察再回落无网关 key 启发式
     expect(claudeDoneSource).toContain("sessionProviderForBilling === 'anthropic'");
     expect(claudeDoneSource).toContain('const observedClaudeRoute =');
