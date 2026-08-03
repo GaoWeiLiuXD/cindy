@@ -65,7 +65,9 @@ describe('Plugin Market IPC error boundary', () => {
     expect(ownerSyncBody).toContain(
       'if (!session.dataOwnerId || isAppSessionBoundaryPending()) return;',
     );
-    expect(ownerSyncBody).toContain('void syncDefaultMarketPlugins();');
+    expect(ownerSyncBody).toContain('if (scope === defaultPluginSyncInFlightScope) return;');
+    expect(ownerSyncBody).toContain('void syncDefaultMarketPlugins().finally(() => {');
+    expect(ownerSyncBody).toContain('defaultPluginSyncInFlightScope = null;');
 
     const listenerStart = bootstrapSource.indexOf(
       'disposePluginMarketAuthListener = authManager.onAuthStateChange',

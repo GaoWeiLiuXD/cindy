@@ -2578,16 +2578,18 @@ const createWindow = () => {
 let disposeSkillhubAutoSyncAuthListener: (() => void) | null = null;
 let disposeProviderAccessAuthListener: (() => void) | null = null;
 let disposePluginMarketAuthListener: (() => void) | null = null;
-let lastDefaultPluginSyncScope: string | null = null;
+let defaultPluginSyncInFlightScope: string | null = null;
 
 /** Run the existing market reconciliation once for each stable app owner. */
 function syncDefaultPluginsForActiveOwner(): void {
   const session = getActiveAppSession();
   if (!session.dataOwnerId || isAppSessionBoundaryPending()) return;
   const scope = activeOwnerScopeKey();
-  if (scope === lastDefaultPluginSyncScope) return;
-  lastDefaultPluginSyncScope = scope;
-  void syncDefaultMarketPlugins();
+  if (scope === defaultPluginSyncInFlightScope) return;
+  defaultPluginSyncInFlightScope = scope;
+  void syncDefaultMarketPlugins().finally(() => {
+    if (defaultPluginSyncInFlightScope === scope) defaultPluginSyncInFlightScope = null;
+  });
 }
 
 const registerIpcHandlers = () => {
