@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   ArrowRight,
@@ -1817,11 +1817,16 @@ function BillingOfferDialog({
         null)
       : null;
   const displayedOffers = selectedSubscriptionProduct?.offers ?? offers;
+  const initialTopupOfferCode =
+    kind === 'CREDIT_TOPUP'
+      ? (displayedOffers.find(isCatalogOfferPurchasable)?.offer.code ?? null)
+      : null;
   const selectedOfferCanChooseChannel =
     selected !== null &&
     isCatalogOfferPurchasable(selected) &&
     !(kind === 'SUBSCRIPTION' && selected.offer.code === currentSubscriptionOfferCode);
-  const titleRef = useRef<HTMLHeadingElement>(null);
+  const primaryFocusRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
     <Dialog.Root open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
@@ -1837,19 +1842,16 @@ function BillingOfferDialog({
           )}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
-            titleRef.current?.focus();
+            (primaryFocusRef.current ?? closeButtonRef.current)?.focus();
           }}
         >
           <div className="flex items-center justify-between gap-4 px-6 pb-4 pt-5">
-            <Dialog.Title
-              ref={titleRef}
-              tabIndex={-1}
-              className="truncate text-16 font-medium tracking-[-0.01em] focus:outline-none"
-            >
+            <Dialog.Title className="truncate text-16 font-medium tracking-[-0.01em]">
               {title}
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
+                ref={closeButtonRef}
                 type="button"
                 className="grid size-8 shrink-0 place-items-center rounded-full text-[var(--text-tertiary)] transition-colors hover:bg-[var(--surface-hover-soft)] hover:text-[var(--text-primary)]"
                 aria-label={t('billing.actions.close')}
@@ -1869,6 +1871,7 @@ function BillingOfferDialog({
                 description={t('billing.catalog.errorDescription')}
                 action={
                   <button
+                    ref={primaryFocusRef}
                     type="button"
                     onClick={onRetry}
                     className="mt-4 h-9 rounded-full border border-[var(--border-default)] px-4 text-12 font-medium hover:bg-[var(--surface-hover-soft)]"
@@ -1888,6 +1891,7 @@ function BillingOfferDialog({
                     selectedOfferCode={selected?.offer.code ?? null}
                     currentSubscriptionOfferCode={currentSubscriptionOfferCode}
                     billingLocale={billingLocale}
+                    initialFocusRef={primaryFocusRef}
                     onSelectProduct={onSelectProduct}
                     onSelectOffer={onSelectOffer}
                   />
@@ -1904,6 +1908,9 @@ function BillingOfferDialog({
                         return (
                           <button
                             key={offer.code}
+                            ref={
+                              offer.code === initialTopupOfferCode ? primaryFocusRef : undefined
+                            }
                             type="button"
                             onClick={() => onSelectOffer(offer.code)}
                             disabled={currentPlan || unavailableReason !== null}
@@ -2081,6 +2088,7 @@ function SubscriptionProductAccordion({
   selectedOfferCode,
   currentSubscriptionOfferCode,
   billingLocale,
+  initialFocusRef,
   onSelectProduct,
   onSelectOffer,
 }: {
@@ -2089,6 +2097,7 @@ function SubscriptionProductAccordion({
   selectedOfferCode: string | null;
   currentSubscriptionOfferCode: string | null;
   billingLocale: string;
+  initialFocusRef: RefObject<HTMLButtonElement | null>;
   onSelectProduct: (productCode: string) => void;
   onSelectOffer: (offerCode: string) => void;
 }) {
@@ -2117,6 +2126,13 @@ function SubscriptionProductAccordion({
           >
             {singleOfferEntry ? (
               <button
+                ref={
+                  productActive &&
+                  !singleOfferCurrentPlan &&
+                  singleOfferUnavailableReason === null
+                    ? initialFocusRef
+                    : undefined
+                }
                 type="button"
                 onClick={() => onSelectProduct(productEntry.product.code)}
                 disabled={singleOfferCurrentPlan || singleOfferUnavailableReason !== null}
@@ -2241,6 +2257,11 @@ function SubscriptionProductAccordion({
                   return (
                     <button
                       key={offer.code}
+                      ref={
+                        offerActive && !currentPlan && !unavailable
+                          ? initialFocusRef
+                          : undefined
+                      }
                       type="button"
                       onClick={() => onSelectOffer(offer.code)}
                       disabled={currentPlan || unavailable}

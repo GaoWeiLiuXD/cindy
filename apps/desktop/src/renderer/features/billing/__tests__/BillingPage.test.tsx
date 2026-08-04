@@ -1142,10 +1142,9 @@ describe('BillingPage remote catalog rendering', () => {
     fireEvent.click(await screen.findByText('billing.settings.subscriptionCard.action'));
 
     const dialog = await screen.findByRole('dialog');
+    const defaultOffer = within(dialog).getByText('$9.00').closest('button')!;
     await waitFor(() =>
-      expect(document.activeElement).toBe(
-        within(dialog).getByRole('heading', { name: 'billing.dialogs.subscription.title' }),
-      ),
+      expect(document.activeElement).toBe(defaultOffer),
     );
     const proProduct = within(dialog).getByRole('button', { name: /Pro/ });
     const futureProduct = within(dialog).getByRole('button', { name: /Coming Soon/ });
@@ -1157,7 +1156,6 @@ describe('BillingPage remote catalog rendering', () => {
       within(futureProduct).getByText('billing.catalog.unavailableReasons.OFFER_COMING_SOON'),
     ).toBeTruthy();
 
-    const defaultOffer = within(dialog).getByText('$9.00').closest('button')!;
     const secondOffer = within(dialog).getByText('$20.00').closest('button')!;
     const defaultCredits = new Intl.NumberFormat('en', {
       style: 'currency',
