@@ -1,7 +1,7 @@
 /**
  * Regression coverage for the module-level update-all batch controller:
- * uninstall guards, reviewed-manifest passthrough on approval, and batch
- * state surviving page unmount (review 定稿 2026-08-02).
+ * uninstall guards, reviewed-manifest passthrough, package-review baseline
+ * drift recovery, and batch state surviving page unmount (review 定稿 2026-08-04).
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  * @vitest-environment jsdom
  */
@@ -138,6 +138,36 @@ describe('updateAllController', () => {
         approvedPackageSha256: review.packageSha256,
       }),
     );
+  });
+
+  it('keeps package review recoverable when the installed baseline drifts in flight', async () => {
+    stubDetail({ manifest: manifest({}), sourceType: 'server' });
+    const review = {
+      manifest: manifest({ network: { hosts: ['api.example.com'] } }),
+      packageSha256: 'a'.repeat(64),
+      installedBaseline: ghostPermissionBaselineKey(installedGhosts[0].manifest),
+    };
+    installMock.mockImplementationOnce(async () => {
+      installedGhosts = [{ manifest: manifest({ version: '1.0.5', slots: ['fs'] }) }];
+      return { reviewRequired: review } as never;
+    });
+
+    startUpdateAllBatch([marketItem({})]);
+    await waitForSettledBatch();
+
+    expect(getUpdateAllBatchState().rows?.[0]).toMatchObject({
+      status: 'needs-confirm',
+      staleReview: true,
+      releaseId: 'release-2',
+      fromVersion: '1.0.5',
+      toVersion: '1.1.0',
+    });
+
+    await approveUpdateExpansion('plugin-a');
+    expect(installMock).toHaveBeenLastCalledWith('plugin-a', {
+      expectedReleaseId: 'release-2',
+    });
+    expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
   });
 
   it('passes the reviewed manifest back when approving a non-server expansion', async () => {

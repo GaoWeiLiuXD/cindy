@@ -8,7 +8,8 @@
  * 为什么在组件外:批次可以在用户关掉弹窗、离开 /plugins 后继续跑
  * (「后台继续」语义),待确认的扩权项也必须在回到插件页后仍然保留
  * 批准/跳过入口——状态生命周期必须长于页面组件,所以照
- * useInstalledGhosts 的先例做成模块级单例 store。
+ * useInstalledGhosts 的先例做成模块级单例 store。真实包复核返回期间若
+ * 已装权限基线漂移,保留目标 release 并退回可恢复的重新审阅状态。
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  */
 
@@ -210,7 +211,12 @@ function holdPackageReview(
   }
   const reviewedBaseline = ghostPermissionBaselineKey(installed);
   if (reviewedBaseline !== review.installedBaseline) {
-    holdRowForReReview(generation, row.pluginId);
+    holdRowForReReview(generation, row.pluginId, {
+      releaseId: row.releaseId,
+      fromVersion: installed.version,
+      toVersion: row.toVersion,
+      expectedManifest: undefined,
+    });
     return;
   }
   patchRow(generation, row.pluginId, {
