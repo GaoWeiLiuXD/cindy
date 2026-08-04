@@ -26,7 +26,10 @@ import {
   ghostPermissionBaselineKey,
   type GhostManifest,
 } from '../../../../shared/ghost';
-import type { PluginMarketItem } from '../../../../shared/pluginMarket';
+import type {
+  PluginMarketItem,
+  PluginMarketPackageReview,
+} from '../../../../shared/pluginMarket';
 import { pluginMarketErrorKey } from './pluginMarketErrorKey';
 import {
   batchSummary,
@@ -152,6 +155,7 @@ function holdRowForReReview(
     status: 'needs-confirm',
     staleReview: true,
     permissionDiff: undefined,
+    packageReview: undefined,
     ...patch,
     releaseId,
   });
@@ -188,6 +192,38 @@ function installedManifestOf(ghostId: string): GhostManifest | null {
   return (
     readInstalledGhostsSnapshot().find((ghost) => ghost.manifest.id === ghostId)?.manifest ?? null
   );
+}
+
+function holdPackageReview(
+  generation: number,
+  row: Pick<UpdateAllRow, 'pluginId' | 'ghostId'> & {
+    releaseId: string;
+    toVersion: string;
+    expectedManifest?: GhostManifest;
+  },
+  review: PluginMarketPackageReview,
+): void {
+  const installed = installedManifestOf(row.ghostId);
+  if (!installed) {
+    patchRow(generation, row.pluginId, { status: 'skipped' });
+    return;
+  }
+  const reviewedBaseline = ghostPermissionBaselineKey(installed);
+  if (reviewedBaseline !== review.installedBaseline) {
+    holdRowForReReview(generation, row.pluginId);
+    return;
+  }
+  patchRow(generation, row.pluginId, {
+    status: 'needs-confirm',
+    fromVersion: installed.version,
+    toVersion: row.toVersion,
+    releaseId: row.releaseId,
+    permissionDiff: diffGhostPermissionItems(installed, review.manifest),
+    staleReview: false,
+    reviewedBaseline,
+    packageReview: review,
+    expectedManifest: row.expectedManifest,
+  });
 }
 
 async function refreshMarketIfMounted(): Promise<void> {
@@ -285,10 +321,24 @@ async function runQueue(generation: number): Promise<void> {
           });
           continue;
         }
-        await window.electronAPI.pluginMarket.install(next.pluginId, {
+        const result = await window.electronAPI.pluginMarket.install(next.pluginId, {
           expectedReleaseId: detail.releaseId,
           ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
         });
+        if (result.reviewRequired) {
+          holdPackageReview(
+            generation,
+            {
+              pluginId: next.pluginId,
+              ghostId: next.ghostId,
+              releaseId: detail.releaseId,
+              toVersion: detail.version,
+              ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+            },
+            result.reviewRequired,
+          );
+          continue;
+        }
         patchRow(generation, next.pluginId, { status: 'done' });
       } catch (error) {
         if (batchGeneration !== generation) return;
@@ -440,6 +490,7 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
         permissionDiff: diffGhostPermissionItems(installed, detail.manifest),
         staleReview: false,
         reviewedBaseline: ghostPermissionBaselineKey(installed),
+        packageReview: undefined,
         expectedManifest: detail.sourceType !== 'server' ? detail.manifest : undefined,
       });
     };
@@ -478,7 +529,21 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
       options: Parameters<typeof window.electronAPI.pluginMarket.install>[1],
     ): Promise<boolean> => {
       try {
-        await window.electronAPI.pluginMarket.install(pluginId, options);
+        const result = await window.electronAPI.pluginMarket.install(pluginId, options);
+        if (result.reviewRequired) {
+          holdPackageReview(
+            generation,
+            {
+              pluginId,
+              ghostId: row.ghostId,
+              releaseId: detail.releaseId,
+              toVersion: detail.version,
+              ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+            },
+            result.reviewRequired,
+          );
+          return false;
+        }
         return true;
       } catch (error) {
         if (batchGeneration !== generation) return false;
@@ -508,6 +573,9 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
         // renderer 这边的检查挡不住 IPC 往返窗口内的替换。
         ...(row.reviewedBaseline !== undefined
           ? { reviewedBaseline: row.reviewedBaseline }
+          : {}),
+        ...(row.packageReview
+          ? { approvedPackageSha256: row.packageReview.packageSha256 }
           : {}),
       });
       if (!didInstall) return;
@@ -586,6 +654,7 @@ export function reconcileUpdateAllBatch(marketItems: readonly PluginMarketItem[]
         fromVersion: installed.version,
         permissionDiff: undefined,
         staleReview: true,
+        packageReview: undefined,
       });
       changed = true;
     } else if (installed.version !== row.fromVersion) {
