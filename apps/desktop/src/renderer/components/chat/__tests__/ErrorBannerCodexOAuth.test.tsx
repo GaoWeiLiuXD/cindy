@@ -6,7 +6,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorBanner } from '../ErrorBanner';
 import { useCodexAuth } from '@/hooks/useCodexAuth';
 import { useCodexSessionExpiredPrompt } from '@/hooks/useCodexSessionExpiredPrompt';
-import { CLAUDE_GATEWAY_OPUS_PLAN_MISMATCH_REASON } from '../../../../shared/claudeGatewayError';
+import {
+  CLAUDE_GATEWAY_OPUS_PLAN_MISMATCH_REASON,
+  CLAUDE_SUBSCRIPTION_OPUS_PLAN_MISMATCH_REASON,
+} from '../../../../shared/claudeGatewayError';
 
 type AuthStateChangedPayload = {
   agentKind: 'claude-code' | 'codex';
@@ -764,6 +767,22 @@ describe('ErrorBanner OpenAI connection recovery', () => {
     expect(mocks.triggerLogin).not.toHaveBeenCalled();
   });
 
+  it('localizes event-loop terminal errors from the stable reason key', () => {
+    render(
+      <ErrorBanner
+        error="Session event loop stopped unexpectedly without a terminal event"
+        errorReason="session_event_loop_crashed"
+        retryText="retry this turn"
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('logic.errors.turnFailed')).toBeTruthy();
+    expect(
+      screen.queryByText('Session event loop stopped unexpectedly without a terminal event'),
+    ).toBeNull();
+  });
+
   it('exposes the explicit Continue After Reset action only when provided', () => {
     const onContinueAfterUsageReset = vi.fn();
     const { rerender } = render(
@@ -803,6 +822,23 @@ describe('ErrorBanner OpenAI connection recovery', () => {
     expect(
       screen.queryByRole('button', { name: 'chat.errorBanner.switchClaudeSubscription' }),
     ).toBeNull();
+  });
+
+  it('replaces unsupported Claude slash-command advice for subscription errors', () => {
+    render(
+      <ErrorBanner
+        error="Claude Opus is not available with the Claude Pro plan. Run /logout and /login."
+        errorReason={CLAUDE_SUBSCRIPTION_OPUS_PLAN_MISMATCH_REASON}
+        retryText="retry this turn"
+        onRetry={vi.fn()}
+        agentKind="cc"
+        modelId="claude-opus-5"
+      />,
+    );
+
+    expect(screen.getByText('chat.errorBanner.claudeSubscriptionOpusPlanMismatch')).toBeTruthy();
+    expect(screen.queryByText(/logout|login/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'chat.errorBanner.retry' })).toBeTruthy();
   });
 
   it('switches the conversation to Claude.ai through the explicit recovery action', async () => {

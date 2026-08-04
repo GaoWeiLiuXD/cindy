@@ -365,7 +365,7 @@ export function PlanChangeTargetDialog({
                 onClick={() => {
                   if (selectedCandidate) onSelect(selectedCandidate);
                 }}
-                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--text-primary)] px-5 text-13 font-medium text-[var(--surface)] transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-elevated)] disabled:cursor-not-allowed disabled:opacity-35"
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-[var(--accent-cta-bg)] px-5 text-13 font-medium text-[var(--accent-pure-cta-fg)] transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-elevated)] disabled:cursor-not-allowed disabled:opacity-35"
               >
                 {t('billing.settings.subscriptionCard.changeAction')}
                 <ArrowUpRight size={15} />

@@ -36,7 +36,12 @@ import {
   type ActiveController,
 } from '../device-link/dispatch';
 import { __testing as registry, dispatchLocalInvoke } from '../device-link/invoke-registry';
-import { getDeviceLinkInvokeContext, isDeviceLinkInvoke } from '../device-link/invoke-context';
+import {
+  deviceLinkInvokeControllerSupports,
+  getDeviceLinkInvokeContext,
+  isDeviceLinkInvoke,
+} from '../device-link/invoke-context';
+import * as subscriptions from '../device-link/subscriptions';
 
 beforeEach(() => {
   remoteControlEnabled = true;
@@ -98,6 +103,30 @@ describe('runInvoke 双层校验', () => {
       },
     });
     expect(isDeviceLinkInvoke()).toBe(false);
+  });
+
+  it('能力查询只信任当前 device-link controller context,未知控制端 fail closed', async () => {
+    subscriptions.subscribe(
+      'ctrl-cap',
+      ['sessions'],
+      'Desktop',
+      [CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1],
+    );
+    subscriptions.subscribe('ctrl-legacy', ['sessions'], 'Legacy');
+    registry.register('maker:list-active', () => ({
+      explicitProviderNull: deviceLinkInvokeControllerSupports(
+        CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1,
+      ),
+    }));
+
+    await expect(runInvoke('ctrl-cap', { channel: 'maker:list-active', args: [] })).resolves.toEqual({
+      ok: true,
+      result: { explicitProviderNull: true },
+    });
+    await expect(runInvoke('ctrl-legacy', { channel: 'maker:list-active', args: [] })).resolves.toEqual({
+      ok: true,
+      result: { explicitProviderNull: false },
+    });
   });
 
   it('本机 handler 抛 throwIpcError → IPC_ERROR 透传 [CODE] message', async () => {
@@ -388,6 +417,7 @@ import {
 } from '../device-link/dispatch';
 import { hasBroadcastTapListener, tapWindowBroadcast } from '../device-link/broadcast-tap';
 import {
+  CONTROLLER_CAPABILITY_SET_MODEL_EXPLICIT_PROVIDER_NULL_V1,
   DeviceLinkError,
   SESSION_ACTIVITY_CHANNEL,
   type Envelope,
@@ -1609,6 +1639,36 @@ describe('被控端订阅 registry + topic 转发', () => {
       'ctrl-malformed',
       'provider-logo-kinds-v2',
     )).toBe(false);
+  });
+
+  it('link-close(transport-timeout) 保留被控端反向控制状态;永久关闭 reason 维持清理语义', () => {
+    remoteControlEnabled = true;
+    const { client, calls, feed } = makeFakeClient();
+    wireInboundDispatch(client);
+
+    // 对端(另一台桌面)作为控制端订阅本机 sessions
+    feed(subFrame('ctrl-desktop', SUB, ['sessions'], 'OtherMac'));
+    calls.push.length = 0;
+
+    // 对端作为**被控端**对另一条方向的 link 做瞬时重置 → 发来 transport-timeout。
+    // 互控场景下这不得清掉它作为控制端的订阅/记忆路由——否则反向实时推送
+    // 静默断流而对端毫不知情。
+    feed({
+      v: 1,
+      kind: 'link-close',
+      src: 'ctrl-desktop',
+      payload: { reason: 'transport-timeout' },
+    });
+    tapWindowBroadcast('local-db:sessions:created', { sessionId: 's1' });
+    expect(calls.push).toEqual([
+      { dst: 'ctrl-desktop', channel: 'local-db:sessions:created', payload: { sessionId: 's1' } },
+    ]);
+
+    // 永久关闭(user)仍完整清理
+    calls.push.length = 0;
+    feed({ v: 1, kind: 'link-close', src: 'ctrl-desktop', payload: { reason: 'user' } });
+    tapWindowBroadcast('local-db:sessions:created', { sessionId: 's2' });
+    expect(calls.push).toEqual([]);
   });
 
   it('subscribe 帧 → 回 invoke-result;sessions topic 只发列表订阅者,不发未订阅的 heavy 事件', () => {

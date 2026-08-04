@@ -296,8 +296,14 @@ describe('PlanChangeTargetDialog product-first selection', () => {
     expect(secondOffer.getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByText('billing.planChange.back').closest('button')).toBeTruthy();
 
+    const submitButton = screen
+      .getByText('billing.settings.subscriptionCard.changeAction')
+      .closest('button')!;
+    expect(submitButton.className).toContain('bg-[var(--accent-cta-bg)]');
+    expect(submitButton.className).toContain('text-[var(--accent-pure-cta-fg)]');
+
     fireEvent.click(secondOffer);
-    fireEvent.click(screen.getByText('billing.settings.subscriptionCard.changeAction'));
+    fireEvent.click(submitButton);
     expect(onSelect).toHaveBeenCalledWith(candidates[2]);
   });
 

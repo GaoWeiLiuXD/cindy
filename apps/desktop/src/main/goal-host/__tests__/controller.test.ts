@@ -1111,8 +1111,9 @@ describe('GoalController', () => {
   it('continues to a second turn when the verdict is continue', async () => {
     await startGoal(h);
     h.session.emitGoalTurn({ toolUse: true, verdictJson: '```json\n{"goal_status":"continue","reason":"wip"}\n```', tokens: 100 });
-    await tick();
-    expect(h.session.sends).toHaveLength(2);
+    // 固定 10ms tick 在慢 CI(Windows runner)上不够续轮走完异步链,改用有界
+    // 轮询等到续轮真正发出,消除调度抖动依赖。
+    await vi.waitFor(() => expect(h.session.sends).toHaveLength(2));
     expect((await h.storage.get('s1'))?.turnsUsed).toBe(1);
     expect((await h.storage.get('s1'))?.tokensUsed).toBe(100);
   });
@@ -1126,7 +1127,7 @@ describe('GoalController', () => {
         '```json\n{"goal_status":"continue","reason":"clarified with user","refined_objective":"梳理当前工作:列出待办并标注优先级"}\n```',
       tokens: 50,
     });
-    await tick();
+    await vi.waitFor(() => expect(h.session.sends).toHaveLength(sendsAfterFirst + 1));
     const st = await h.storage.get('s1');
     expect(st?.objective).toBe('梳理当前工作:列出待办并标注优先级'); // 目标被确定性改写
     expect(st?.status).toBe('active');
@@ -1136,7 +1137,6 @@ describe('GoalController', () => {
       h.userMessages.some((m) => m.updated === true && m.content === '梳理当前工作:列出待办并标注优先级'),
     ).toBe(true);
     // 续轮已发,且用的是改写后的目标
-    expect(h.session.sends.length).toBe(sendsAfterFirst + 1);
     expect(h.session.sends.at(-1)?.content).toContain('梳理当前工作:列出待办并标注优先级');
   });
 

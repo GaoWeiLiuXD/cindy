@@ -1,5 +1,6 @@
 {
   "ipcError": {
+    "INVALID_PARAMS": "パラメータが無効です。確認して再試行してください。",
     "SESSION_RUNNING": "このセッションは現在タスクを実行中です。しばらくしてからもう一度お試しください。",
     "PI_IMAGE_INPUT_UNSUPPORTED": "現在の Pi モデルでは画像入力が有効になっていません。画像に対応するモデルへ切り替えてください。カスタムモデルの場合は、プロバイダー設定で「画像入力に対応」を有効にしてから、新しい Pi タスクを開始してください。",
     "CREDENTIAL_SWITCH_BUSY": "他の Codex タスクが実行中のため、今回のプロバイダー切り替えは適用されませんでした（セッションは元のプロバイダーのままです）。他のタスクが終わってからもう一度お試しください。",
@@ -10,7 +11,8 @@
     "REMOTE_MODEL_SWITCH_ROUTE_CHANGE": "対象のモデルまたはソースは別のリモートルートが必要です。リモートセッションを閉じて再作成してください。",
     "REMOTE_PROVIDER_UPDATING": "プロバイダーの認証情報を更新中です。しばらくしてから再試行してください",
     "REMOTE_PROVIDER_UNSUPPORTED": "このプロバイダーは SSH リモートセッションに対応していません。別のソースを選択してください",
-    "REMOTE_NATIVE_OAUTH_UNAVAILABLE": "Claude.ai サブスクリプションが未接続です。先に接続するか、ゲートウェイモデルを選択してください"
+    "REMOTE_NATIVE_OAUTH_UNAVAILABLE": "Claude.ai サブスクリプションが未接続です。先に接続するか、ゲートウェイモデルを選択してください",
+    "DEVICE_LINK_DEVICE_UNRESPONSIVE": "対象デバイスが応答していません。リモートデバイスを確認して再試行してください。"
   },
   "providerError": {
     "AUTH_INVALID": "API キーが無効か期限切れです（401）。キーを確認して再試行してください",
@@ -127,6 +129,7 @@
       "subagentModels": "サブエージェント",
       "compaction": "コンテキスト圧縮",
       "terminalShell": "デフォルトターミナルシェル",
+      "composer": "メッセージ入力",
       "linkOpen": "リンクの開き方",
       "compatMode": "ヒント",
       "voiceInput": "音声入力",
@@ -394,6 +397,7 @@
         "importPartial": "{{name}}（{{themeCount}} 種類）をインポートしました。意味を持つ色 {{skipped}} 件は規約どおり変更せず、{{unresolved}} 件は値を読み取れずスキップ、{{derived}} 件は近似色から推定しました。",
         "importFailed": "インポートに失敗しました: {{error}}",
         "importUnsupported": "このファイルは VSCode または Obsidian のテーマとして認識できません。",
+        "importContrastUnsupported": "テーマの配色ではオフ状態のスイッチを明瞭に表示できません。背景色またはサブテキストの色を調整してから、もう一度インポートしてください。",
         "importUsesInclude": "この VSCode テーマは include で配色を継承しているため、単独ではインポートできません。",
         "importNotAFile": "フォルダではなくファイルを選択してください。",
         "importTooLarge": "ファイルが大きすぎるため、テーマとしてインポートできません。",
@@ -1255,9 +1259,9 @@
       },
       "xd": {
         "title": "Cindy AI",
-        "subtitle": "すべてのモデル · Claude Code / Codex 共通 · トークン課金",
+        "subtitle": "すべてのモデル · Claude Code / Codex 共通 · トークン単位で残高から引き落とし",
         "modelLabel": "すべてのモデル",
-        "billingLabel": "トークン課金",
+        "billingLabel": "トークン単位で残高から引き落とし",
         "disconnectConfirm": {
           "title": "Cindy AI を切断しますか?",
           "description": "切断するとローカルに保存された Cindy AI Key が削除されます。Cindy AI のモデルを引き続き使うには再接続が必要です。"
@@ -1279,7 +1283,14 @@
           "confirm": "ローテーション"
         },
         "rotateSuccess": "キーをローテーションしました",
-        "rotateFailed": "ローテーションに失敗しました。後でもう一度お試しください"
+        "rotateFailed": "ローテーションに失敗しました。後でもう一度お試しください",
+        "copyKeyAria": "Cindy AI Key をコピー",
+        "copyKeySuccess": "Cindy AI Key をコピーしました",
+        "copyKeyFailed": "コピーに失敗しました。後でもう一度お試しください",
+        "asset": {
+          "viewUsage": "使用量を見る",
+          "syncFailed": "認証情報の同期に失敗したため、残高を取得できません。保存済みのモデル設定には影響しません。"
+        }
       },
       "custom": {
         "tag": "カスタム",
@@ -1313,6 +1324,9 @@
           "modelContextWindowTitle": "コンテキストウィンドウ(トークン数)。空欄の場合は保守的な既定値 200K。ウィンドウ表示と圧縮しきい値に影響します。",
           "modelSupportsImageInput": "画像入力に対応",
           "modelSupportsImageInputHelp": "モデルが実際に画像入力へ対応している場合のみ有効にしてください。保存後、新しい Pi タスクで反映されます。",
+          "modelSupportsReasoning": "推論に対応",
+          "modelSupportsReasoningHelp": "モデルが推論強度を受け付ける場合のみ有効にし、実際に対応するすべてのレベルを選択してください。保存後、次の Pi Agent セッションから反映されます。",
+          "modelReasoningEfforts": "対応する推論強度",
           "addModel": "モデルを追加",
           "headers": "リクエストヘッダー(任意)",
           "headerNamePlaceholder": "Header-Name",
@@ -1572,7 +1586,8 @@
       },
       "xdSignin": {
         "badge": "おすすめ",
-        "desc": "Cindy にサインインすると公式 Cindy AI サービスが有効になります。全モデルがすぐ使え、キー管理は不要です。",
+        "desc": "公式サービス。全モデルがすぐ使え、キー管理は不要です。",
+        "grantBadge": "新規ユーザーには特典残高付き",
         "cta": "Cindy にサインイン"
       },
       "menu": {
@@ -1630,7 +1645,7 @@
     "gitSafety": {
       "title": "Git セーフティ",
       "autoSnapshotTitle": "Git セーフティ保存点",
-      "description": "Agent の編集後に保存点 commit を自動作成します。有効な場合のみ Codex rewind を表示します。",
+      "description": "Agent の編集後にプロジェクトの Git リポジトリへ隠し保存点を自動記録します。ブランチに commit は追加されません。有効な場合のみ Codex rewind を表示します。",
       "toggleAria": "Git セーフティ保存点を切り替え",
       "saveFailed": "Git セーフティ設定の保存に失敗しました"
     },
@@ -2257,6 +2272,14 @@
         "selectAria": "デフォルトターミナルシェルを選択"
       }
     },
+    "composer": {
+      "title": "メッセージ入力",
+      "sendShortcut": {
+        "label": "{{shortcut}}で送信",
+        "hint": "オンにすると{{shortcut}}でメッセージを送信します。オフにするとEnterで送信し、Shift+Enterで改行します。",
+        "ariaLabel": "{{shortcut}}でメッセージを送信"
+      }
+    },
     "linkOpen": {
       "title": "リンクの開き方",
       "description": "メッセージ内のリンクや HTML ファイルを左クリックしたときの既定の開き先です。",
@@ -2356,6 +2379,22 @@
         "defaultTag": "デフォルト",
         "resetToDefault": "デフォルトに戻す",
         "toggleFailed": "ブラウザ対象の切り替えに失敗しました",
+        "health": {
+          "ready": "内蔵ブラウザの制御接続は正常です。",
+          "error": "内蔵ブラウザの接続に失敗しました：{{reason}}。「内蔵ブラウザを復旧」で制御接続を再構築してください。",
+          "reasons": {
+            "disposing": "前回の終了処理が完了していません",
+            "hostUnavailable": "内蔵ブラウザー画面の準備ができていないか、接続が切れています",
+            "startFailed": "新しい制御プロセスを起動できませんでした",
+            "statusFailed": "制御プロセスの状態確認に失敗しました",
+            "recoveryFailed": "制御接続を再構築できませんでした"
+          },
+          "reconnect": "内蔵ブラウザを再接続",
+          "recover": "内蔵ブラウザを復旧",
+          "recovering": "内蔵ブラウザを復旧中…",
+          "recovered": "内蔵ブラウザを再接続しました",
+          "recoverFailed": "内蔵ブラウザの復旧に失敗しました。理由を確認して再試行してください。"
+        },
         "rsbWebview": {
           "title": "サイドバー内蔵ブラウザ",
           "description": "エージェントは右サイドバーの webview タブ内で操作します。ポップアップなし、ログイン状態は独立保持。"
@@ -2660,7 +2699,23 @@
           "removeWorkspace": "この作業ディレクトリを削除",
           "changeDir": "クリックしてディレクトリを変更(別名と設定は保持)",
           "defaultWorkspaceChip": "デフォルト: {{name}}",
-          "defaultWorkspaceAria": "X から発行するタスクの既定の作業ディレクトリを選択"
+          "defaultWorkspaceAria": "タスク発行時に使う既定の作業ディレクトリを選択",
+          "defaultWorkspaceRadioAria": "「{{name}}」を既定の作業ディレクトリに設定",
+          "defaultWorkspaceRowHint": "選択したディレクトリが既定の作業ディレクトリです。Telegram の個別チャット・グループ・トピックのうち、プロジェクトを個別に選んでいない会話のタスクはすべてここで実行されます（/workspace で個別に選んだ会話はそのまま）。選択したディレクトリの行の権限モードにご注意ください。「フルアクセス」にすると、どのグループから @ で呼ばれてもそのリポジトリ内でフルアクセスで実行されます。",
+          "legacyDefaultsTitle": "旧「新規会話の設定」がまだ有効です",
+          "legacyDefaultsDescription": "この端末には以前の公式 bot 既定値が保存されており、個別に設定していないディレクトリのフォールバックとして今も使われます（公式 Telegram と X で共通の 1 件）。これらの値は各ディレクトリごとに設定する方式になりました。既定値に戻すと、次のすべてが削除されます:",
+          "legacyDefaultsRow": {
+            "agentKind": "既定 Agent: {{current}} → {{fallback}}",
+            "permissionMode": "権限モード: {{current}} → {{fallback}}"
+          },
+          "legacyDefaultsRowAgent": "{{agent}}: {{fields}}",
+          "legacyDefaultsField": {
+            "model": "モデル {{current}} → {{fallback}}",
+            "effort": "思考の強度 {{current}} → {{fallback}}",
+            "source": "モデルの提供元 {{current}} → {{fallback}}"
+          },
+          "legacyDefaultsFieldSeparator": "、",
+          "legacyDefaultsSourceFollowsGlobal": "グローバル設定に従う"
         },
         "binding": {
           "copyLink": "リンクをコピー",
@@ -2884,7 +2939,8 @@
         "auth-failed": "ログインが無効になりました。再ログインしてください",
         "replaced": "同じデバイスの別の接続に置き換えられました",
         "too-many-connections": "このアカウントの同時接続数が上限に達しました",
-        "version-mismatch": "プロトコルバージョンが一致しません。アプリを更新してください"
+        "version-mismatch": "プロトコルバージョンが一致しません。アプリを更新してください",
+        "unstable": "接続が切断と再接続を繰り返しています。ネットワークを確認し、続く場合は Cindy を再起動してください"
       },
       "refresh": "更新",
       "empty": "他のデバイスはまだありません。別のパソコンで同じアカウントで {{appName}} にログインすると、ここに表示されます。",
@@ -2925,7 +2981,8 @@
         "disconnectFailed": "リモート接続の切断に失敗しました",
         "remoteSessionEnded": "リモートデバイスがこのセッションを終了しました"
       },
-      "control": "操作"
+      "control": "操作",
+      "standbyHint": "このパソコンの別の Cindy インスタンスがリモート接続を使用しています。それを閉じると、このインスタンスが自動的に引き継ぎます。"
     },
     "imBot": {
       "beta": "Beta",
@@ -2955,7 +3012,8 @@
         "saveFailed": "新規会話設定を保存できませんでした",
         "agents": {
           "claude-code": "Claude Code",
-          "codex": "Codex"
+          "codex": "Codex",
+          "pi": "Pi"
         }
       }
     },
@@ -2971,6 +3029,7 @@
         "systemReserved": "OS によって予約されています",
         "conflict": "「{{name}}」と競合しています",
         "voiceConflict": "音声入力のショートカットと競合しています",
+        "composerVoiceConflict": "音声入力のショートカットと競合しています。メッセージ入力の送信ショートカットまたは音声入力のショートカットを変更してください。",
         "menuAccelerator": "この組み合わせはメニューショートカットとして登録できません"
       },
       "items": {
@@ -3337,6 +3396,8 @@
         "nodeResident": "Node プログラムをバックグラウンドで常駐実行できます",
         "nodeResidentDetail": "プラグインが有効な間は実行を続け、無効化、更新、アンインストール、または Cindy 終了時に停止します。",
         "tool": "ツール「{{name}}」",
+        "atResourceProvider": "@ で「{{name}}」を使ってプラグインリソースを検索できます",
+        "atResourceProviderDetail": "@ でこのプラグインを明示的に選択した後にのみツールが実行されます。プラグイン作者は検索に副作用がないことを保証する必要があります。",
         "command": "チャット指令 ${{command}}",
         "panelLeft": "パネル「{{title}}」· チャットの左側にドッキング",
         "panelTab": "パネル「{{title}}」· プラグインページ内で開く",
@@ -3356,6 +3417,8 @@
         "cardExternalLinkDetail": "カード内のリンクをクリックすると確認ダイアログが表示され、承認後にシステムブラウザで開きます。http/https アドレスのみ許可されます。",
         "notify": "システム通知を表示可能(画面上部のライトな通知)",
         "notifyDetail": "通知の内容はこのプラグインが提供し、通知にはその名前が表示されます。自動的に消え、操作を妨げることはありません。",
+        "badge": "プラグイン入口に未読マークを点灯できます",
+        "badgeDetail": "新しい内容があるとき、サイドバーのプラグイン入口と自身のカードに緑の点を点灯し、一行の要約を添えられます。パネルを開くと消えます。音は鳴らず、振動もせず、システムの通知センターにも入らず、システム通知とは別個の権限です。",
         "confirm": "確認ダイアログで同意を求められます",
         "confirmDetail": "実行前に Cindy 自身と同じ確認ダイアログを開いて尋ねることができます。文面はプラグインが提供し、ダイアログにはその名前が表示されます。確認するかキャンセルするかはあなたがクリックして決め、プラグイン自身はクリックできません。同時に開けるのは 1 つまでで、頻繁な要求はブロックされます。",
         "fsWrite": "ファイルを書き込めます(作成/変更)",
@@ -3493,6 +3556,7 @@
         "slotCard": "メッセージカード",
         "slotNetwork": "ネットワークアクセス",
         "slotNotify": "システム通知",
+        "slotBadge": "未読バッジ",
         "slotFs": "ファイル書き込み",
         "slotSkill": "エージェントスキル",
         "slotWorkspace": "ワークスペースセッション"
@@ -3764,16 +3828,9 @@
         "INTERNAL": "操作に失敗しました。しばらくしてから再試行してください。"
       },
       "guide": {
-        "hint": "連絡先はまだ空です。いずれかのソースから始めて、初日からあなたの人脈を把握させましょう：",
-        "cta": "AI で整理する",
-        "prompt": "スマート連絡先の整理を手伝ってください。まず現状を確認し、記録すべき人を追加して(システム連絡先や vCard からのインポート、または私への確認でも構いません)、重複があれば確認のうえ統合してください。",
-        "sources": {
-          "mail": "メールから整理",
-          "im": "IM から整理",
-          "import": "連絡先をインポート"
-        },
-        "mailPrompt": "メールからスマート連絡先を作成してください：まず接続済みのメールツールを確認し(なければ接続方法を教えてください)、直近 6 か月のやり取りをスキャンして、双方向のやり取りがある実在の連絡先を登録してください——頻度が高く身元が明確な人は確定で、不確かな人は pending で。マーケティングメール、通知ボット、一度きりの送信者はスキップ。最後に作成した項目を報告してください。",
-        "imPrompt": "チャットツールからスマート連絡先を作成してください：まず接続済みの IM(Feishu / Slack / WeChat など)を確認し(なければ接続方法を教えてください)、最近よく会話する相手を連絡先に整理してください。不確かな人は pending で、グループボットや一時的な会話はスキップ。最後に作成した項目を報告してください。"
+        "hint": "AI の案内で連絡先プロフィールの追加、保留項目の確認、重複整理を進めます。",
+        "cta": "AI で連絡先を管理",
+        "managementPrompt": "スマート連絡先を管理してください。まず現在の状態と利用可能なツールを確認し、必要な連絡先の追加、重複項目の整理、保留項目の確認を順に案内してください。書き込み、統合、削除を行う前には必ず私に確認してください。"
       }
     },
     "remotePermission": {
@@ -4784,6 +4841,7 @@
       "send": "メッセージを送信",
       "queue": "キューに追加",
       "queueTooltip": "クリックでキューに追加。{{shortcut}} でタスクを中断せずに割り込み送信",
+      "queueTooltipSendMode": "クリックでキューに追加、{{shortcut}}でこのメッセージを送信",
       "stop": "生成を停止"
     },
     "pluginSetup": {
@@ -4979,8 +5037,7 @@
         "context": "コンテキスト {{value}}",
         "codexCompatibilityMode": "Codex 互換モード",
         "price": "{{input}}/{{output}} / 100万",
-        "fastBadge": "高速",
-        "budgetDiscount": "特別割引"
+        "fastBadge": "高速"
       },
       "source": {
         "railLabel": "ソース",
@@ -5209,6 +5266,7 @@
         "dismiss": "閉じる"
       },
       "credentialSwitchDeferred": "モデルプロバイダーを切り替えました。現在のタスク終了後に有効になります。",
+      "effortRuntimeDirty": "推論強度を更新しています。少し待ってからもう一度送信してください。",
       "credentialSwitchApplied": "モデルプロバイダーの切り替えが有効になりました。",
       "modelSwitchContextGuard": {
         "title": "切替先モデルのコンテキストウィンドウが小さいです",
@@ -5237,10 +5295,18 @@
       }
     },
     "atMention": {
-      "scanFailed": "作業ディレクトリのスキャンに失敗しました",
+      "filesAndFolders": "ファイルとフォルダ",
+      "browserTab": "ブラウザタブ",
+      "desktopWindow": "アプリウィンドウ",
+      "task": "タスク",
+      "pluginResources": "プラグインリソース",
+      "pluginResource": "プラグインリソース",
+      "backToAll": "すべての @ コンテンツに戻る",
+      "scanFailed": "@ コンテンツの読み込みに失敗しました",
       "retry": "再試行",
       "searching": "検索中…",
-      "noMatch": "一致するファイルがありません",
+      "noMatch": "一致する項目がありません",
+      "typeToSearchFiles": "キーワードを入力してファイルとセッションを検索",
       "keepTyping": "入力を続けて絞り込み…"
     },
     "planReview": {
@@ -5294,7 +5360,7 @@
         "title": "Cindy AI",
         "desc": "公式サービス · 全モデル · Claude Code / Codex 対応",
         "loginTitle": "Cindy にサインイン",
-        "loginDesc": "サインインすると公式 Cindy AI サービスが有効になり、全モデルを利用できます"
+        "loginDesc": "サインインすると公式 Cindy AI サービスが有効になり、全モデルを利用できます。新規ユーザーには特典残高が付きます"
       },
       "othersToggle": "その他のプロバイダー({{count}})",
       "presetSub": "API キーを入力して接続",
@@ -5315,6 +5381,12 @@
       "openProviders": "モデルプロバイダーを開く",
       "acknowledge": "了解",
       "separator": "、"
+    },
+    "promotionalGrant": {
+      "title": "Cindy AI の利用を開始しました",
+      "desc": "特典残高 {{amount}} を付与しました。有効期限は {{date}} です。使い切った後や期限切れの後も、いつでもチャージできます。",
+      "openBilling": "使用量を見る",
+      "acknowledge": "了解"
     }
   },
   "voiceInputOverlay": {
@@ -5419,6 +5491,7 @@
       "provider": {
         "claude": "Claude Code",
         "codex": "Codex",
+        "pi": "Pi",
         "workflow": "Workflow",
         "shell": "バックグラウンドコマンド"
       },
@@ -5493,9 +5566,13 @@
       "retry": "再試行",
       "continueAfterReset": "リセット後に続行",
       "continueAfterResetTitle": "利用上限のリセット後にこのタスクを続行する一回限りの自動化を作成",
+      "gatewayQuotaExhausted": "Cindy AI の残高が不足しています。チャージすると続行できます。",
+      "viewBalance": "残高を見る",
+      "viewBalanceTitle": "「使用量と請求」を開いて残高を確認・チャージ",
       "credentialSwitchBusy": "他の Codex タスクが実行中のため、このセッションで選択したプロバイダーへまだ切り替えられません（共有 Codex プロセスの再起動が必要です）。他のタスクの終了後に「再試行」を押してください。",
       "codexThreadStale": "Codex の認証モードが切り替わりました。このセッションは続行できません。新しいセッションを開始してください。",
       "claudeGatewayOpusPlanMismatch": "この Opus リクエストは Claude.ai サブスクリプションではなく、XD Gateway 経由で送信され、このモデルが拒否されました。Claude.ai サブスクリプションに切り替えて再試行するか、別のモデルを選択してください。",
+      "claudeSubscriptionOpusPlanMismatch": "接続中の Claude Pro プランでは Opus を利用できません。プランに含まれるモデルに切り替えてください。最近プランを変更した場合は、設定で Anthropic を再接続してから再試行してください。",
       "switchClaudeSubscription": "Claude.ai に切り替えて再試行",
       "switchClaudeSubscriptionTitle": "このセッションを Claude.ai サブスクリプションに切り替えて再試行",
       "switchingClaudeSubscription": "Claude.ai に切り替え中…",
@@ -5522,6 +5599,7 @@
       "networkAutoRetrying": "ネットワークエラー:自動的に再試行しています…",
       "networkReconnecting": "接続が中断されました。再接続中（{{attempt}}/{{maxAttempts}}）…",
       "overloadRetrying": "モデルサービスが混雑しています:自動的に再試行しています（{{attempt}}/{{maxAttempts}}）…",
+      "rateLimitRetrying": "リクエストがレート制限されました。自動的に再試行しています（{{attempt}}/{{maxAttempts}}）…",
       "overloadBusy": "モデルサービスが混雑しています。上流に空き容量がありません。「再試行」を押すか、別のモデルに切り替えてください",
       "overloadBusyNoRetry": "モデルサービスが混雑しています。上流に空き容量がありません。しばらくしてから再試行するか、別のモデルに切り替えてください",
       "networkShowRaw": "元のエラーを表示",
@@ -5872,6 +5950,11 @@
       "openInBrowser": "ブラウザで開く",
       "fileCopied": "ファイルをコピーしました",
       "pathCopied": "パスをコピーしました",
+      "BROWSER_FILE_INVALID_TARGET": "ローカルページのパスが無効です",
+      "BROWSER_FILE_PATH_NOT_ALLOWED": "このパスにはアクセスできません",
+      "BROWSER_FILE_UNSUPPORTED_TYPE": "このファイル形式はブラウザで開けません",
+      "BROWSER_FILE_NOT_FOUND": "ローカルページが見つかりません",
+      "BROWSER_FILE_OPEN_FAILED": "ブラウザで開けませんでした",
       "openInBrowserFailed": "ブラウザで開けませんでした",
       "openLinkFailed": "リンクを開けませんでした",
       "anchorNotFound": "対応する見出しが見つかりません",
@@ -5990,6 +6073,7 @@
     "remoteError": {
       "REMOTE_DAEMON_CLOSED": "リモート接続が中断されました（daemon がアップグレードまたは再起動中の可能性があります）。ターンが終了しました — 再送信してください。",
       "REMOTE_LOCAL_ATTACHMENT_UNSUPPORTED": "リモートセッションではローカルのファイル/画像の添付にアクセスできません。内容を直接貼り付けてください。",
+      "AUTO_REVIEW_UNAVAILABLE": "自動レビューが一時的に利用できないため、レビューが必要な操作は拒否されます。ご自身で承認する場合は、このセッションをデフォルト権限に切り替えてください。",
       "REMOTE_COMPAT_MODE_UNSUPPORTED": "リモート Claude Code セッションはローカル互換プロキシ経由でルーティングできません(内部エラー)。",
       "REMOTE_GATEWAY_ENDPOINT_UNAVAILABLE": "Cindy AI の資格情報がまだ準備できていません(サインイン後に自動発行されます)。しばらくしてから再試行してください。続く場合は 設定 → モデルプロバイダー で Cindy AI の接続状態を確認してください。",
       "DEVICE_LINK_CONTROL_DISABLED": "このデバイスの操作はオフです。メッセージは送信されていません。",
@@ -6086,6 +6170,7 @@
     "remoteSession": {
       "reconnecting": "被制御デバイスとの接続が切れました。再接続中…",
       "hostOffline": "被制御デバイスがオフラインのため、現在は同期できません",
+      "degraded": "被制御デバイスとの接続が不安定です。自動的に再試行中…",
       "actionsUnavailable": "被制御デバイスを利用できません。再接続してからこのセッションを変更してください。",
       "resync": "再同期",
       "loading": "リモートデバイスからセッションを読み込み中…",
@@ -6095,7 +6180,8 @@
         "auth-failed": "ログインの有効期限が切れました。再ログインするとリモート接続が復旧します",
         "replaced": "同じデバイスの別の接続に置き換えられました。再接続しています…",
         "too-many-connections": "このアカウントの同時オンライン台数が多すぎるため、サーバーに接続を拒否されました",
-        "version-mismatch": "サーバーとプロトコルバージョンが一致しません。アプリを更新してから再試行してください"
+        "version-mismatch": "サーバーとプロトコルバージョンが一致しません。アプリを更新してから再試行してください",
+        "unstable": "このパソコンの接続が切断と再接続を繰り返しているため、リモート操作がタイムアウトし続ける可能性があります。ネットワークを確認するか、Cindy を再起動して再試行してください"
       }
     },
     "common": {
@@ -6219,9 +6305,8 @@
         "localMachine": "このデバイス",
         "connecting": "接続中…",
         "tasksLoading": "{{device}} のセッションを読み込み中…",
-        "tasksLoadFailed": "{{device}} のセッションを読み込めませんでした。接続を確認して再試行してください。",
-        "tasksPartiallyFailed": "{{device}} のセッションを読み込めませんでした。読み込み済みの内容のみ表示しています。",
-        "retryTasks": "セッションを再読み込み",
+        "tasksLoadFailed": "現在 {{device}} のセッションを読み込めません。自動的に再試行中…",
+        "tasksPartiallyFailed": "現在 {{device}} のセッションを読み込めません。自動的に再試行中のため、読み込み済みの内容のみ表示しています",
         "devicesLoading": "リモートデバイスを読み込み中…",
         "devicesLoadFailed": "リモートデバイスの一覧を読み込めませんでした。接続を確認して再試行してください。",
         "devicesPartiallyFailed": "リモートデバイスの一覧を更新できませんでした。読み込み済みの内容のみ表示しています。",
@@ -6493,6 +6578,11 @@
         "rename": "プロジェクト名を変更",
         "pin": "プロジェクトをピン留め",
         "unpin": "プロジェクトのピン留めを解除",
+        "removeFromSidebar": "サイドバーからプロジェクトを削除",
+        "removeFromSidebarConfirmTitle": "「{{name}}」を削除しますか？",
+        "removeFromSidebarConfirmDescription": "このプロジェクトをサイドバーから削除します。コンピューター上のファイルは削除されません。既存のセッションは「会話」セクションに移動し、引き続き利用できます。",
+        "removeFromSidebarConfirmAction": "プロジェクトを削除",
+        "removeFromSidebarFailed": "サイドバーからプロジェクトを削除できませんでした。もう一度お試しください。",
         "syncCodex": "このプロジェクトの Codex セッションを同期",
         "syncCodexDone": "Codex 同期完了:リンク {{inserted}} 件、更新 {{updated}} 件",
         "syncCodexAlreadyLinked": "このプロジェクトの Codex セッションはリンク済みです",
@@ -8579,6 +8669,20 @@
         }
       }
     },
+    "orders": {
+      "title": "注文履歴",
+      "description": "Cindy 内で開始した残高チャージとサブスクリプションの注文のみを表示します。支払い待ちの注文は、期限を過ぎると自動的にキャンセルされます。",
+      "count": "{{count}}件",
+      "incomplete": "注文履歴が多いため、最新の{{count}}件のみ表示しています。",
+      "orderId": "NO. {{id}}",
+      "states": {
+        "completed": "完了",
+        "awaitingPayment": "支払い待ち",
+        "canceled": "キャンセル済み",
+        "expired": "期限切れ",
+        "failed": "支払い失敗"
+      }
+    },
     "dialogs": {
       "subscription": {
         "title": "サブスクリプションプランを選択"
@@ -8611,7 +8715,6 @@
     },
     "amount": {
       "custom": "金額を指定",
-      "startingAt": "{{price}} / {{interval}}から",
       "label": "チャージ金額",
       "placeholder": "金額を入力",
       "rangeHint": "{{min}}〜{{max}}を入力",
