@@ -217,7 +217,8 @@ const SETUP_REQUIREMENT_KINDS = new Set([
   "client_config",
 ]);
 const SETUP_REQUIREMENT_STATES = new Set(["missing", "expired", "satisfied"]);
-// 与主机声明上限 GHOST_OAUTH_SCOPES_MAX(desktop shared/ghost.ts,当前 256)同步；
+// 与主机声明上限 GHOST_OAUTH_SCOPES_MAX 同步
+// (apps/desktop/src/shared/ghost.ts 从 @cindy/plugin-protocol re-export，当前 256)；
 // 包依赖方向不允许引用该常量，调整协议上限时必须同步，否则整份 assessment 判废。
 const SETUP_REAUTH_SCOPE_MAX = 256;
 
