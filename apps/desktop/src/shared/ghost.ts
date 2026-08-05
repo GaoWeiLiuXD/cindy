@@ -630,10 +630,9 @@ export interface GhostSecretExchangeDecl {
  * 本校验取值级"严出"(plugin-security-and-authoring.md §7):超上限的包在旧版
  * 客户端拒装,插件市场铺开须等携带新上限的客户端先行发布。
  *
- * 涨过 64 前必须同步两处只留了防御余量的 64 上限,否则会拒绝合法的缺权上报
- * /静默判废 assessment:insufficient-scopes 端点的整包条数上限
- * (runtime/ghostOauthEndpoint.ts)与 cindy-tools 的 SETUP_REAUTH_SCOPE_MAX
- * (ghost/mcpServer.ts,包依赖方向不允许直接引用本常量)。
+ * insufficient-scopes 端点直接复用本常量；cindy-tools 的
+ * SETUP_REAUTH_SCOPE_MAX 因包依赖方向无法引用本常量，调整时必须同步，
+ * 否则会静默判废合法的 assessment。
  */
 export { GHOST_OAUTH_SCOPES_MAX };
 /** OAuth broker 模式可声明的备用 clientId 上限(默认 clientId 不计入)。 */
@@ -687,7 +686,7 @@ export interface GhostSecretOauthDecl {
   clientIdAlternatives?: string[];
   /** 可选:内置 client 的 secret(与 clientId 成对;纯 PKCE 服务商可省略)。 */
   clientSecret?: string;
-  /** 申请的 scope 列表(0–48 条,确认框逐条展示;缺省 = 不带 scope 参数)。 */
+  /** 申请的 scope 列表(0–256 条,确认框逐条展示;缺省 = 不带 scope 参数)。 */
   scopes?: string[];
   /**
    * 可选:authorize URL 里 scope 参数的拼接分隔符。OAuth 标准是空格(缺省),

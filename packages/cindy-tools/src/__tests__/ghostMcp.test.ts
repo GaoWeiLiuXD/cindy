@@ -9,6 +9,7 @@ import {
   handleForgeScaffold,
   handleGhostCall,
   handleGhostList,
+  sanitizeGhostSetupAssessment,
 } from "../ghost/mcpServer.js";
 import type {
   CindyGhostSetupAssessment,
@@ -81,6 +82,23 @@ const READY_WITH_REAUTH_SUGGEST = {
   },
 };
 
+function reauthAssessmentWithScopeCount(
+  count: number,
+): CindyGhostSetupAssessment {
+  const missingScopes = Array.from(
+    { length: count },
+    (_, index) => `scope:${index}`,
+  );
+  return {
+    ...READY_WITH_REAUTH_SUGGEST,
+    reauthSuggest: {
+      ...READY_WITH_REAUTH_SUGGEST.reauthSuggest,
+      missingScopes,
+      missingScopeCount: missingScopes.length,
+    },
+  };
+}
+
 describe("cindy_ghosts · ghost_list(总机接线簿,现查现报)", () => {
   it("返回唤醒中的意识与工具,附调用提示", async () => {
     const result = await handleGhostList(fakeDeps());
@@ -110,6 +128,15 @@ describe("cindy_ghosts · ghost_list(总机接线簿,现查现报)", () => {
     );
     const ghosts = parsePayload(result).ghosts as Array<{ setup?: unknown }>;
     expect(ghosts[0].setup).toEqual(READY_WITH_REAUTH_SUGGEST);
+  });
+
+  it("reauthSuggest 接受 256 条缺权 scope，并拒绝第 257 条", () => {
+    expect(
+      sanitizeGhostSetupAssessment(reauthAssessmentWithScopeCount(256)),
+    ).not.toBeNull();
+    expect(
+      sanitizeGhostSetupAssessment(reauthAssessmentWithScopeCount(257)),
+    ).toBeNull();
   });
 
   it("setup assessment 由 Host 脱敏生成并原样透传", async () => {

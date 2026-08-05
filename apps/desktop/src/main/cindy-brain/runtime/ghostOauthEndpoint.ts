@@ -28,7 +28,7 @@
  * 产生的全部令牌只存在主机保险库与内存缓存,本端点没有任何读回动作。
  */
 
-import { isOfficialGhostId } from '../../../shared/ghost.js';
+import { GHOST_OAUTH_SCOPES_MAX, isOfficialGhostId } from '../../../shared/ghost.js';
 import { GhostKvError } from '../ghostKvStore.js';
 import { GHOST_SECRET_VALUE_MAX_CHARS } from './ghostSecretsEndpoint.js';
 import type {
@@ -283,7 +283,11 @@ export async function handleGhostOauthRequest(args: {
     const parsed = await readJsonBody();
     if (!parsed.ok) return { status: parsed.status };
     const rawScopes = parsed.body.scopes;
-    if (!Array.isArray(rawScopes) || rawScopes.length === 0 || rawScopes.length > 64) {
+    if (
+      !Array.isArray(rawScopes)
+      || rawScopes.length === 0
+      || rawScopes.length > GHOST_OAUTH_SCOPES_MAX
+    ) {
       return { status: 400 };
     }
     // 逐字属于声明面即形状合法(清单校验已保证声明 scope ≤200 字符、无空白),

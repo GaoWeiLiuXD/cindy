@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
+import { GHOST_OAUTH_SCOPES_MAX } from '../../../../shared/ghost.js';
 import { GhostKvError } from '../../ghostKvStore.js';
 import { GHOST_SECRET_VALUE_MAX_CHARS } from '../ghostSecretsEndpoint.js';
 import { handleGhostOauthRequest, type GhostOauthEndpointManager } from '../ghostOauthEndpoint.js';
@@ -274,7 +275,10 @@ describe('POST /oauth/<key>/connect · scopes body(降面授权)', () => {
 });
 
 describe('POST /oauth/<key>/insufficient-scopes', () => {
-  const DECLARED_SCOPES = Array.from({ length: 64 }, (_, index) => `scope.${index}`);
+  const DECLARED_SCOPES = Array.from(
+    { length: GHOST_OAUTH_SCOPES_MAX },
+    (_, index) => `scope.${index}`,
+  );
   const SCOPED: GhostOauthDecl = {
     authorizeUrl: 'https://accounts.example.com/authorize',
     tokenUrl: 'https://accounts.example.com/token',
@@ -325,7 +329,7 @@ describe('POST /oauth/<key>/insufficient-scopes', () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 
-  it('64 条边界放行；65 条拒绝', async () => {
+  it('声明上限边界放行；上限加一条拒绝', async () => {
     const accepted = fakeManager();
     expect((await report(JSON.stringify({ scopes: DECLARED_SCOPES }), accepted)).status).toBe(204);
     expect(accepted.reportInsufficientScopes).toHaveBeenCalledWith(
