@@ -15,8 +15,8 @@ import {
   GHOST_MANIFEST_FILE,
   GHOST_NETWORK_MAX_CONNECTIONS_PER_DECL,
   GHOST_NOTIFY_MIN_INTERVAL_MS,
+  diffGhostPermissionItems,
   ghostPermissionBaselineKey,
-  unreviewedGhostPermissionItems,
   ghostWebviewEntryPaths,
   isCindyAccountGhostId,
   isOfficialGhostId,
@@ -3513,16 +3513,12 @@ export async function installOrUpdateMarketGhostPackage(
     ghostId: string;
     version: string;
     /**
-     * 装入确认框实际展示给用户的那份 manifest(来源方给的)。给了就逐项比对:
-     * 包里多出来的权限会暂停落位并交由上层复核。两条市场路径都必须给;
-     * 本地 `.cindy` 装入不经此出口,确认框读的就是包本身,没有这层漂移。
+     * 是否由本出口基于真实包裁决权限复核。官方手动安装开启；默认安装与
+     * 已经逐字节绑定本地 manifest 的自定义市场关闭。
      */
-    reviewedManifest?: GhostManifest;
-    /**
-     * 经市场账本摘要认证的旧版已安装清单。历史详情投影漏掉、但用户此前
-     * 已批准的权限可继续作为基线；未被该基线覆盖的真实包权限仍走复核。
-     */
-    previouslyInstalledManifest?: GhostManifest;
+    reviewPackagePermissions?: boolean;
+    /** 当前已装包的原始清单；权限 diff 与批准基线只认这份本地事实。 */
+    permissionBaselineManifest?: GhostManifest;
     /** 用户确认过的真实下载包 SHA 与确认时的已装权限基线。 */
     approvedPackageSha256?: string;
     reviewedBaseline?: string;
@@ -3541,8 +3537,8 @@ async function installOrUpdateMarketGhostPackageLocked(
   expected: {
     ghostId: string;
     version: string;
-    reviewedManifest?: GhostManifest;
-    previouslyInstalledManifest?: GhostManifest;
+    reviewPackagePermissions?: boolean;
+    permissionBaselineManifest?: GhostManifest;
     approvedPackageSha256?: string;
     reviewedBaseline?: string;
   },
@@ -3563,28 +3559,13 @@ async function installOrUpdateMarketGhostPackageLocked(
       );
     }
     requireGhostAvailableForActiveSession(expected.ghostId);
-    /**
-     * 「审阅过的」与「真要装的」权限必须一致(2026-08-03,codex review P1)。
-     *
-     * 装入确认框渲染的是**来源方给的 manifest**(服务端市场 = release manifest,
-     * 自定义市场 = 抓到的 ghost.json),而真正落地的是 `.cindy` 包里的 ghost.json。
-     * 两者本该同一份,但来源方的投影层可能与客户端的清单契约漂移——`cindy-protocol`
-     * 那份平行校验器就已经缺了 `confirm` 槽;新登记的槽(如 `badge`)在它眼里是
-     * 未知槽名,投影时会被丢掉或整份拒绝。结果:确认框漏列该项权限,包却原样带着
-     * 它装进来,用户**从没审过就多出一个常驻能力面**。
-     *
-     * 这里按权限项逐项比对。包里多出来的权限先暂停落位,由 Renderer 按真实包
-     * 重新展示；用户批准后携带包 SHA 和已装权限基线重试。
-     * 卡点落在 inspect 之后、任何落地动作之前,所以等待复核时磁盘上什么都没动。
-     */
     const installed = manager.list().find((ghost) => ghost.manifest.id === expected.ghostId);
-    if (expected.reviewedManifest) {
-      const installedBaseline = installed
-        ? ghostPermissionBaselineKey(installed.manifest)
+    if (expected.reviewPackagePermissions) {
+      const baselineManifest = expected.permissionBaselineManifest ?? installed?.manifest ?? null;
+      const installedBaseline = baselineManifest
+        ? ghostPermissionBaselineKey(baselineManifest)
         : null;
-      // 真实包复核的批准必须始终绑定当时那份包与已装权限面，不能只在
-      // 当前仍存在来源清单差异时才校验。否则两次请求间包字节发生变化、
-      // 新包恰好不再多权限时，会绕过旧批准的 SHA/基线绑定直接落位。
+      // 批准始终绑定 Main 实际检查过的包 SHA 与本地已装权限基线。
       if (
         expected.approvedPackageSha256 !== undefined &&
         (expected.approvedPackageSha256 !== inspected.packageSha256 ||
@@ -3595,21 +3576,21 @@ async function installOrUpdateMarketGhostPackageLocked(
           'Downloaded Plugin package changed after permission review',
         );
       }
-      const added = unreviewedGhostPermissionItems(
-        expected.reviewedManifest,
-        expected.previouslyInstalledManifest,
-        inspected.canonicalManifest,
-      );
-      if (added.length > 0) {
+      // 首装必须展示真实包的完整权限；更新只在真实包相对当前已装包扩权时复核。
+      const permissionDiff = baselineManifest
+        ? diffGhostPermissionItems(baselineManifest, inspected.canonicalManifest)
+        : null;
+      if (permissionDiff === null || permissionDiff.added.length > 0) {
         const review: PluginMarketPackageReview = {
           manifest: inspected.manifest,
+          permissionDiff,
           packageSha256: inspected.packageSha256,
           installedBaseline,
         };
         if (expected.approvedPackageSha256 === undefined) {
-          log.warn('market package declares unreviewed permissions', {
+          log.info('market package requires permission review', {
             ghostId: expected.ghostId,
-            keys: added.map((item) => item.key),
+            keys: permissionDiff?.added.map((item) => item.key) ?? [],
           });
           throw new GhostPackagePermissionReviewRequiredError(review);
         }

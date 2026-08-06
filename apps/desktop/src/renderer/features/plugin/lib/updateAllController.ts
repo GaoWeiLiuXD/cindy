@@ -209,8 +209,7 @@ function holdPackageReview(
     patchRow(generation, row.pluginId, { status: 'skipped' });
     return;
   }
-  const reviewedBaseline = ghostPermissionBaselineKey(installed);
-  if (reviewedBaseline !== review.installedBaseline) {
+  if (review.permissionDiff === null || review.installedBaseline === null) {
     holdRowForReReview(generation, row.pluginId, {
       releaseId: row.releaseId,
       fromVersion: installed.version,
@@ -224,9 +223,9 @@ function holdPackageReview(
     fromVersion: installed.version,
     toVersion: row.toVersion,
     releaseId: row.releaseId,
-    permissionDiff: diffGhostPermissionItems(installed, review.manifest),
+    permissionDiff: review.permissionDiff,
     staleReview: false,
-    reviewedBaseline,
+    reviewedBaseline: review.installedBaseline,
     packageReview: review,
     expectedManifest: row.expectedManifest,
   });
@@ -314,7 +313,29 @@ async function runQueue(generation: number): Promise<void> {
           patchRow(generation, next.pluginId, { status: 'skipped' });
           continue;
         }
-        const diff = diffGhostPermissionItems(installedManifest, detail.manifest);
+        if (detail.sourceType === 'server') {
+          // 官方更新不再用目录 manifest 预判权限；Main 下载、验 SHA、解析真实包后
+          // 决定直接更新还是返回一次可恢复的扩权复核。
+          const result = await window.electronAPI.pluginMarket.install(next.pluginId, {
+            expectedReleaseId: detail.releaseId,
+          });
+          if (result.reviewRequired) {
+            holdPackageReview(
+              generation,
+              {
+                pluginId: next.pluginId,
+                ghostId: next.ghostId,
+                releaseId: detail.releaseId,
+                toVersion: detail.version,
+              },
+              result.reviewRequired,
+            );
+            continue;
+          }
+          patchRow(generation, next.pluginId, { status: 'done' });
+          continue;
+        }
+        const diff = diffGhostPermissionItems(installedManifest, detail.manifest!);
         if (diff.added.length > 0) {
           // 扩权不自动放行:停在待确认,由用户在弹窗里逐项同意或跳过。
           patchRow(generation, next.pluginId, {
@@ -323,13 +344,13 @@ async function runQueue(generation: number): Promise<void> {
             permissionDiff: diff,
             // 审阅基线绑定权限指纹而非版本号:同版本换 manifest 也能识别。
             reviewedBaseline: ghostPermissionBaselineKey(installedManifest),
-            ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+            expectedManifest: detail.manifest!,
           });
           continue;
         }
         const result = await window.electronAPI.pluginMarket.install(next.pluginId, {
           expectedReleaseId: detail.releaseId,
-          ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+          expectedManifest: detail.manifest!,
         });
         if (result.reviewRequired) {
           holdPackageReview(
@@ -339,7 +360,7 @@ async function runQueue(generation: number): Promise<void> {
               ghostId: next.ghostId,
               releaseId: detail.releaseId,
               toVersion: detail.version,
-              ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+              expectedManifest: detail.manifest!,
             },
             result.reviewRequired,
           );
@@ -493,7 +514,7 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
         fromVersion: installed.version,
         toVersion: detail.version,
         releaseId: detail.releaseId,
-        permissionDiff: diffGhostPermissionItems(installed, detail.manifest),
+        permissionDiff: diffGhostPermissionItems(installed, detail.manifest!),
         staleReview: false,
         reviewedBaseline: ghostPermissionBaselineKey(installed),
         packageReview: undefined,
@@ -520,7 +541,8 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
           JSON.stringify(row.expectedManifest) === JSON.stringify(detail.manifest);
     const reviewStillValid =
       row.staleReview !== true &&
-      ghostPermissionBaselineKey(installed) === row.reviewedBaseline &&
+      (row.packageReview !== undefined ||
+        ghostPermissionBaselineKey(installed) === row.reviewedBaseline) &&
       detail.releaseId === row.releaseId &&
       manifestStillMatches;
     /**
@@ -544,7 +566,7 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
               ghostId: row.ghostId,
               releaseId: detail.releaseId,
               toVersion: detail.version,
-              ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+              ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest! } : {}),
             },
             result.reviewRequired,
           );
@@ -574,7 +596,7 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
       const didInstall = await installOrHoldForReReview({
         expectedReleaseId: row.releaseId,
         ...(row.expectedManifest ? { expectedManifest: row.expectedManifest } : {}),
-        allowPermissionExpansion: true,
+        ...(detail.sourceType !== 'server' ? { allowPermissionExpansion: true } : {}),
         // 审阅基线随批准回传:Main 在安装锁内用当时的已装 manifest 复核,
         // renderer 这边的检查挡不住 IPC 往返窗口内的替换。
         ...(row.reviewedBaseline !== undefined
@@ -586,7 +608,15 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
       });
       if (!didInstall) return;
       patchRow(generation, pluginId, { status: 'done' });
-    } else if (diffGhostPermissionItems(installed, detail.manifest).added.length > 0) {
+    } else if (detail.sourceType === 'server') {
+      // 官方包的旧复核失效后，不用服务端目录 manifest 重算；重新请求 Main，
+      // 由当前真实包与当前已装包决定直接更新或生成新的 packageReview。
+      const ok = await installOrHoldForReReview({
+        expectedReleaseId: detail.releaseId,
+      });
+      if (!ok) return;
+      patchRow(generation, pluginId, { status: 'done', fromVersion: installed.version });
+    } else if (diffGhostPermissionItems(installed, detail.manifest!).added.length > 0) {
       // 相对新事实仍是扩权:回到逐项审阅,绝不静默放行未审过的权限。
       holdForReReview();
       return;
@@ -596,7 +626,7 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
       // 不匹配拒绝,不能把它落成终态失败。
       const ok = await installOrHoldForReReview({
         expectedReleaseId: detail.releaseId,
-        ...(detail.sourceType !== 'server' ? { expectedManifest: detail.manifest } : {}),
+        expectedManifest: detail.manifest!,
       });
       if (!ok) return;
       patchRow(generation, pluginId, { status: 'done', fromVersion: installed.version });
@@ -654,7 +684,10 @@ export function reconcileUpdateAllBatch(marketItems: readonly PluginMarketItem[]
       // 目标 release 已落账(main 侧 record.releaseId 对上):无需再装。
       rows = updateRow(rows, row.pluginId, { status: 'done' });
       changed = true;
-    } else if (ghostPermissionBaselineKey(installed) !== row.reviewedBaseline) {
+    } else if (
+      row.packageReview === undefined &&
+      ghostPermissionBaselineKey(installed) !== row.reviewedBaseline
+    ) {
       // 权限基线变了(换版本,或同版本换入不同权限声明):旧审阅作废。
       rows = updateRow(rows, row.pluginId, {
         fromVersion: installed.version,

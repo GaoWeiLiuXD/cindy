@@ -44,9 +44,8 @@ export interface UpdateAllRow {
   /**
    * 审阅所依据的**已装 manifest 权限指纹**(不是版本号)。
    * `ghosts.update()` 允许同版本整体替换 manifest,所以版本号不是可靠的
-   * 审阅基线——同版本换入不同权限声明时,旧 diff 与它换来的
-   * allowPermissionExpansion 会把未审阅的新权限一并放行。批准前必须拿
-   * 当前已装 manifest 重算指纹比对,不一致即作废重审。
+   * 审阅基线。自定义市场由 Renderer 先检查、Main 在安装锁内复核；官方
+   * 真实包复核则由 Main 在批准重试时直接核对此指纹。
    */
   reviewedBaseline?: string;
   /**

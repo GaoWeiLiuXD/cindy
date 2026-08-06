@@ -1,4 +1,4 @@
-import type { GhostManifest, InstalledGhost } from './ghost';
+import type { GhostManifest, GhostPermissionDiff, InstalledGhost } from './ghost';
 import type { PluginIconMetadata } from '@cindy/plugin-protocol';
 
 export type PluginMarketScope = 'public' | 'organization' | 'personal';
@@ -47,15 +47,17 @@ export interface PluginRemovalUserNotice {
   name: string | null;
 }
 
-/** 详情额外携带经 Desktop 当前 runtime validator 验证过的完整清单。 */
+/** 官方详情不下发 manifest；自定义详情直接携带其本地真实清单。 */
 export interface PluginMarketDetail extends PluginMarketItem {
-  manifest: GhostManifest;
+  manifest?: GhostManifest;
 }
 
 /** Main 验证真实下载包后，交给 Renderer 展示的权限复核事实。 */
 export interface PluginMarketPackageReview {
   /** 已按当前界面语言本地化，仅用于展示；安全指纹由 Main 基于原始清单计算。 */
   manifest: GhostManifest;
+  /** Main 基于当前已装原始清单与真实包原始清单算出的唯一权限差异；首装为 null。 */
+  permissionDiff: GhostPermissionDiff | null;
   packageSha256: string;
   /** 产生复核结果时的已装权限基线；null 表示当时尚未安装。 */
   installedBaseline: string | null;
@@ -64,16 +66,17 @@ export interface PluginMarketPackageReview {
 export interface PluginMarketInstallOptions {
   /** 用户审阅时看到的目标 release；Main 会在下载前重新核对。 */
   expectedReleaseId: string;
-  /** 自定义市场审阅过的完整清单；服务端市场由 Main 读取 release 清单。 */
+  /** 自定义市场审阅过的完整清单；官方市场不把服务端清单作为授权依据。 */
   expectedManifest?: GhostManifest;
+  /** 仅用于自定义市场确认其本地真实 manifest 的扩权。 */
   allowPermissionExpansion?: boolean;
-  /** 用户审阅扩权时的已装权限基线。 */
+  /** 用户审阅真实目标包时的已装权限基线。 */
   reviewedBaseline?: string;
   /** 用户确认过的真实下载包；Main 会重新下载并核对 SHA。 */
   approvedPackageSha256?: string;
 }
 
-/** 安装成功，或真实包权限与市场展示不一致而需要用户复核。 */
+/** 安装成功，或 Main 判定真实包需要用户复核。 */
 export type PluginMarketInstallResult =
   | { ghost: InstalledGhost; reviewRequired?: never }
   | { ghost?: never; reviewRequired: PluginMarketPackageReview };

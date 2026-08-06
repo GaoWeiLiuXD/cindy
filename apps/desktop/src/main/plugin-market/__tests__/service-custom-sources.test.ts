@@ -126,18 +126,6 @@ function serverSummary(overrides: Partial<VisiblePluginSummary> = {}): VisiblePl
   };
 }
 
-/** 服务端详情夹具：summary + 该 release 的完整 manifest。 */
-function serverDetail() {
-  const summary = serverSummary();
-  return {
-    ...summary,
-    currentRelease: {
-      ...summary.currentRelease,
-      manifest: ghostManifest(summary.ghostId),
-    },
-  };
-}
-
 /** 在临时目录造一个本地市场夹具（marketplace.json + 插件目录）。 */
 function writeLocalMarket(
   root: string,
@@ -181,7 +169,6 @@ function harness(items: VisiblePluginSummary[], marketDirs: Array<{ name: string
   }
   const api = {
     listAll: vi.fn(async () => ({ plugins: items, removals: [] })),
-    detail: vi.fn(),
     download: vi.fn(),
   };
   return {
@@ -384,7 +371,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     const h = harness([], [{ name: 'team-lib', dir }]);
 
     const detail = await h.service.detail(customMarketPluginId('team-lib', 'alpha'));
-    expect(detail.manifest.id).toBe('alpha');
+    expect(detail.manifest?.id).toBe('alpha');
     expect(detail.sourceType).toBe('local-market');
     await expect(h.service.detail(customMarketPluginId('team-lib', 'missing'))).rejects.toMatchObject({
       code: 'NOT_FOUND',
@@ -656,7 +643,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'server-plugin' }]);
     const h = harness([serverSummary()], [{ name: 'team-lib', dir }]);
     const item = serverSummary();
-    h.api.detail.mockResolvedValue(serverDetail());
 
     // 列表把两边都标成 conflict 并禁用;服务端安装入口只查服务端目录内部重名,
     // 必须用同一口径重算,否则普通 UI 流程或直接 IPC 都能装进来并抢占 ghostId。
@@ -676,7 +662,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     roots.push(root);
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'server-plugin' }]);
     const h = harness([serverSummary()], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
 
     // 详情传空重复集合会把 conflict 项恢复成可安装,给出绕过冲突闸的入口。
     const detail = await h.service.detail(serverSummary().id);
@@ -688,7 +673,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     roots.push(root);
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'server-plugin' }]);
     const h = harness([serverSummary({ defaultInstall: true })], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
 
     // 默认安装会真的下载并启用插件。若只按服务端目录判重,与自定义来源同 ghostId
     // 的默认项会被静默抢占所有权,而列表随后又把它标成 conflict —— 既定事实已经
@@ -969,7 +953,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     roots.push(root);
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'other-plugin' }]);
     const h = harness([serverSummary({ defaultInstall: true })], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
     h.api.download.mockResolvedValue({
       url: 'https://downloads.test.invalid/plugin.cindy',
       expiresAt: '2099-01-01T00:00:00.000Z',
@@ -1002,7 +985,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
       { rel: 'plugins/srv', id: 'unrelated-plugin' },
     ]);
     const h = harness([serverSummary({ defaultInstall: true })], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
     h.api.download.mockResolvedValue({
       url: 'https://downloads.test.invalid/plugin.cindy',
       expiresAt: '2099-01-01T00:00:00.000Z',
@@ -1046,7 +1028,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/gone', id: 'stale-entry' }]);
     fs.rmSync(path.join(dir, 'plugins', 'gone'), { recursive: true, force: true });
     const h = harness([serverSummary({ defaultInstall: true })], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
 
     await h.service.snapshot();
     // 与"不可读"组对称的信号:目录判为完整 → 默认安装照常进入下载阶段。
@@ -1058,7 +1039,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     roots.push(root);
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'other-plugin' }]);
     const h = harness([serverSummary()], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
     h.api.download.mockResolvedValue({
       url: 'https://downloads.test.invalid/plugin.cindy',
       expiresAt: '2099-01-01T00:00:00.000Z',
@@ -1086,7 +1066,6 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
       { rel: 'plugins/x', id: 'server-plugin' },
     ]);
     const h = harness([serverSummary()], [{ name: 'team-lib', dir }]);
-    h.api.detail.mockResolvedValue(serverDetail());
     runtime.ghosts = [
       { manifest: ghostManifest('server-plugin'), dir: '/ghosts/server-plugin', enabled: true },
     ];

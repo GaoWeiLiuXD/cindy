@@ -33,15 +33,6 @@ const detail: PluginMarketDetail = {
   enabled: null,
   sourceType: 'server',
   sourceMarketName: null,
-  manifest: {
-    schemaVersion: 2,
-    id: 'google-calendar',
-    name: 'Google Calendar',
-    version: '1.3.11',
-    kind: 'chip',
-    entry: 'index.html',
-    slots: [],
-  },
 };
 
 const renderDetail = (overrides: Partial<PluginMarketDetail> = {}) =>
@@ -65,6 +56,11 @@ describe('MarketPluginDetailView', () => {
         .getByRole('button', { name: /settings\.ghosts\.market\.install/ })
         .getAttribute('aria-describedby'),
     ).toBeNull();
+  });
+
+  it('does not present server catalog permissions before the package is downloaded', () => {
+    renderDetail();
+    expect(screen.queryByText('settings.ghosts.perm.grantsTitle')).toBeNull();
   });
 
   it('explains why a conflicting plugin is unavailable and binds it to the action', () => {

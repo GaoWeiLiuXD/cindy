@@ -21,7 +21,11 @@ import {
   setDataOwnerGeneration,
 } from '@/contexts/dataOwnerGeneration';
 import { toast } from '@/lib/toast';
-import { ghostPermissionBaselineKey, type GhostManifest } from '../../../../shared/ghost';
+import {
+  diffGhostPermissionItems,
+  ghostPermissionBaselineKey,
+  type GhostManifest,
+} from '../../../../shared/ghost';
 import type { PluginMarketDetail, PluginMarketItem } from '../../../../shared/pluginMarket';
 import {
   __resetUpdateAllBatchForTest,
@@ -66,11 +70,13 @@ function marketItem(overrides: Partial<PluginMarketItem>): PluginMarketItem {
 
 const detailMock = vi.fn<(pluginId: string) => Promise<PluginMarketDetail>>();
 const installMock = vi.fn(async () => ({ ghost: { manifest: manifest({}) } }) as never);
+let serverPackageManifest: GhostManifest | null = null;
 
 function stubDetail(overrides: {
   manifest: GhostManifest;
   sourceType: PluginMarketDetail['sourceType'];
 }): void {
+  serverPackageManifest = overrides.sourceType === 'server' ? overrides.manifest : null;
   detailMock.mockResolvedValue({
     ...marketItem({ sourceType: overrides.sourceType }),
     manifest: overrides.manifest,
@@ -94,9 +100,34 @@ beforeEach(() => {
   // mockReset 而非 mockClear:用例可能装过"卡住不 resolve"的实现(并发编排),
   // 只清调用记录会让它泄漏到后面的用例里把 waitFor 全部拖超时。
   installMock.mockReset();
-  installMock.mockResolvedValue({ ghost: { manifest: manifest({}) } } as never);
+  installMock.mockImplementation(async (...args: unknown[]) => {
+    const options = (args[1] ?? {}) as { approvedPackageSha256?: string };
+    const installed = installedGhosts[0]?.manifest;
+    const permissionDiff =
+      serverPackageManifest && installed
+        ? diffGhostPermissionItems(installed, serverPackageManifest)
+        : null;
+    if (
+      serverPackageManifest &&
+      installed &&
+      options.approvedPackageSha256 === undefined &&
+      permissionDiff &&
+      permissionDiff.added.length > 0
+    ) {
+      return {
+        reviewRequired: {
+          manifest: serverPackageManifest,
+          permissionDiff,
+          packageSha256: 'a'.repeat(64),
+          installedBaseline: ghostPermissionBaselineKey(installed),
+        },
+      } as never;
+    }
+    return { ghost: { manifest: manifest({}) } } as never;
+  });
   vi.mocked(toast.success).mockClear();
   installedGhosts = [{ manifest: manifest({ version: '1.0.0' }) }];
+  serverPackageManifest = null;
   (window as unknown as { electronAPI: unknown }).electronAPI = {
     pluginMarket: { detail: detailMock, install: installMock },
   };
@@ -116,8 +147,10 @@ describe('updateAllController', () => {
 
   it('holds actual package permissions for approval', async () => {
     stubDetail({ manifest: manifest({}), sourceType: 'server' });
+    const targetManifest = manifest({ network: { hosts: ['api.example.com'] } });
     const review = {
-      manifest: manifest({ network: { hosts: ['api.example.com'] } }),
+      manifest: targetManifest,
+      permissionDiff: diffGhostPermissionItems(installedGhosts[0].manifest, targetManifest),
       packageSha256: 'a'.repeat(64),
       installedBaseline: ghostPermissionBaselineKey(installedGhosts[0].manifest),
     };
@@ -142,8 +175,10 @@ describe('updateAllController', () => {
 
   it('keeps package review recoverable when the installed baseline drifts in flight', async () => {
     stubDetail({ manifest: manifest({}), sourceType: 'server' });
+    const targetManifest = manifest({ network: { hosts: ['api.example.com'] } });
     const review = {
-      manifest: manifest({ network: { hosts: ['api.example.com'] } }),
+      manifest: targetManifest,
+      permissionDiff: diffGhostPermissionItems(installedGhosts[0].manifest, targetManifest),
       packageSha256: 'a'.repeat(64),
       installedBaseline: ghostPermissionBaselineKey(installedGhosts[0].manifest),
     };
@@ -201,11 +236,14 @@ describe('updateAllController', () => {
     await waitForSettledBatch();
     await approveUpdateExpansion('plugin-a');
 
-    expect(installMock).toHaveBeenCalledWith('plugin-a', {
-      expectedReleaseId: 'release-2',
-      allowPermissionExpansion: true,
-      reviewedBaseline: expect.any(String),
-    });
+    expect(installMock).toHaveBeenLastCalledWith(
+      'plugin-a',
+      expect.objectContaining({
+        expectedReleaseId: 'release-2',
+        reviewedBaseline: expect.any(String),
+        approvedPackageSha256: 'a'.repeat(64),
+      }),
+    );
   });
 
   it('turns approval into a skip when the plugin was uninstalled while waiting', async () => {
@@ -221,7 +259,7 @@ describe('updateAllController', () => {
     await approveUpdateExpansion('plugin-a');
 
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('skipped');
-    expect(installMock).not.toHaveBeenCalled();
+    expect(installMock).toHaveBeenCalledTimes(1);
   });
 
   it('recomputes the diff when an external update replaced the permission baseline', async () => {
@@ -266,8 +304,8 @@ describe('updateAllController', () => {
     const row = getUpdateAllBatchState().rows?.[0];
     expect(row).toMatchObject({ status: 'needs-confirm', staleReview: false, fromVersion: '1.0.5' });
     expect(row?.permissionDiff?.added.length).toBeGreaterThan(0);
-    // 重算后仍是扩权:必须回到用户逐项审阅,绝不静默放行。
-    expect(installMock).not.toHaveBeenCalled();
+    // 重算后仍是扩权:Main 返回一份绑定当前基线的新 packageReview。
+    expect(installMock).toHaveBeenCalledTimes(2);
   });
 
   it('recomputes on baseline drift even before reconcile flagged the row', async () => {
@@ -306,8 +344,8 @@ describe('updateAllController', () => {
     expect(held?.permissionDiff).toBeUndefined();
 
     await approveUpdateExpansion('plugin-a');
-    // 相对新基线重算后仍是扩权 → 回到逐项审阅,绝不带 allowPermissionExpansion 放行。
-    expect(installMock).not.toHaveBeenCalled();
+    // 相对新基线仍是扩权 → Main 重新生成真实包复核，绝不沿用旧批准。
+    expect(installMock).toHaveBeenCalledTimes(2);
     expect(getUpdateAllBatchState().rows?.[0]).toMatchObject({
       status: 'needs-confirm',
       staleReview: false,
@@ -331,11 +369,14 @@ describe('updateAllController', () => {
     expect(kept?.permissionDiff?.added.length).toBeGreaterThan(0);
 
     await approveUpdateExpansion('plugin-a');
-    expect(installMock).toHaveBeenCalledWith('plugin-a', {
-      expectedReleaseId: 'release-2',
-      allowPermissionExpansion: true,
-      reviewedBaseline: expect.any(String),
-    });
+    expect(installMock).toHaveBeenLastCalledWith(
+      'plugin-a',
+      expect.objectContaining({
+        expectedReleaseId: 'release-2',
+        reviewedBaseline: expect.any(String),
+        approvedPackageSha256: 'a'.repeat(64),
+      }),
+    );
   });
 
   it('voids the batch when the data owner changes during the detail round-trip', async () => {
@@ -377,7 +418,7 @@ describe('updateAllController', () => {
     installedGhosts = [{ manifest: manifest({ version: '1.1.0' }) }];
     reconcileUpdateAllBatch([marketItem({ installState: 'installed' })]);
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
-    expect(installMock).not.toHaveBeenCalled();
+    expect(installMock).toHaveBeenCalledTimes(1);
 
     // 账号切换后对账直接作废整批。
     startUpdateAllBatch([]);
@@ -402,11 +443,14 @@ describe('updateAllController', () => {
 
     await approveUpdateExpansion('plugin-a');
     // 目标 release 仍未落账 → 必须真正安装,不得凭版本号收成完成。
-    expect(installMock).toHaveBeenCalledWith('plugin-a', {
-      expectedReleaseId: 'release-2',
-      allowPermissionExpansion: true,
-      reviewedBaseline: expect.any(String),
-    });
+    expect(installMock).toHaveBeenLastCalledWith(
+      'plugin-a',
+      expect.objectContaining({
+        expectedReleaseId: 'release-2',
+        reviewedBaseline: expect.any(String),
+        approvedPackageSha256: 'a'.repeat(64),
+      }),
+    );
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
   });
 
@@ -436,7 +480,7 @@ describe('updateAllController', () => {
     });
 
     await approveUpdateExpansion('plugin-a');
-    expect(installMock).not.toHaveBeenCalled();
+    expect(installMock).toHaveBeenCalledTimes(2);
     const row = getUpdateAllBatchState().rows?.[0];
     expect(row?.status).toBe('needs-confirm');
     // 新差异按当前事实重算,把没审过的 network 也摆出来。
