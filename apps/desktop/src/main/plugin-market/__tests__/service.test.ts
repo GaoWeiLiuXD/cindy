@@ -653,7 +653,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
   });
 
-  it('does not use a changed installed manifest as an approval baseline', async () => {
+  it('does not let a stale official record claim a locally changed package', async () => {
     const item = summary({
       currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
     });
@@ -662,11 +662,6 @@ describe('PluginMarketService migration and defaultInstall', () => {
     roots.push(installedDir);
     fs.writeFileSync(path.join(installedDir, 'ghost.json'), JSON.stringify(installed));
     runtime.ghosts = [{ manifest: installed, dir: installedDir, enabled: true }];
-    runtime.install.mockResolvedValue({
-      manifest: manifest(item.ghostId, '2.0.0', ['notify']),
-      dir: '/userData/cindy-brain/cindy-test',
-      enabled: true,
-    });
     const h = harness([item]);
     h.ledger.upsertInstallation({
       ...recordForTest(item),
@@ -675,9 +670,11 @@ describe('PluginMarketService migration and defaultInstall', () => {
       manifestDigest: ghostManifestDigest({ ...installed, slots: ['notify'] }),
     });
 
-    await h.service.install(item.id, { expectedReleaseId: item.currentRelease.id });
-
-    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('previouslyInstalledManifest');
+    expect((await h.service.snapshot()).items[0]?.installState).toBe('conflict');
+    await expect(
+      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+    ).rejects.toThrow('[ALREADY_EXISTS]');
+    expect(runtime.install).not.toHaveBeenCalled();
   });
 
   it('does not use a legacy ledger record without an authenticated manifest digest', async () => {
@@ -1236,6 +1233,32 @@ describe('PluginMarketService migration and defaultInstall', () => {
 
     await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).rejects.toThrow('[ALREADY_EXISTS]');
     expect(runtime.install).not.toHaveBeenCalled();
+  });
+
+  it('does not overwrite a local plugin that appears while an official package downloads', async () => {
+    const item = summary();
+    const h = harness([item]);
+    h.api.download.mockImplementationOnce(async () => {
+      runtime.ghosts = [
+        {
+          manifest: manifest(),
+          dir: '/userData/cindy-brain/cindy-test',
+          enabled: true,
+        },
+      ];
+      return {
+        url: 'https://downloads.test.invalid/plugin.cindy',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 42,
+      };
+    });
+
+    await expect(
+      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+    ).rejects.toThrow('[PRECONDITION_FAILED]');
+    expect(runtime.install).not.toHaveBeenCalled();
+    expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
   });
 
   it('requires an explicit reviewed flag before an update can add permissions', async () => {

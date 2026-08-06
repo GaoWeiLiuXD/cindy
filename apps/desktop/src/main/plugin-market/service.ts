@@ -273,6 +273,25 @@ function installedGhostRawManifestDigest(dir: string): string | null {
   return manifest ? ghostManifestDigest(manifest) : null;
 }
 
+/** 官方市场是否仍拥有当前落地包；带摘要的新记录必须与磁盘事实一致。 */
+function serverMarketOwnsInstalledGhost(
+  pluginId: string,
+  ghost: InstalledGhost,
+  record: PluginMarketInstallationRecord | null,
+): boolean {
+  if (
+    !record?.installed ||
+    (record.source !== 'market' && record.source !== 'legacy-adopted') ||
+    record.pluginId !== pluginId
+  ) {
+    return false;
+  }
+  return (
+    record.manifestDigest === undefined ||
+    record.manifestDigest === installedGhostRawManifestDigest(ghost.dir)
+  );
+}
+
 /** Stable local facts reused while projecting one market catalog response. */
 interface LocalInstallSnapshot {
   /** Installed Ghost runtime facts indexed once for one market operation. */
@@ -334,8 +353,7 @@ export class PluginMarketService {
         customSourceNames: [],
       };
     }
-    const { entries: customEntries, complete: customComplete } =
-      await this.discoverCustomEntriesSafe(owner);
+    const customEntries = await this.discoverCustomEntriesSafe(owner);
     const customSourceNames = this.customSourceNamesSafe(owner);
     requireSameMarketOwner(owner);
     if (!getClientEndpoint('pluginApiBaseUrl')) {
@@ -376,13 +394,9 @@ export class PluginMarketService {
     await this.migrateMarketManifestDigests(plugins, ledger, owner);
     await this.reconcileRemovedInstallations(ledger, owner);
     await this.applyServerRemovals(removals, owner, ledger);
-    // 自定义目录不完整(某来源暂时不可读)时跳过全部默认安装:此刻的合并冲突
-    // 集合缺了坏来源声明的 ghostId,自动安装会在它恢复前抢占所有权。
-    if (customComplete) {
-      await this.applyDefaultInstalls(plugins, owner, ledger, duplicateGhostIds);
-    } else {
-      log.warn('skipping default installs: custom marketplace catalog is incomplete');
-    }
+    // 自定义来源只影响自己的目录发现；暂时不可读的来源不能阻塞官方默认安装。
+    // 已经落地的同 id 插件仍由 applyDefaultInstalls → installDetail 的本地事实检查保护。
+    await this.applyDefaultInstalls(plugins, owner, ledger, duplicateGhostIds);
     requireSameMarketOwner(owner);
     const local = this.localInstallSnapshot(ledger);
     const serverItems = plugins.map((plugin) =>
@@ -489,13 +503,13 @@ export class PluginMarketService {
       }
       const existing = getGhostManager()
         .list()
-        .some((ghost) => ghost.manifest.id === plugin.ghostId);
+        .find((ghost) => ghost.manifest.id === plugin.ghostId);
       // 上面只查了服务端目录内部重名。列表的 conflict 判定是"服务端 + 全部自定义
       // 来源"合并计数,这里必须用同一口径重算,否则被标为 conflict 并禁用的服务端
       // 项仍能经普通 UI 流程或直接 IPC 装进来并抢占 ghostId。
       const record = ledger.installationForGhost(plugin.ghostId);
       const ownsInstall = Boolean(
-        existing && record?.installed && record.pluginId === plugin.id,
+        existing && serverMarketOwnsInstalledGhost(plugin.id, existing, record),
       );
       const assertOwnership = () =>
         this.assertSourceOwnsGhostId({
@@ -510,7 +524,7 @@ export class PluginMarketService {
         ghost: await this.installDetail(
           plugin,
           {
-            expectedInstalled: existing,
+            expectedInstalled: Boolean(existing),
             allowPermissionExpansion: options.allowPermissionExpansion === true,
             ...(options.reviewedBaseline !== undefined
               ? { reviewedBaseline: options.reviewedBaseline }
@@ -708,9 +722,8 @@ export class PluginMarketService {
   private async crossSourceDuplicateGhostIds(
     owner: ActiveAppSession,
     knownServerPlugins?: readonly VisiblePluginSummary[],
-  ): Promise<{ duplicates: ReadonlySet<string>; serverKnown: boolean; customComplete: boolean }> {
-    const { entries: customEntries, complete: customComplete } =
-      await this.discoverCustomEntriesSafe(owner);
+  ): Promise<{ duplicates: ReadonlySet<string>; serverKnown: boolean }> {
+    const customEntries = await this.discoverCustomEntriesSafe(owner);
     let serverPlugins: readonly VisiblePluginSummary[] = knownServerPlugins ?? [];
     let serverKnown = knownServerPlugins !== undefined;
     if (!serverKnown && getClientEndpoint('pluginApiBaseUrl')) {
@@ -727,7 +740,6 @@ export class PluginMarketService {
     return {
       duplicates: combinedDuplicateGhostIds(serverPlugins, customEntries),
       serverKnown,
-      customComplete,
     };
   }
 
@@ -745,18 +757,10 @@ export class PluginMarketService {
   }): Promise<void> {
     // 已经拥有当前安装记录的来源保留所有权（先装先得，与列表判定一致）。
     if (input.ownsInstall) return;
-    const { duplicates, customComplete } = await this.crossSourceDuplicateGhostIds(
+    const { duplicates } = await this.crossSourceDuplicateGhostIds(
       input.owner,
       input.knownServerPlugins,
     );
-    // 任一来源暂时不可读时,冲突集合是不完整的——此刻放行安装会在坏来源恢复前
-    // 抢占它声明的 ghostId(先装先得被绕过)。fail closed:提示先修复或移除。
-    if (!customComplete) {
-      throwIpcError(
-        'PRECONDITION_FAILED',
-        'A marketplace source is unavailable; refresh or remove it before installing',
-      );
-    }
     if (duplicates.has(input.ghostId)) {
       throwIpcError('ALREADY_EXISTS', 'Another marketplace already provides this Plugin ID');
     }
@@ -953,7 +957,7 @@ export class PluginMarketService {
   /** 快照聚合用：发现全部自定义市场条目。任何失败都降级为空，不拖垮快照。 */
   private async discoverCustomEntriesSafe(
     owner?: ActiveAppSession,
-  ): Promise<{ entries: CustomMarketEntry[]; complete: boolean }> {
+  ): Promise<CustomMarketEntry[]> {
     try {
       const manager = owner
         ? this.sourceManagerForOwner(owner)
@@ -963,26 +967,15 @@ export class PluginMarketService {
           });
       const discovered = await manager.discoverAll();
       const entries: CustomMarketEntry[] = [];
-      // "目录不完整"与"来源确实为空"必须分开:任一来源发现失败时,合并冲突集合
-      // 缺了它声明的 ghostId,自动安装/所有权提交会在它暂时不可读的窗口里抢占
-      // 先装先得。展示照旧容错(单源失败不拖垮列表),但 complete=false 要让
-      // 写路径 fail closed。
-      let complete = true;
       for (const { config, result } of discovered) {
         if (!result.ok) {
-          complete = false;
           log.warn('custom marketplace discovery failed', {
             market: config.name,
             code: result.code,
           });
           continue;
         }
-        // 粒度到条目的同一口径:某个插件的 ghost.json 暂时读不到(文件锁/网络盘
-        // 抖动/权限)时,这个市场声明了哪些 ghostId 就给不出完整答案——展示照旧
-        // 容错,但写路径必须 fail closed,否则同 ghostId 的默认安装会在这个窗口
-        // 里抢占所有权,恢复后该插件永久 conflict。内容非法(skippedCount)不算。
         if (result.marketplace.unreadableCount > 0) {
-          complete = false;
           log.warn('custom marketplace has unreadable plugin entries', {
             market: config.name,
             unreadableCount: result.marketplace.unreadableCount,
@@ -992,12 +985,12 @@ export class PluginMarketService {
           entries.push({ config, plugin });
         }
       }
-      return { entries, complete };
+      return entries;
     } catch (error) {
       log.warn('custom marketplace enumeration failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-      return { entries: [], complete: false };
+      return [];
     }
   }
 
@@ -1145,7 +1138,7 @@ export class PluginMarketService {
       .list()
       .find((ghost) => ghost.manifest.id === plugin.ghostId);
     const currentRecord = ledger.installationForGhost(plugin.ghostId);
-    if (existing && (!currentRecord?.installed || currentRecord.pluginId !== plugin.id)) {
+    if (existing && !serverMarketOwnsInstalledGhost(plugin.id, existing, currentRecord)) {
       throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
     }
 
@@ -1190,19 +1183,6 @@ export class PluginMarketService {
     try {
       await downloadVerifiedPlugin(download.url, download, tempPath);
       requireSameMarketOwner(owner);
-      if (options.expectedInstalled) {
-        const stillInstalled = getGhostManager()
-          .list()
-          .some((ghost) => ghost.manifest.id === plugin.ghostId);
-        if (!stillInstalled) {
-          // 用户确认的是更新；下载期间若另一窗口已卸载目标,不能把操作
-          // 降级成首装并自动启用。按状态变化拒绝,由 renderer 刷新重试。
-          throwIpcError(
-            'PRECONDITION_FAILED',
-            'Plugin was uninstalled while the update was downloading',
-          );
-        }
-      }
       // 复核 + 落位 + 溯源写入在同一对锁内完成:
       // - SOURCE_MUTATION_KEY:`installOrUpdateMarketGhostPackage` 会先 await 包
       //   检查才开始改动运行时,复核若在锁外做,结论会在这段等待里过期。
@@ -1214,17 +1194,35 @@ export class PluginMarketService {
       // 锁序:pluginId → SOURCE_MUTATION_KEY → ghostId → ledgerMutation,不可反向。
       const ghost = await this.withMutation(SOURCE_MUTATION_KEY, () =>
         withGhostInstallLock(plugin.ghostId, async () => {
-          // 改动 Ghost 运行时之前的最后一道:跨来源 ghostId 所有权按当前事实重算。
+          const installedNow = getGhostManager()
+            .list()
+            .find((ghost) => ghost.manifest.id === plugin.ghostId);
+          const currentRecordNow = ledger.installationForGhost(plugin.ghostId);
+          // 下载期间本地页可能装入、卸载或换源同 id 插件。提交点只认本地安装事实
+          // 与账本归属：首装目标突然出现、更新目标消失、或来源已不再属于当前官方
+          // 插件时全部拒绝，不能让官方包静默接管用户安装。
+          if (Boolean(installedNow) !== options.expectedInstalled) {
+            throwIpcError(
+              'PRECONDITION_FAILED',
+              installedNow
+                ? 'A local Plugin appeared with this Plugin ID during the install'
+                : 'Plugin was uninstalled while the update was downloading',
+            );
+          }
+          if (
+            installedNow &&
+            !serverMarketOwnsInstalledGhost(plugin.id, installedNow, currentRecordNow)
+          ) {
+            throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
+          }
+          // 仍可读来源之间的 ghostId 冲突按当前事实重算；不可读来源不再拥有全局
+          // 否决权，上面的本地事实检查独立保护已安装插件。
           await options.recheckOwnership?.();
           requireSameMarketOwner(owner);
           // 权限扩权的**权威**判定点:锁内按当前已装 manifest 重算。锁外那次
           // 只是快速失败;下载窗口期本地装入/更新若换掉了已装包,旧批准在这里
           // 被基线比对拦下,并发替换绕不过去(落位就在下面几行)。
-          const installedNow = getGhostManager()
-            .list()
-            .find((ghost) => ghost.manifest.id === plugin.ghostId);
           assertExpansionApproved(installedNow?.manifest ?? null);
-          const currentRecordNow = ledger.installationForGhost(plugin.ghostId);
           const installedRawManifest = installedNow
             ? installedGhostRawManifest(installedNow.dir)
             : null;
@@ -1282,14 +1280,14 @@ export class PluginMarketService {
     const ghost = local.ghostsById.get(plugin.ghostId);
     const record = local.installations[plugin.ghostId];
     const ownsInstall = Boolean(
-      ghost && record?.installed && record.pluginId === plugin.id,
+      ghost && serverMarketOwnsInstalledGhost(plugin.id, ghost, record ?? null),
     );
     // 与自定义侧 customToItem 对齐:已拥有当前安装记录的来源保留所有权
     // (installed / update-available),duplicate 只标未拥有安装的竞争来源,
     // 避免先安装者被重复 ghostId 降格、失去更新入口。
     const conflict = Boolean(
       (duplicateGhostIds.has(plugin.ghostId) && !ownsInstall) ||
-        (ghost && (!record?.installed || record.pluginId !== plugin.id)),
+        (ghost && !ownsInstall),
     );
     const installState: PluginMarketItem['installState'] = conflict
       ? 'conflict'

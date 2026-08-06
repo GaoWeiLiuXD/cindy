@@ -964,22 +964,32 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     }
   });
 
-  it('skips default installs while any custom source is unreadable', async () => {
+  it('keeps official default installs available while a custom source is unreadable', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-custom-fixture-'));
     roots.push(root);
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'other-plugin' }]);
     const h = harness([serverSummary({ defaultInstall: true })], [{ name: 'team-lib', dir }]);
     h.api.detail.mockResolvedValue(serverDetail());
-    // 来源暂时不可读:合并冲突集合缺了它声明的 ghostId,此刻自动安装会在它恢复
-    // 前抢占所有权——目录不完整时必须整体跳过默认安装。
+    h.api.download.mockResolvedValue({
+      url: 'https://downloads.test.invalid/plugin.cindy',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 42,
+    });
+    runtime.install.mockResolvedValue({
+      manifest: ghostManifest('server-plugin'),
+      dir: '/ghosts/server-plugin',
+      enabled: true,
+    });
+    // 来源暂时不可读只影响该来源，未安装的目录条目不能阻塞官方默认安装。
     fs.rmSync(dir, { recursive: true, force: true });
 
     await h.service.snapshot();
-    expect(h.api.download).not.toHaveBeenCalled();
-    expect(runtime.install).not.toHaveBeenCalled();
+    expect(h.api.download).toHaveBeenCalled();
+    expect(runtime.install).toHaveBeenCalled();
   });
 
-  it('skips default installs while a single plugin entry is temporarily unreadable', async () => {
+  it('keeps official default installs available while one custom entry is unreadable', async () => {
     // 粒度到条目:来源本身可读、清单也在,只是**某个插件的 ghost.json** 因文件锁/
     // 权限/网络盘抖动暂时读不到。此前这类失败与"内容非法"共用静默跳过分支,目录
     // 仍被判 complete,同 ghostId 的默认安装会在这个窗口里抢占所有权,恢复后该
@@ -993,6 +1003,17 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     ]);
     const h = harness([serverSummary({ defaultInstall: true })], [{ name: 'team-lib', dir }]);
     h.api.detail.mockResolvedValue(serverDetail());
+    h.api.download.mockResolvedValue({
+      url: 'https://downloads.test.invalid/plugin.cindy',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 42,
+    });
+    runtime.install.mockResolvedValue({
+      manifest: ghostManifest('server-plugin'),
+      dir: '/ghosts/server-plugin',
+      enabled: true,
+    });
     // EACCES 是可重试类错误(事实不明);注意不能用 ENOENT —— 那是"清单指向不存在
     // 的目录"这种永久错误,按内容非法跳过才对(否则这类市场永久阻塞默认安装)。
     // 路径必须按 realpath 拼:发现层用的是 realpath(macOS 上 /var → /private/var),
@@ -1009,8 +1030,8 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     }) as typeof fs.promises.open);
     try {
       await h.service.snapshot();
-      expect(h.api.download).not.toHaveBeenCalled();
-      expect(runtime.install).not.toHaveBeenCalled();
+      expect(h.api.download).toHaveBeenCalled();
+      expect(runtime.install).toHaveBeenCalled();
     } finally {
       spy.mockRestore();
     }
@@ -1032,19 +1053,65 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     expect(h.api.download).toHaveBeenCalled();
   });
 
-  it('fails closed on manual installs while any custom source is unreadable', async () => {
+  it('keeps manual official installs available while a custom source is unreadable', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-custom-fixture-'));
     roots.push(root);
     const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/x', id: 'other-plugin' }]);
     const h = harness([serverSummary()], [{ name: 'team-lib', dir }]);
     h.api.detail.mockResolvedValue(serverDetail());
+    h.api.download.mockResolvedValue({
+      url: 'https://downloads.test.invalid/plugin.cindy',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 42,
+    });
+    runtime.install.mockResolvedValue({
+      manifest: ghostManifest('server-plugin'),
+      dir: '/ghosts/server-plugin',
+      enabled: true,
+    });
     fs.rmSync(dir, { recursive: true, force: true });
 
     const item = serverSummary();
     await expect(
       h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
-    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    ).resolves.toMatchObject({ ghost: { manifest: { id: 'server-plugin' } } });
+    expect(h.api.download).toHaveBeenCalled();
+  });
+
+  it('does not let official market take over an installed custom plugin when its source is unreadable', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-custom-fixture-'));
+    roots.push(root);
+    const dir = writeLocalMarket(root, 'team-lib', [
+      { rel: 'plugins/x', id: 'server-plugin' },
+    ]);
+    const h = harness([serverSummary()], [{ name: 'team-lib', dir }]);
+    h.api.detail.mockResolvedValue(serverDetail());
+    runtime.ghosts = [
+      { manifest: ghostManifest('server-plugin'), dir: '/ghosts/server-plugin', enabled: true },
+    ];
+    h.ledger.upsertInstallation({
+      pluginId: customMarketPluginId('team-lib', 'server-plugin'),
+      ghostId: 'server-plugin',
+      releaseId: customMarketReleaseId('team-lib', 'server-plugin', '1.0.0'),
+      version: '1.0.0',
+      sha256: 'custom-unverified',
+      scope: 'public',
+      organizationId: null,
+      source: 'local-market',
+      installed: true,
+      updatedAt: '2026-08-06T00:00:00.000Z',
+      sourceKey: marketSourceKey({ type: 'local', path: dir }),
+      manifestDigest: ghostManifestDigest(ghostManifest('server-plugin')),
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+
+    const item = serverSummary();
+    await expect(
+      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+    ).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
     expect(h.api.download).not.toHaveBeenCalled();
+    expect(runtime.install).not.toHaveBeenCalled();
   });
 
   it('adopts a matching install after a lost ledger write instead of dead-ending in conflict', async () => {
