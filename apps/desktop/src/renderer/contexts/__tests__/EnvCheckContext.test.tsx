@@ -31,12 +31,14 @@ let binaryCb: (p: BinaryPayload) => void = () => {};
 let updateCb: (p: UpdatePayload) => void = () => {};
 let envCheckCalls: Array<Deferred<unknown>> = [];
 let appUpdateCalls: Array<Deferred<unknown>> = [];
+const abandonStartupUpdateRelaunch = vi.fn();
 
 beforeEach(() => {
   binaryCb = () => {};
   updateCb = () => {};
   envCheckCalls = [];
   appUpdateCalls = [];
+  abandonStartupUpdateRelaunch.mockReset();
   (window as unknown as { electronAPI: unknown }).electronAPI = {
     onBinaryDownloadProgress: (cb: (p: BinaryPayload) => void) => {
       binaryCb = cb;
@@ -54,6 +56,7 @@ beforeEach(() => {
       new Promise((resolve, reject) => {
         appUpdateCalls.push({ resolve, reject });
       }),
+    abandonStartupUpdateRelaunch,
   };
 });
 
@@ -178,6 +181,30 @@ describe('EnvCheckContext 启动下载进度时序', () => {
       envCheckCalls[1].resolve({ allPassed: false });
     });
     expect(result.current.status).toBe('failed');
+    expect(abandonStartupUpdateRelaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('grace 超时放行时显式放弃迟到的启动重启回复', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { result } = await mountAndKick();
+
+      await act(async () => {
+        envCheckCalls[1].resolve({ allPassed: true });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+
+      expect(result.current.status).toBe('passed');
+      expect(abandonStartupUpdateRelaunch).toHaveBeenCalledTimes(1);
+
+      appUpdateCalls[0].resolve({ hasUpdate: true, action: 'relaunch', version: '9.9.9' });
+      await flush();
+      expect(result.current.status).toBe('passed');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('热更下载失败:reply error 落地为 download_failed,不被 passed 冲掉', async () => {

@@ -142,6 +142,8 @@ let lastAutoRelaunchBlockReason: AutoRelaunchBlockReason | null = null;
 let lastBusyAtMs: number | null = null;
 let lastResumeAtMs: number | null = null;
 let startupUpdateCheckInProgress = false;
+let startupUpdateCheckAbandoned = false;
+let startupAutoRelaunchPlanned = false;
 let resolvedRelaunchTheme: 'light' | 'dark' = 'dark';
 let busyProbe: () => boolean | Promise<boolean> = () => false;
 
@@ -246,6 +248,8 @@ async function getAutoRelaunchBlockReasonForCurrentState(): Promise<AutoRelaunch
  *   - `dev`          — the native updater replaces the *installed* app; it can't
  *                      sanely update a dev / electron-forge instance, so never
  *                      auto-launch it there.
+ *   - `unsupported-platform` — the first Linux release does not support in-app
+ *                      replacement; keep any legacy staged patch untouched.
  *   - `translocated` — a packaged macOS app outside Applications must first be
  *                      moved to a persistent, writable install location.
  *   - `not-ready`    — no staged patch to apply.
@@ -260,6 +264,9 @@ async function getAutoRelaunchBlockReasonForCurrentState(): Promise<AutoRelaunch
  */
 async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason | null> {
   if (isDev()) return 'dev';
+  if (process.platform !== 'darwin' && process.platform !== 'win32') {
+    return 'unsupported-platform';
+  }
   if (isMacAppTranslocated()) return 'translocated';
   if (currentStatus !== 'ready') return 'not-ready';
   if (isRelaunching || autoRelaunchInProgress) return 'relaunching';
@@ -269,7 +276,7 @@ async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason 
 /**
  * Startup update checks apply a staged patch as soon as it is ready (the historic
  * behavior), gated only by the lightweight startup policy above. Whenever that
- * policy blocks (dev / translocated / not ready / already relaunching) the
+ * policy blocks (dev / unsupported platform / translocated / not ready / already relaunching) the
  * patch stays staged and the app enters normally, surfacing the UpdateBanner.
  */
 async function buildStartupReadyReply(version: string | undefined): Promise<{
@@ -287,6 +294,12 @@ async function buildStartupReadyReply(version: string | undefined): Promise<{
     );
     return { hasUpdate: true, action: 'none', version };
   }
+  if (startupUpdateCheckAbandoned) {
+    startupAutoRelaunchPlanned = false;
+    log.info('startup update reply abandoned; patch v%s remains ready', version ?? '<unknown>');
+    return { hasUpdate: true, action: 'none', version };
+  }
+  startupAutoRelaunchPlanned = true;
   return { hasUpdate: true, action: 'relaunch', version };
 }
 
@@ -306,6 +319,7 @@ async function requestAutoRelaunch(
     ? await getStartupRelaunchBlockReason()
     : await getAutoRelaunchBlockReasonForCurrentState();
   if (blockReason) {
+    if (useStartupPolicy) startupAutoRelaunchPlanned = false;
     if (blockReason !== lastAutoRelaunchBlockReason) {
       lastAutoRelaunchBlockReason = blockReason;
       if (readAutoUpdateSettings().autoRelaunchOnIdle && currentStatus === 'ready') {
@@ -316,6 +330,7 @@ async function requestAutoRelaunch(
   }
 
   lastAutoRelaunchBlockReason = null;
+  if (useStartupPolicy) startupAutoRelaunchPlanned = false;
   autoRelaunchInProgress = true;
   log.info('auto relaunch conditions met (%s), applying update v%s', reason, readyVersion ?? '<unknown>');
   executeRelaunch(theme);
@@ -415,8 +430,13 @@ export function isUpdateRelaunchImminent(): boolean {
   if (currentStatus !== 'downloading' && currentStatus !== 'ready') return false;
   // The native updater replaces the *installed* app; it cannot run in dev or
   // from a transient macOS App Translocation path.
-  if (isDev() || isMacAppTranslocated()) return false;
-  if (startupUpdateCheckInProgress) return true;
+  if (
+    isDev()
+    || (process.platform !== 'darwin' && process.platform !== 'win32')
+    || isMacAppTranslocated()
+  ) return false;
+  if (startupUpdateCheckAbandoned) return false;
+  if (startupUpdateCheckInProgress || startupAutoRelaunchPlanned) return true;
   // During a running session, the idle-install preference determines whether a
   // staged patch will be applied automatically.
   return readAutoUpdateSettings().autoRelaunchOnIdle;
@@ -1135,6 +1155,11 @@ export function initUpdateService(): void {
     executeRelaunch(resolved);
   });
 
+  ipcMain.on('update-startup-relaunch-abandon', () => {
+    if (startupUpdateCheckInProgress) startupUpdateCheckAbandoned = true;
+    startupAutoRelaunchPlanned = false;
+  });
+
   ipcMain.handle(
     'update-relaunch-auto',
     async (_event, theme: 'light' | 'dark'): Promise<AutoRelaunchRequestResult> => {
@@ -1217,6 +1242,8 @@ export function initUpdateService(): void {
 
   ipcMain.handle('update-check-startup', async () => {
     log.info('update-check-startup called');
+    startupUpdateCheckAbandoned = false;
+    startupAutoRelaunchPlanned = false;
     startupUpdateCheckInProgress = true;
     try {
       if (isDev()) {
@@ -1312,6 +1339,7 @@ export function initUpdateService(): void {
       return reply;
     } finally {
       startupUpdateCheckInProgress = false;
+      startupUpdateCheckAbandoned = false;
     }
   });
 

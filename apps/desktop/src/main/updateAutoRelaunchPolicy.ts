@@ -8,6 +8,7 @@ export type AutoRelaunchBlockReason =
   | 'disabled'
   | 'dev'
   | 'translocated'
+  | 'unsupported-platform'
   | 'not-ready'
   | 'relaunching'
   | 'busy'

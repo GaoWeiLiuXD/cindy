@@ -2047,6 +2047,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     version?: string;
     error?: 'manifest_failed' | 'download_failed';
   }> => ipcRenderer.invoke('update-check-startup'),
+  abandonStartupUpdateRelaunch: (): void =>
+    ipcRenderer.send('update-startup-relaunch-abandon'),
   getUpdateStatus: (): Promise<{ status: string; version?: string; errorCode?: string }> =>
     ipcRenderer.invoke('update-get-status'),
   getAutoUpdateSettings: (): Promise<{

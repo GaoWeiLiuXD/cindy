@@ -2150,6 +2150,7 @@ interface ElectronAPI {
     version?: string;
     error?: 'manifest_failed' | 'download_failed';
   }>;
+  abandonStartupUpdateRelaunch: () => void;
   onAppUpdateProgress: (callback: (payload: AppUpdateProgressPayload) => void) => () => void;
   fileBrowser: {
     listDir: (params: {

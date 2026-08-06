@@ -380,6 +380,41 @@ describe('startup update relaunch safety', () => {
     );
   });
 
+  it('keeps a legacy staged patch on Linux without entering the unsupported updater', async () => {
+    vi.useFakeTimers();
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    fetchManifest.mockResolvedValue(updateManifest());
+    const updatesDir = path.join(TEST_USER_DATA, 'updates');
+    fs.mkdirSync(updatesDir, { recursive: true });
+    fs.writeFileSync(path.join(updatesDir, 'staged.zip'), 'update');
+    fs.writeFileSync(
+      path.join(updatesDir, 'patch-info.json'),
+      JSON.stringify({ version: '0.0.65', fileName: 'staged.zip' }),
+    );
+
+    const service = await freshUpdateService('linux');
+    service.initUpdateService();
+    try {
+      const startupHandler = ipcHandlers.get('update-check-startup');
+      if (!startupHandler) throw new Error('update-check-startup handler not registered');
+      await expect(startupHandler()).resolves.toMatchObject({
+        hasUpdate: true,
+        action: 'none',
+        version: '0.0.65',
+      });
+      expect(service.getUpdateStatus()).toBe('ready');
+      expect(service.isUpdateRelaunchImminent()).toBe(false);
+      expect(download).not.toHaveBeenCalled();
+      expect(logInfo).toHaveBeenCalledWith(
+        'startup update relaunch deferred (%s); patch v%s remains ready',
+        'unsupported-platform',
+        '0.0.65',
+      );
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
   it('re-checks the startup policy at the apply boundary, keeping manual apply separate', async () => {
     vi.useFakeTimers();
     fetchManifest.mockResolvedValue(updateManifest());
@@ -449,10 +484,15 @@ describe('isUpdateRelaunchImminent', () => {
     }
   });
 
-  it('is false after the startup reply when idle auto-install is off', async () => {
+  it('stays true after the startup reply until the renderer abandons it', async () => {
     const service = await bootWithStagedPatch({ enabled: false });
     try {
       expect(service.getUpdateStatus()).toBe('ready');
+      expect(service.isUpdateRelaunchImminent()).toBe(true);
+
+      const abandonListener = ipcListeners.get('update-startup-relaunch-abandon');
+      if (!abandonListener) throw new Error('startup relaunch abandon listener not registered');
+      abandonListener();
       expect(service.isUpdateRelaunchImminent()).toBe(false);
     } finally {
       service.stopUpdateService();
@@ -512,7 +552,7 @@ describe('isUpdateRelaunchImminent', () => {
     }
   });
 
-  it('is true while a cold-start download is still in progress', async () => {
+  it('does not restore a relaunch plan after an in-flight startup check is abandoned', async () => {
     readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
     fetchManifest.mockResolvedValue(updateManifest());
     let finishDownload: (() => void) | undefined;
@@ -536,8 +576,13 @@ describe('isUpdateRelaunchImminent', () => {
       await vi.waitFor(() => expect(service.getUpdateStatus()).toBe('downloading'));
       expect(service.isUpdateRelaunchImminent()).toBe(true);
 
+      const abandonListener = ipcListeners.get('update-startup-relaunch-abandon');
+      if (!abandonListener) throw new Error('startup relaunch abandon listener not registered');
+      abandonListener();
+      expect(service.isUpdateRelaunchImminent()).toBe(false);
+
       finishDownload?.();
-      await expect(pendingReply).resolves.toMatchObject({ action: 'relaunch' });
+      await expect(pendingReply).resolves.toMatchObject({ action: 'none' });
       expect(service.isUpdateRelaunchImminent()).toBe(false);
     } finally {
       service.stopUpdateService();

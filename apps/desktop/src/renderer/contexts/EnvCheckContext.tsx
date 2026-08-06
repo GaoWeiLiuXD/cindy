@@ -255,6 +255,9 @@ export function EnvCheckProvider({ children }: { children: ReactNode }) {
       // 新调用已把 flag 置 true;旧调用返回时无脑清 false 会让新调用的二进制
       // 进度事件被当成乱序尾包丢弃(splash 卡在 checking)。
       if (thisCallId === callIdRef.current) phase2InFlightRef.current = false;
+      if (thisCallId === callIdRef.current) {
+        window.electronAPI.abandonStartupUpdateRelaunch();
+      }
       setStatus('failed');
       return;
     }
@@ -262,6 +265,7 @@ export function EnvCheckProvider({ children }: { children: ReactNode }) {
     if (thisCallId === callIdRef.current) phase2InFlightRef.current = false;
 
     if (!phase2Passed) {
+      window.electronAPI.abandonStartupUpdateRelaunch();
       setStatus('failed');
       return;
     }
@@ -301,6 +305,7 @@ export function EnvCheckProvider({ children }: { children: ReactNode }) {
           setTimeout(tick, 500);
           return;
         }
+        window.electronAPI.abandonStartupUpdateRelaunch();
         safeResolve(null);
       };
       setTimeout(tick, UPDATE_GRACE_MS);
