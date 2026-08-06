@@ -3518,7 +3518,7 @@ export async function installOrUpdateMarketGhostPackage(
      * 落盘前暂停并把同一份已验证包交给上层复核。
      */
     reviewedManifest?: GhostManifest;
-    /** 当前已装包的原始清单；权限 diff 与批准基线只认这份本地事实。 */
+    /** 经来源账本摘要认证的已装清单；缺失时不得回退到可变运行时清单。 */
     permissionBaselineManifest?: GhostManifest;
     /** 用户确认过的真实下载包 SHA 与确认时的已装权限基线。 */
     approvedPackageSha256?: string;
@@ -3562,7 +3562,7 @@ async function installOrUpdateMarketGhostPackageLocked(
     requireGhostAvailableForActiveSession(expected.ghostId);
     const installed = manager.list().find((ghost) => ghost.manifest.id === expected.ghostId);
     if (expected.reviewedManifest) {
-      const baselineManifest = expected.permissionBaselineManifest ?? installed?.manifest ?? null;
+      const baselineManifest = expected.permissionBaselineManifest ?? null;
       const installedBaseline = baselineManifest
         ? ghostPermissionBaselineKey(baselineManifest)
         : null;
