@@ -322,7 +322,8 @@ describe('startup update relaunch safety', () => {
   // historic behavior restored deliberately (owner-approved). A fresh launch has
   // no in-flight agent turn / schedule to protect, so the startup gate skips the
   // idle/busy/user-active checks that guard the *background* auto-relaunch and
-  // keeps only the essentials (disabled / dev / not-ready / relaunching).
+  // keeps only the essentials (dev / not-ready / relaunching). The idle-install
+  // preference controls running sessions, not applying a patch on cold launch.
   it('auto-applies a staged startup update as soon as it is ready', async () => {
     await expect(runStartupUpdate()).resolves.toMatchObject({
       hasUpdate: true,
@@ -348,13 +349,12 @@ describe('startup update relaunch safety', () => {
     });
   });
 
-  it('keeps the patch staged (no relaunch) when auto-update is disabled', async () => {
-    await expect(runStartupUpdate({ enabled: false })).resolves.toMatchObject({ action: 'none' });
-    expect(logInfo).toHaveBeenCalledWith(
-      'startup update relaunch deferred (%s); patch v%s remains ready',
-      'disabled',
-      '0.0.65',
-    );
+  it('auto-applies at startup even when idle auto-install is disabled', async () => {
+    await expect(runStartupUpdate({ enabled: false })).resolves.toMatchObject({
+      hasUpdate: true,
+      action: 'relaunch',
+      version: '0.0.65',
+    });
   });
 
   it('never runs the startup update flow (nor the native updater) on a dev build', async () => {
@@ -385,17 +385,17 @@ describe('startup update relaunch safety', () => {
 
       await expect(startupHandler?.()).resolves.toMatchObject({ action: 'relaunch' });
 
-      // User flips the auto-update switch off during the renderer's presentation
-      // delay → the apply boundary must still honor it and defer (no relaunch).
-      readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+      // The runtime changes to dev during the renderer's presentation delay →
+      // the essential startup guard must still defer at the apply boundary.
+      isDev.mockReturnValue(true);
       await expect(autoApplyHandler?.({}, 'dark')).resolves.toEqual({
         accepted: false,
-        blockReason: 'disabled',
+        blockReason: 'dev',
       });
       expect(service.getUpdateStatus()).toBe('ready');
       expect(logInfo).toHaveBeenCalledWith(
         'startup automatic relaunch deferred at apply boundary (%s)',
-        'disabled',
+        'dev',
       );
     } finally {
       service.stopUpdateService();
@@ -433,16 +433,11 @@ describe('isUpdateRelaunchImminent', () => {
     }
   });
 
-  // Regression: a staged patch used to read as "about to relaunch" purely from
-  // status==='ready'. With auto-relaunch off the patch sits there indefinitely,
-  // so every cold boot re-observed 'ready' and callers (startImConnection) kept
-  // deferring to a "next cold boot" that behaved identically — the FeishuBot
-  // never came online and feishuBot:save failed with [IM_NOT_READY] forever.
-  it('is false for a patch staged while auto-relaunch is off', async () => {
+  it('is true for a startup patch even when idle auto-install is off', async () => {
     const service = await bootWithStagedPatch({ enabled: false });
     try {
       expect(service.getUpdateStatus()).toBe('ready');
-      expect(service.isUpdateRelaunchImminent()).toBe(false);
+      expect(service.isUpdateRelaunchImminent()).toBe(true);
     } finally {
       service.stopUpdateService();
     }
@@ -458,14 +453,22 @@ describe('isUpdateRelaunchImminent', () => {
     }
   });
 
-  it('re-reads the auto-relaunch switch on every call', async () => {
-    const service = await bootWithStagedPatch({ enabled: true });
+  it('re-reads the idle auto-install switch outside the startup flow', async () => {
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    fetchManifest.mockResolvedValue(updateManifest());
+    download.mockImplementation(async ({ targetPath }: { targetPath: string }) => {
+      fs.mkdirSync(path.join(TEST_USER_DATA, 'updates'), { recursive: true });
+      fs.writeFileSync(targetPath, 'update');
+      return { path: targetPath, size: 123 };
+    });
+    const service = await freshUpdateService('darwin');
     try {
-      expect(service.isUpdateRelaunchImminent()).toBe(true);
-      readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+      await expect(service.checkForUpdate(updateManifest())).resolves.toBe('ready');
       expect(service.isUpdateRelaunchImminent()).toBe(false);
       readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: true });
       expect(service.isUpdateRelaunchImminent()).toBe(true);
+      readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+      expect(service.isUpdateRelaunchImminent()).toBe(false);
     } finally {
       service.stopUpdateService();
     }

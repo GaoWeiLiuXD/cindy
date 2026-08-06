@@ -142,6 +142,7 @@ let lastAutoRelaunchBlockReason: AutoRelaunchBlockReason | null = null;
 let lastBusyAtMs: number | null = null;
 let lastResumeAtMs: number | null = null;
 let startupUpdateCheckInProgress = false;
+let startupAutoRelaunchPlanned = false;
 let resolvedRelaunchTheme: 'light' | 'dark' = 'dark';
 let busyProbe: () => boolean | Promise<boolean> = () => false;
 
@@ -243,7 +244,6 @@ async function getAutoRelaunchBlockReasonForCurrentState(): Promise<AutoRelaunch
  * launched, so there is no in-flight agent turn / schedule / active session to
  * interrupt. We therefore relaunch into the updater as soon as a patch is ready,
  * gating only on the essentials:
- *   - `disabled`     — user turned the auto-update relaunch switch off; respect it.
  *   - `dev`          — the native updater replaces the *installed* app; it can't
  *                      sanely update a dev / electron-forge instance, so never
  *                      auto-launch it there.
@@ -253,9 +253,11 @@ async function getAutoRelaunchBlockReasonForCurrentState(): Promise<AutoRelaunch
  * applied here — those protect a long-running session from a surprise restart,
  * which is not a concern at a fresh launch. (Background auto-relaunch keeps the
  * full policy via getAutoRelaunchBlockReasonForCurrentState.)
+ * `autoRelaunchOnIdle` belongs to that background policy as well: turning it off
+ * prevents an in-session idle restart, but a staged patch is still applied on the
+ * next cold launch.
  */
 async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason | null> {
-  if (!readAutoUpdateSettings().autoRelaunchOnIdle) return 'disabled';
   if (isDev()) return 'dev';
   if (currentStatus !== 'ready') return 'not-ready';
   if (isRelaunching || autoRelaunchInProgress) return 'relaunching';
@@ -265,7 +267,7 @@ async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason 
 /**
  * Startup update checks apply a staged patch as soon as it is ready (the historic
  * behavior), gated only by the lightweight startup policy above. Whenever that
- * policy blocks (auto-update off / dev / not ready / already relaunching) the
+ * policy blocks (dev / not ready / already relaunching) the
  * patch stays staged and the app enters normally, surfacing the UpdateBanner.
  */
 async function buildStartupReadyReply(version: string | undefined): Promise<{
@@ -275,6 +277,7 @@ async function buildStartupReadyReply(version: string | undefined): Promise<{
 }> {
   const blockReason = await getStartupRelaunchBlockReason();
   if (blockReason) {
+    startupAutoRelaunchPlanned = false;
     lastAutoRelaunchBlockReason = blockReason;
     log.info(
       'startup update relaunch deferred (%s); patch v%s remains ready',
@@ -283,6 +286,7 @@ async function buildStartupReadyReply(version: string | undefined): Promise<{
     );
     return { hasUpdate: true, action: 'none', version };
   }
+  startupAutoRelaunchPlanned = true;
   return { hasUpdate: true, action: 'relaunch', version };
 }
 
@@ -302,6 +306,7 @@ async function requestAutoRelaunch(
     ? await getStartupRelaunchBlockReason()
     : await getAutoRelaunchBlockReasonForCurrentState();
   if (blockReason) {
+    if (useStartupPolicy) startupAutoRelaunchPlanned = false;
     if (blockReason !== lastAutoRelaunchBlockReason) {
       lastAutoRelaunchBlockReason = blockReason;
       if (readAutoUpdateSettings().autoRelaunchOnIdle && currentStatus === 'ready') {
@@ -312,6 +317,7 @@ async function requestAutoRelaunch(
   }
 
   lastAutoRelaunchBlockReason = null;
+  if (useStartupPolicy) startupAutoRelaunchPlanned = false;
   autoRelaunchInProgress = true;
   log.info('auto relaunch conditions met (%s), applying update v%s', reason, readyVersion ?? '<unknown>');
   executeRelaunch(theme);
@@ -396,17 +402,13 @@ export function getUpdateStatus(): UpdateStatus {
  * pair).
  *
  * This is deliberately NOT `status === 'downloading' | 'ready'`: `ready` only
- * means "a patch is staged", and a staged patch stays staged forever when the
- * user turned auto-relaunch off (`getStartupRelaunchBlockReason() → 'disabled'`)
- * or on a dev build. Gating on the raw status made every cold boot of an
- * out-of-date install re-observe `ready` and skip the side-effect again, so the
- * "we'll do it on the next cold boot" fallback could never fire — the IM
- * transport stayed down permanently and `feishuBot:save` failed with
- * `[IM_NOT_READY]` until the user manually applied the update.
+ * means "a patch is staged". During a long-running session the patch may stay
+ * staged until the user applies it or restarts Cindy, so gating on raw status
+ * could suppress side-effects indefinitely.
  *
- * When auto-relaunch IS on, a `ready` patch that is currently blocked by the
- * idle/busy policy still counts as imminent: the poller applies it once the app
- * goes idle, and the following cold boot is up to date and ungated.
+ * A startup patch explicitly scheduled for relaunch is imminent regardless of
+ * the background idle-install preference. Outside startup, a ready patch counts
+ * as imminent only when that background policy is enabled.
  */
 export function isUpdateRelaunchImminent(): boolean {
   // Already committed — the updater is spawning / windows are tearing down.
@@ -415,8 +417,9 @@ export function isUpdateRelaunchImminent(): boolean {
   if (currentStatus !== 'downloading' && currentStatus !== 'ready') return false;
   // The native updater replaces the *installed* app; it never runs in dev.
   if (isDev()) return false;
-  // Respecting the user's switch: with auto-relaunch off the patch just sits
-  // there until they click the banner, which is not "imminent".
+  if (startupAutoRelaunchPlanned) return true;
+  // During a running session, the idle-install preference determines whether a
+  // staged patch will be applied automatically.
   return readAutoUpdateSettings().autoRelaunchOnIdle;
 }
 
@@ -1215,6 +1218,7 @@ export function initUpdateService(): void {
 
   ipcMain.handle('update-check-startup', async () => {
     log.info('update-check-startup called');
+    startupAutoRelaunchPlanned = false;
     startupUpdateCheckInProgress = true;
     try {
       if (isDev()) {

@@ -604,11 +604,9 @@ configureImAccountScope({
  * connect normally.
  *
  * The gate MUST be `isUpdateRelaunchImminent()`, not the raw update status: a
- * `ready` (staged) patch never relaunches on its own when the user turned
- * auto-relaunch off, so gating on the status left this permanently skipped on
- * every cold boot of an out-of-date install — the bot never came online and
- * `feishuBot:save` kept failing with `[IM_NOT_READY]` (the account boundary is
- * activated inside `im.init()`), with no way out but manually updating.
+ * `ready` (staged) patch may wait for a manual action throughout a running
+ * session when idle auto-install is off. The update service separately marks a
+ * cold-start patch that is already scheduled for relaunch as imminent.
  */
 export function startImConnection(): void {
   if (connectionLifecycle.isStarted()) {
