@@ -142,7 +142,6 @@ let lastAutoRelaunchBlockReason: AutoRelaunchBlockReason | null = null;
 let lastBusyAtMs: number | null = null;
 let lastResumeAtMs: number | null = null;
 let startupUpdateCheckInProgress = false;
-let startupAutoRelaunchPlanned = false;
 let resolvedRelaunchTheme: 'light' | 'dark' = 'dark';
 let busyProbe: () => boolean | Promise<boolean> = () => false;
 
@@ -280,7 +279,6 @@ async function buildStartupReadyReply(version: string | undefined): Promise<{
 }> {
   const blockReason = await getStartupRelaunchBlockReason();
   if (blockReason) {
-    startupAutoRelaunchPlanned = false;
     lastAutoRelaunchBlockReason = blockReason;
     log.info(
       'startup update relaunch deferred (%s); patch v%s remains ready',
@@ -289,7 +287,6 @@ async function buildStartupReadyReply(version: string | undefined): Promise<{
     );
     return { hasUpdate: true, action: 'none', version };
   }
-  startupAutoRelaunchPlanned = true;
   return { hasUpdate: true, action: 'relaunch', version };
 }
 
@@ -309,7 +306,6 @@ async function requestAutoRelaunch(
     ? await getStartupRelaunchBlockReason()
     : await getAutoRelaunchBlockReasonForCurrentState();
   if (blockReason) {
-    if (useStartupPolicy) startupAutoRelaunchPlanned = false;
     if (blockReason !== lastAutoRelaunchBlockReason) {
       lastAutoRelaunchBlockReason = blockReason;
       if (readAutoUpdateSettings().autoRelaunchOnIdle && currentStatus === 'ready') {
@@ -320,7 +316,6 @@ async function requestAutoRelaunch(
   }
 
   lastAutoRelaunchBlockReason = null;
-  if (useStartupPolicy) startupAutoRelaunchPlanned = false;
   autoRelaunchInProgress = true;
   log.info('auto relaunch conditions met (%s), applying update v%s', reason, readyVersion ?? '<unknown>');
   executeRelaunch(theme);
@@ -421,7 +416,7 @@ export function isUpdateRelaunchImminent(): boolean {
   // The native updater replaces the *installed* app; it cannot run in dev or
   // from a transient macOS App Translocation path.
   if (isDev() || isMacAppTranslocated()) return false;
-  if (startupAutoRelaunchPlanned) return true;
+  if (startupUpdateCheckInProgress) return true;
   // During a running session, the idle-install preference determines whether a
   // staged patch will be applied automatically.
   return readAutoUpdateSettings().autoRelaunchOnIdle;
@@ -1222,7 +1217,6 @@ export function initUpdateService(): void {
 
   ipcMain.handle('update-check-startup', async () => {
     log.info('update-check-startup called');
-    startupAutoRelaunchPlanned = false;
     startupUpdateCheckInProgress = true;
     try {
       if (isDev()) {

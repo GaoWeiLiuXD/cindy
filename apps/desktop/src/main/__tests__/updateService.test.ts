@@ -449,11 +449,11 @@ describe('isUpdateRelaunchImminent', () => {
     }
   });
 
-  it('is true for a startup patch even when idle auto-install is off', async () => {
+  it('is false after the startup reply when idle auto-install is off', async () => {
     const service = await bootWithStagedPatch({ enabled: false });
     try {
       expect(service.getUpdateStatus()).toBe('ready');
-      expect(service.isUpdateRelaunchImminent()).toBe(true);
+      expect(service.isUpdateRelaunchImminent()).toBe(false);
     } finally {
       service.stopUpdateService();
     }
@@ -506,6 +506,38 @@ describe('isUpdateRelaunchImminent', () => {
     const service = await bootWithStagedPatch({ enabled: true });
     try {
       expect(service.getUpdateStatus()).toBe('ready');
+      expect(service.isUpdateRelaunchImminent()).toBe(false);
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
+  it('is true while a cold-start download is still in progress', async () => {
+    readAutoUpdateSettings.mockReturnValue({ autoRelaunchOnIdle: false });
+    fetchManifest.mockResolvedValue(updateManifest());
+    let finishDownload: (() => void) | undefined;
+    download.mockImplementation(({ targetPath }: { targetPath: string }) =>
+      new Promise((resolve) => {
+        finishDownload = () => {
+          fs.mkdirSync(path.join(TEST_USER_DATA, 'updates'), { recursive: true });
+          fs.writeFileSync(targetPath, 'update');
+          resolve({ path: targetPath, size: 123 });
+        };
+      }),
+    );
+
+    const service = await freshUpdateService('darwin');
+    service.initUpdateService();
+    try {
+      const startupHandler = ipcHandlers.get('update-check-startup');
+      if (!startupHandler) throw new Error('update-check-startup handler not registered');
+      const pendingReply = startupHandler();
+
+      await vi.waitFor(() => expect(service.getUpdateStatus()).toBe('downloading'));
+      expect(service.isUpdateRelaunchImminent()).toBe(true);
+
+      finishDownload?.();
+      await expect(pendingReply).resolves.toMatchObject({ action: 'relaunch' });
       expect(service.isUpdateRelaunchImminent()).toBe(false);
     } finally {
       service.stopUpdateService();
