@@ -667,7 +667,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     expect(runtime.install).not.toHaveBeenCalled();
   });
 
-  it('uses the current installed manifest as the review baseline for a legacy record', async () => {
+  it('does not trust an installed manifest as the permission baseline without a digest', async () => {
     const item = summary({
       currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
     });
@@ -691,9 +691,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
 
     await h.service.install(item.id, reviewedInstallOptions(item));
 
-    expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
-      permissionBaselineManifest: installed,
-    });
+    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('permissionBaselineManifest');
   });
 
   it('installs and enables a public defaultInstall package in local mode', async () => {
@@ -1330,7 +1328,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     expect(runtime.install).toHaveBeenCalledTimes(1);
   });
 
-  it('captures the current installed package as the review baseline after download', async () => {
+  it('does not trust the current installed package without a digest after download', async () => {
     const item = summary({
       currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
     });
@@ -1360,10 +1358,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await expect(
       h.service.install(item.id, reviewedInstallOptions(item)),
     ).resolves.toMatchObject({ ghost: { manifest: { version: '2.0.0' } } });
-    expect(runtime.install).toHaveBeenCalledWith(
-      expect.stringMatching(/\.cindy$/),
-      expect.objectContaining({ permissionBaselineManifest: currentInstalled }),
-    );
+    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('permissionBaselineManifest');
   });
 
   it('rejects an update when the installed target disappears during download', async () => {

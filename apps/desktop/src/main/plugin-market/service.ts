@@ -1173,14 +1173,22 @@ export class PluginMarketService {
       const installedRawManifest = installedNow
         ? installedGhostRawManifest(installedNow.dir)
         : null;
+      const permissionBaselineManifest =
+        installedRawManifest &&
+        currentRecordNow?.installed &&
+        (currentRecordNow.source === 'market' ||
+          currentRecordNow.source === 'legacy-adopted') &&
+        currentRecordNow.manifestDigest === ghostManifestDigest(installedRawManifest)
+          ? installedRawManifest
+          : null;
       const installed = await installOrUpdateMarketGhostPackage(tempPath, {
         ghostId: plugin.ghostId,
         version: plugin.currentRelease.version,
         ...(options.reviewedManifest
           ? {
               reviewedManifest: options.reviewedManifest,
-              ...(installedRawManifest
-                ? { permissionBaselineManifest: installedRawManifest }
+              ...(permissionBaselineManifest
+                ? { permissionBaselineManifest }
                 : {}),
             }
           : {}),
