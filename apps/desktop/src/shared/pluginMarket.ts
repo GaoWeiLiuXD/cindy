@@ -74,7 +74,7 @@ export interface PluginMarketInstallOptions {
   /** 用户审阅时看到的目标 release；Main 会在下载前重新核对。 */
   expectedReleaseId: string;
   /** 安装前展示给用户的完整清单；Main 会与当前来源事实重新核对。 */
-  expectedManifest?: GhostManifest;
+  expectedManifest: GhostManifest;
   /** 仅用于自定义市场确认其本地真实 manifest 的扩权。 */
   allowPermissionExpansion?: boolean;
   /** 用户审阅目标权限时的已装权限基线。 */

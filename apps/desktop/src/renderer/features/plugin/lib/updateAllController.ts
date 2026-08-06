@@ -505,10 +505,10 @@ async function runApprovalBody(pluginId: string, generation: number): Promise<vo
         throw error;
       }
     };
-    if (reviewStillValid) {
+    if (reviewStillValid && row.expectedManifest !== undefined) {
       const didInstall = await installOrHoldForReReview({
         expectedReleaseId: row.releaseId,
-        ...(row.expectedManifest ? { expectedManifest: row.expectedManifest } : {}),
+        expectedManifest: row.expectedManifest,
         allowPermissionExpansion: true,
         // 审阅基线随批准回传:Main 在安装锁内用当时的已装 manifest 复核,
         // renderer 这边的检查挡不住 IPC 往返窗口内的替换。

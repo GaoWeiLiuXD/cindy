@@ -450,6 +450,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       {
         ghostId: 'cindy-test',
         version: '1.0.0',
+        reviewedManifest: manifest(),
       },
     );
     expect(snapshot.items[0]).toMatchObject({
@@ -461,6 +462,28 @@ describe('PluginMarketService migration and defaultInstall', () => {
       releaseId: 'release-1',
       manifestDigest: ghostManifestDigest(manifest()),
     });
+  });
+
+  it('does not auto-install a default package with permissions absent from its catalog manifest', async () => {
+    const item = summary({ defaultInstall: true });
+    runtime.install.mockRejectedValueOnce(
+      new GhostPackagePermissionReviewRequiredError({
+        manifest: manifest(item.ghostId, item.currentRelease.version, ['notify', 'fs']),
+        permissionDiff: null,
+        packageSha256: item.currentRelease.sha256,
+        installedBaseline: null,
+      }),
+    );
+    const h = harness([item]);
+
+    const snapshot = await h.service.snapshot();
+
+    expect(runtime.install).toHaveBeenCalledWith(
+      expect.stringMatching(/\.cindy$/),
+      expect.objectContaining({ reviewedManifest: manifest() }),
+    );
+    expect(snapshot.items[0]?.installState).toBe('not-installed');
+    expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
   });
 
   it('does not infer historical provenance from the server manifest', async () => {
@@ -698,6 +721,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       {
         ghostId: item.ghostId,
         version: item.currentRelease.version,
+        reviewedManifest: manifest(),
       },
     );
     expect(snapshot.items[0]).toMatchObject({

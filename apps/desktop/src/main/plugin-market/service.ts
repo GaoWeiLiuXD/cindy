@@ -476,19 +476,13 @@ export class PluginMarketService {
   ): Promise<PluginMarketInstallResult> {
     const customRef = parseCustomMarketPluginId(pluginId);
     if (customRef) {
-      if (!options.expectedManifest) {
-        throwIpcError('INVALID_PARAMS', 'The reviewed Plugin manifest is required');
-      }
-      return this.customInstall(customRef, options as typeof options & { expectedManifest: GhostManifest });
+      return this.customInstall(customRef, options);
     }
     if (!isValidPluginResourceId(pluginId)) {
       throwIpcError('INVALID_PARAMS', 'Invalid Plugin ID');
     }
     this.requireConfigured();
     const owner = captureMarketOwner();
-    if (!options.expectedManifest) {
-      throwIpcError('INVALID_PARAMS', 'The reviewed Plugin manifest is required');
-    }
     const ledger = this.ledgerForOwner(owner);
     return this.withMutation(pluginId, async () => {
       requireSameMarketOwner(owner);
@@ -1040,7 +1034,7 @@ export class PluginMarketService {
   private async installDetail(
     plugin: VisiblePluginSummary | VisiblePluginDetail,
     options: {
-      /** 安装前已经向用户展示并确认的 manifest；默认安装不需要交互审阅。 */
+      /** 手动安装时已向用户展示；默认安装时作为自动授权的目录权限上限。 */
       reviewedManifest?: GhostManifest;
       allowPermissionExpansion?: boolean;
       /** 安装前权限确认所依据的已装权限指纹。 */
@@ -1461,11 +1455,22 @@ export class PluginMarketService {
       try {
         await this.withMutation(summary.id, async () => {
           requireSameMarketOwner(owner);
+          const detail = await this.api.detail(summary.id);
+          requireSameMarketOwner(owner);
+          assertDetailMatchesSummary(summary, detail);
+          const reviewedManifest = validateGhostManifest(detail.currentRelease.manifest);
+          if (!reviewedManifest.ok) {
+            throwIpcError('GHOST_FILE_INVALID', 'This Plugin manifest is not supported');
+          }
           // 装完即开语义已收敛进市场安装入口本身,这里无需再显式声明。
           await this.installDetail(
-            summary,
+            detail,
             {
               expectedInstalled: false,
+              // 默认安装没有用户发起窗口：目录 manifest 是自动安装可接受的权限
+              // 上限；真实包若额外扩权，installDetail 会安全取消并等待用户之后
+              // 从详情页手动安装、在原请求窗口完成确认。
+              reviewedManifest: reviewedManifest.manifest,
             },
             owner,
             ledger,

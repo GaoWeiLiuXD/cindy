@@ -126,10 +126,7 @@ export function registerPluginMarketIpc(): void {
             })
           : null;
       const expectedReleaseId = requireString(obj?.expectedReleaseId, 'expectedReleaseId');
-      const expectedManifest =
-        obj?.expectedManifest === undefined || obj?.expectedManifest === null
-          ? undefined
-          : requireObject(obj.expectedManifest);
+      const expectedManifest = requireObject(obj?.expectedManifest);
       const allowPermissionExpansion = obj?.allowPermissionExpansion === true;
       // 扩权批准的审阅基线:只收字符串,野值按缺席处理(缺席 = 保持旧行为)。
       const reviewedBaseline =
@@ -139,9 +136,7 @@ export function registerPluginMarketIpc(): void {
           requireString(pluginId, 'pluginId'),
           {
             expectedReleaseId,
-            ...(expectedManifest
-              ? { expectedManifest: expectedManifest as unknown as GhostManifest }
-              : {}),
+            expectedManifest: expectedManifest as unknown as GhostManifest,
             allowPermissionExpansion,
             ...(reviewedBaseline !== undefined ? { reviewedBaseline } : {}),
           },
