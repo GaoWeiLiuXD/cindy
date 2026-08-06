@@ -247,6 +247,8 @@ async function getAutoRelaunchBlockReasonForCurrentState(): Promise<AutoRelaunch
  *   - `dev`          — the native updater replaces the *installed* app; it can't
  *                      sanely update a dev / electron-forge instance, so never
  *                      auto-launch it there.
+ *   - `translocated` — a packaged macOS app outside Applications must first be
+ *                      moved to a persistent, writable install location.
  *   - `not-ready`    — no staged patch to apply.
  *   - `relaunching`  — a relaunch is already in flight; don't double-fire.
  * The idle / busy / user-active / recent-resume / screen-state checks are NOT
@@ -259,6 +261,7 @@ async function getAutoRelaunchBlockReasonForCurrentState(): Promise<AutoRelaunch
  */
 async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason | null> {
   if (isDev()) return 'dev';
+  if (isMacAppTranslocated()) return 'translocated';
   if (currentStatus !== 'ready') return 'not-ready';
   if (isRelaunching || autoRelaunchInProgress) return 'relaunching';
   return null;
@@ -267,7 +270,7 @@ async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason 
 /**
  * Startup update checks apply a staged patch as soon as it is ready (the historic
  * behavior), gated only by the lightweight startup policy above. Whenever that
- * policy blocks (dev / not ready / already relaunching) the
+ * policy blocks (dev / translocated / not ready / already relaunching) the
  * patch stays staged and the app enters normally, surfacing the UpdateBanner.
  */
 async function buildStartupReadyReply(version: string | undefined): Promise<{
@@ -415,8 +418,9 @@ export function isUpdateRelaunchImminent(): boolean {
   if (isRelaunching || autoRelaunchInProgress) return true;
   // Nothing staged or being staged can relaunch us.
   if (currentStatus !== 'downloading' && currentStatus !== 'ready') return false;
-  // The native updater replaces the *installed* app; it never runs in dev.
-  if (isDev()) return false;
+  // The native updater replaces the *installed* app; it cannot run in dev or
+  // from a transient macOS App Translocation path.
+  if (isDev() || isMacAppTranslocated()) return false;
   if (startupAutoRelaunchPlanned) return true;
   // During a running session, the idle-install preference determines whether a
   // staged patch will be applied automatically.
@@ -1141,9 +1145,9 @@ export function initUpdateService(): void {
     async (_event, theme: 'light' | 'dark'): Promise<AutoRelaunchRequestResult> => {
       // Startup checks and the renderer's 1.5 s presentation delay create a
       // real TOCTOU window. Re-run the startup policy at the apply boundary so a
-      // settings change / already-in-flight relaunch cannot be cut off by a
-      // stale decision. (Startup deliberately does not gate on idle/busy — there
-      // is no in-flight work to protect at a fresh launch.)
+      // install-location change / already-in-flight relaunch cannot be cut off
+      // by a stale decision. (Startup deliberately does not gate on idle/busy —
+      // there is no in-flight work to protect at a fresh launch.)
       const resolved = theme === 'light' || theme === 'dark' ? theme : 'dark';
       resolvedRelaunchTheme = resolved;
       const result = await requestAutoRelaunch('startup-apply-boundary', resolved, true);

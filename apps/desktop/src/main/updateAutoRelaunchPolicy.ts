@@ -7,6 +7,7 @@ export const AUTO_UPDATE_BUSY_QUIET_PERIOD_MS = 60 * 1000;
 export type AutoRelaunchBlockReason =
   | 'disabled'
   | 'dev'
+  | 'translocated'
   | 'not-ready'
   | 'relaunching'
   | 'busy'

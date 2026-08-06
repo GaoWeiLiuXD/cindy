@@ -322,8 +322,9 @@ describe('startup update relaunch safety', () => {
   // historic behavior restored deliberately (owner-approved). A fresh launch has
   // no in-flight agent turn / schedule to protect, so the startup gate skips the
   // idle/busy/user-active checks that guard the *background* auto-relaunch and
-  // keeps only the essentials (dev / not-ready / relaunching). The idle-install
-  // preference controls running sessions, not applying a patch on cold launch.
+  // keeps only the essentials (dev / translocated / not-ready / relaunching).
+  // The idle-install preference controls running sessions, not applying a patch
+  // on cold launch.
   it('auto-applies a staged startup update as soon as it is ready', async () => {
     await expect(runStartupUpdate()).resolves.toMatchObject({
       hasUpdate: true,
@@ -362,6 +363,21 @@ describe('startup update relaunch safety', () => {
     // forge/dev instance); the startup gate's `dev` branch is defense-in-depth.
     isDev.mockReturnValue(true);
     await expect(runStartupUpdate()).resolves.toMatchObject({ hasUpdate: false, action: 'none' });
+  });
+
+  it('keeps the patch staged when a packaged macOS app is outside Applications', async () => {
+    appIsInApplicationsFolder.mockReturnValue(false);
+
+    await expect(runStartupUpdate({ enabled: false })).resolves.toMatchObject({
+      hasUpdate: true,
+      action: 'none',
+      version: '0.0.65',
+    });
+    expect(logInfo).toHaveBeenCalledWith(
+      'startup update relaunch deferred (%s); patch v%s remains ready',
+      'translocated',
+      '0.0.65',
+    );
   });
 
   it('re-checks the startup policy at the apply boundary, keeping manual apply separate', async () => {
@@ -479,6 +495,17 @@ describe('isUpdateRelaunchImminent', () => {
     try {
       expect(service.getUpdateStatus()).toBe('ready');
       isDev.mockReturnValue(true);
+      expect(service.isUpdateRelaunchImminent()).toBe(false);
+    } finally {
+      service.stopUpdateService();
+    }
+  });
+
+  it('is false outside Applications even when a startup patch is staged', async () => {
+    appIsInApplicationsFolder.mockReturnValue(false);
+    const service = await bootWithStagedPatch({ enabled: true });
+    try {
+      expect(service.getUpdateStatus()).toBe('ready');
       expect(service.isUpdateRelaunchImminent()).toBe(false);
     } finally {
       service.stopUpdateService();
