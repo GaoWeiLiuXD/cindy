@@ -327,12 +327,6 @@ export class PluginMarketService {
   private readonly mutations = new Map<string, Promise<unknown>>();
   private ledgerMutation: Promise<void> = Promise.resolve();
   private readonly pendingRemovalNotices = new Map<string, PluginRemovalUserNotice>();
-  private readonly installTempRoot = path.join(
-    app.getPath('userData'),
-    'plugin-market',
-    'install-tmp',
-  );
-  private installTempReady: Promise<void> | null = null;
 
   constructor(
     private readonly api = new PluginMarketApi(),
@@ -1086,11 +1080,10 @@ export class PluginMarketService {
     }
 
     const tempPath = path.join(
-      this.installTempRoot,
-      `${plugin.id}-${crypto.randomUUID()}.cindy`,
+      app.getPath('temp'),
+      `cindy-plugin-${plugin.id}-${crypto.randomUUID()}.cindy`,
     );
     try {
-      await this.prepareInstallTempRoot();
       await downloadVerifiedPlugin(download.url, download, tempPath);
       requireSameMarketOwner(owner);
       try {
@@ -1134,15 +1127,6 @@ export class PluginMarketService {
     } finally {
       await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
     }
-  }
-
-  /** 首次安装前清掉上次异常退出留下的专用临时目录，并只初始化一次。 */
-  private prepareInstallTempRoot(): Promise<void> {
-    this.installTempReady ??= (async () => {
-      await fs.promises.rm(this.installTempRoot, { recursive: true, force: true });
-      await fs.promises.mkdir(this.installTempRoot, { recursive: true, mode: 0o700 });
-    })();
-    return this.installTempReady;
   }
 
   /** 把已验证临时包提交到运行时；确认前后复用同一文件。 */
