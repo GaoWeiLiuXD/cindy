@@ -8,10 +8,7 @@
  */
 
 import type { GhostManifest, GhostPermissionDiff } from '../../../../shared/ghost';
-import type {
-  PluginMarketItem,
-  PluginMarketPackageReview,
-} from '../../../../shared/pluginMarket';
+import type { PluginMarketItem } from '../../../../shared/pluginMarket';
 
 /**
  * 批量更新策略(设计定稿):权限无变化的自动串行完成;权限有扩张的
@@ -44,17 +41,14 @@ export interface UpdateAllRow {
   /**
    * 审阅所依据的**已装 manifest 权限指纹**(不是版本号)。
    * `ghosts.update()` 允许同版本整体替换 manifest,所以版本号不是可靠的
-   * 审阅基线。自定义市场由 Renderer 先检查、Main 在安装锁内复核；官方
-   * 真实包复核则由 Main 在批准重试时直接核对此指纹。
+   * 审阅基线。Renderer 先检查、Main 在安装锁内复核。
    */
   reviewedBaseline?: string;
   /**
-   * 非 server 源在审阅时取得的 manifest:主进程对这类来源强制要求安装时
-   * 传回同一份 reviewed manifest,approve 必须原样带上,否则 INVALID_PARAMS。
+   * 审阅时取得的 manifest:主进程强制要求安装时传回同一份清单，
+   * approve 必须原样带上，否则 INVALID_PARAMS。
    */
   expectedManifest?: GhostManifest;
-  /** 实际下载包等待用户确认的权限事实。 */
-  packageReview?: PluginMarketPackageReview;
   /** status 为 failed 时的用户可读错误(已经过 i18n 映射)。 */
   errorText?: string;
 }

@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import {
   isValidPluginResourceId,
   type PluginRemovalNotice,
+  type VisiblePluginDetail,
   type VisiblePluginSummary,
 } from '@cindy/plugin-protocol';
 import { app, dialog } from 'electron';
@@ -24,6 +25,7 @@ import type {
   PluginMarketInstallOptions,
   PluginMarketInstallResult,
   PluginMarketItem,
+  PluginMarketPackageReviewFacts,
   PluginMarketSnapshot,
   PluginRemovalUserNotice,
 } from '../../shared/pluginMarket.js';
@@ -70,20 +72,23 @@ import { MarketSourceManager } from './sources/index.js';
 import { MarketSourceStore } from './sources/store.js';
 
 const log = createLogger('plugin-market');
-const NO_DUPLICATE_GHOST_IDS: ReadonlySet<string> = new Set();
+
+type PackagePermissionReviewer = (
+  facts: PluginMarketPackageReviewFacts,
+) => Promise<boolean>;
 
 /**
- * 来源增删改的互斥键。**安装的提交段(所有权复核 + 包落位)也要拿这把锁**:
- * 否则复核通过后、真正改动 Ghost 运行时之前,另一窗口能添加声明同一 ghostId 的
- * 来源,让已冲突的插件照样装上。
+ * 来源增删改的互斥键。自定义市场安装的提交段也要拿这把锁，保证所选来源从
+ * 复核到包落位之间不会被移除或替换。官方市场安装不依赖自定义市场目录，不能
+ * 拿这把锁，否则一次慢刷新就会无关地拖住官方插件安装。
  *
  * **锁次序(不变量,违反即死锁)**:允许 `withMutation(pluginId)` 内再取本键
  * (安装路径就是这么做的),**禁止**持本键时再取任何 pluginId 键。来源操作
  * (add/remove/refresh)只拿本键,永不反向,因此锁图无环。
  *
- * **已知权衡**:refreshSource 全程持本键,大仓库 clone 期间(可达分钟级)安装的
- * 提交段与其它来源操作会排队。这是有意选择——只读路径(快照/列表/详情)不受
- * 影响,而把刷新的网络段移出锁会重新打开"提交点复核过期"的窗口;吞吐不构成
+ * **已知权衡**:refreshSource 全程持本键,大仓库 clone 期间(可达分钟级)自定义
+ * 市场安装的提交段与其它来源操作会排队。只读路径和官方市场安装不受影响；
+ * 把刷新的网络段移出锁会重新打开“所选来源在提交前被替换”的窗口；吞吐不构成
  * 放宽正确性的理由。
  */
 const SOURCE_MUTATION_KEY = 'market-sources';
@@ -157,7 +162,7 @@ function defaultInstallSubject(owner: ActiveAppSession): string {
 }
 
 function recordFrom(
-  plugin: VisiblePluginSummary,
+  plugin: VisiblePluginSummary | VisiblePluginDetail,
   source: PluginMarketInstallationRecord['source'],
   installed: InstalledGhost,
 ): PluginMarketInstallationRecord {
@@ -175,6 +180,25 @@ function recordFrom(
     updatedAt: new Date().toISOString(),
     ...(rawManifest ? { manifestDigest: ghostManifestDigest(rawManifest) } : {}),
   };
+}
+
+/** 列表与详情是两次请求；安装前必须确认两次看到的是同一份发布。 */
+function assertDetailMatchesSummary(
+  summary: VisiblePluginSummary,
+  detail: VisiblePluginDetail,
+): void {
+  if (
+    detail.id !== summary.id ||
+    detail.ghostId !== summary.ghostId ||
+    detail.scope !== summary.scope ||
+    detail.organizationId !== summary.organizationId ||
+    detail.currentRelease.id !== summary.currentRelease.id ||
+    detail.currentRelease.version !== summary.currentRelease.version ||
+    detail.currentRelease.sha256 !== summary.currentRelease.sha256 ||
+    detail.currentRelease.sizeBytes !== summary.currentRelease.sizeBytes
+  ) {
+    throwIpcError('PRECONDITION_FAILED', 'Plugin release changed while loading details');
+  }
 }
 
 /**
@@ -217,20 +241,6 @@ function ghostIdCounts(
 interface CustomMarketEntry {
   config: MarketSourceConfig;
   plugin: DiscoveredMarketPlugin;
-}
-
-/** 服务端目录 + 自定义市场合并后的重复 ghostId 集合。 */
-function combinedDuplicateGhostIds(
-  plugins: readonly VisiblePluginSummary[],
-  customEntries: readonly CustomMarketEntry[],
-): ReadonlySet<string> {
-  const counts = ghostIdCounts(plugins);
-  for (const entry of customEntries) {
-    counts.set(entry.plugin.ghostId, (counts.get(entry.plugin.ghostId) ?? 0) + 1);
-  }
-  return new Set(
-    [...counts.entries()].filter(([, count]) => count > 1).map(([ghostId]) => ghostId),
-  );
 }
 
 /**
@@ -317,6 +327,12 @@ export class PluginMarketService {
   private readonly mutations = new Map<string, Promise<unknown>>();
   private ledgerMutation: Promise<void> = Promise.resolve();
   private readonly pendingRemovalNotices = new Map<string, PluginRemovalUserNotice>();
+  private readonly installTempRoot = path.join(
+    app.getPath('userData'),
+    'plugin-market',
+    'install-tmp',
+  );
+  private installTempReady: Promise<void> | null = null;
 
   constructor(
     private readonly api = new PluginMarketApi(),
@@ -384,23 +400,16 @@ export class PluginMarketService {
 
     requireSameMarketOwner(owner);
     const ledger = this.ledgerForOwner(owner);
-    // ghostId 冲突判定跨服务端与自定义市场合并计算（全局唯一、先装先得）。
-    // 必须**先于** applyDefaultInstalls 算出来:默认安装会真的下载并启用插件,
-    // 若只按服务端目录判重,与自定义来源同 ghostId 的默认项会被静默抢占所有权,
-    // 而列表随后又把它标成 conflict —— 既定事实已经发生。
-    const duplicateGhostIds = combinedDuplicateGhostIds(plugins, customEntries);
     await this.adoptLegacyInstallations(plugins, ledger, owner);
     await this.reconcileRemovedInstallations(ledger, owner);
     await this.applyServerRemovals(removals, owner, ledger);
     // 自定义来源只影响自己的目录发现；暂时不可读的来源不能阻塞官方默认安装。
     // 已经落地的同 id 插件仍由 applyDefaultInstalls → installDetail 的本地事实检查保护。
-    await this.applyDefaultInstalls(plugins, owner, ledger, duplicateGhostIds);
+    await this.applyDefaultInstalls(plugins, owner, ledger);
     requireSameMarketOwner(owner);
     const local = this.localInstallSnapshot(ledger);
-    const serverItems = plugins.map((plugin) =>
-      this.toItem(plugin, duplicateGhostIds, local),
-    );
-    const items = [...serverItems, ...this.projectCustomItems(customEntries, duplicateGhostIds, local)];
+    const serverItems = plugins.map((plugin) => this.toItem(plugin, local));
+    const items = [...serverItems, ...this.projectCustomItems(customEntries, local)];
     // 聚合完成、返回 Renderer 前最后校验:账号在任一 await 间隙漂移则拒绝,
     // 不把按旧账号解析的自定义项/账本状态发给当前会话。
     requireSameMarketOwner(owner);
@@ -439,25 +448,23 @@ export class PluginMarketService {
     return this.runForOwner(async (owner) => {
       const catalog = visiblePluginsForOwner(owner, (await this.api.listAll()).plugins);
       requireSameMarketOwner(owner);
-      const plugin = catalog.find((candidate) => candidate.id === pluginId);
-      if (!plugin) {
+      const summary = catalog.find((candidate) => candidate.id === pluginId);
+      if (!summary) {
         throwIpcError('NOT_FOUND', 'Plugin is unavailable to the active account');
       }
+      const plugin = await this.api.detail(pluginId);
+      requireSameMarketOwner(owner);
+      assertDetailMatchesSummary(summary, plugin);
       if (owner.mode === 'local' && plugin.scope !== 'public') {
         throwIpcError('PERMISSION_DENIED', 'Local mode can only access public Plugins');
       }
-      // 详情必须与列表同口径:传空重复集合会把列表标为 conflict 并禁用的项
-      // 在详情页恢复成可安装,给出一条绕过冲突闸的入口。
-      const { duplicates } = await this.crossSourceDuplicateGhostIds(owner, catalog);
-      requireSameMarketOwner(owner);
+      const compatible = validateGhostManifest(plugin.currentRelease.manifest);
+      if (!compatible.ok) {
+        throwIpcError('GHOST_FILE_INVALID', 'This Plugin manifest is not supported');
+      }
       return {
-        ...this.toItem(
-          plugin,
-          duplicates,
-          this.localInstallSnapshot(this.ledgerForOwner(owner)),
-        ),
-        sourceType: 'server',
-        sourceMarketName: null,
+        ...this.toItem(plugin, this.localInstallSnapshot(this.ledgerForOwner(owner))),
+        manifest: compatible.manifest,
       };
     });
   }
@@ -465,6 +472,7 @@ export class PluginMarketService {
   async install(
     pluginId: string,
     options: PluginMarketInstallOptions,
+    reviewPackagePermissions?: PackagePermissionReviewer,
   ): Promise<PluginMarketInstallResult> {
     const customRef = parseCustomMarketPluginId(pluginId);
     if (customRef) {
@@ -478,6 +486,9 @@ export class PluginMarketService {
     }
     this.requireConfigured();
     const owner = captureMarketOwner();
+    if (!options.expectedManifest) {
+      throwIpcError('INVALID_PARAMS', 'The reviewed Plugin manifest is required');
+    }
     const ledger = this.ledgerForOwner(owner);
     return this.withMutation(pluginId, async () => {
       requireSameMarketOwner(owner);
@@ -492,56 +503,45 @@ export class PluginMarketService {
       ) {
         throwIpcError('ALREADY_EXISTS', 'Multiple market Plugins use the same Plugin ID');
       }
-      if (selected.currentRelease.id !== options.expectedReleaseId) {
+      const plugin = await this.api.detail(pluginId);
+      requireSameMarketOwner(owner);
+      assertDetailMatchesSummary(selected, plugin);
+      if (plugin.currentRelease.id !== options.expectedReleaseId) {
         throwIpcError(
           'PRECONDITION_FAILED',
           'Plugin release changed after permission review',
         );
       }
+      const compatible = validateGhostManifest(plugin.currentRelease.manifest);
+      const reviewed = validateGhostManifest(options.expectedManifest);
+      if (
+        !compatible.ok ||
+        !reviewed.ok ||
+        ghostManifestDigest(compatible.manifest) !== ghostManifestDigest(reviewed.manifest)
+      ) {
+        throwIpcError(
+          'PRECONDITION_FAILED',
+          'Plugin manifest changed after permission review',
+        );
+      }
       const existing = getGhostManager()
         .list()
-        .find((ghost) => ghost.manifest.id === selected.ghostId);
-      // 上面只查了服务端目录内部重名。列表的 conflict 判定是"服务端 + 全部自定义
-      // 来源"合并计数,这里必须用同一口径重算,否则被标为 conflict 并禁用的服务端
-      // 项仍能经普通 UI 流程或直接 IPC 装进来并抢占 ghostId。
-      const record = ledger.installationForGhost(selected.ghostId);
-      const ownsInstall = Boolean(
-        existing && serverMarketOwnsInstalledGhost(selected.id, existing, record),
+        .find((ghost) => ghost.manifest.id === plugin.ghostId);
+      const ghost = await this.installDetail(
+        plugin,
+        {
+          expectedInstalled: Boolean(existing),
+          reviewedManifest: compatible.manifest,
+          allowPermissionExpansion: options.allowPermissionExpansion === true,
+          reviewPackagePermissions,
+          ...(options.reviewedBaseline !== undefined
+            ? { reviewedBaseline: options.reviewedBaseline }
+            : {}),
+        },
+        owner,
+        ledger,
       );
-      const assertOwnership = () =>
-        this.assertSourceOwnsGhostId({
-          owner,
-          ghostId: selected.ghostId,
-          ownsInstall,
-          // 复用已拉到的目录,复核不再多打一次网络请求。
-          knownServerPlugins: catalog,
-        });
-      await assertOwnership();
-      return {
-        ghost: await this.installDetail(
-          selected,
-          {
-            expectedInstalled: Boolean(existing),
-            reviewPackagePermissions: true,
-            ...(options.reviewedBaseline !== undefined
-              ? { reviewedBaseline: options.reviewedBaseline }
-              : {}),
-            ...(options.approvedPackageSha256 !== undefined
-              ? { approvedPackageSha256: options.approvedPackageSha256 }
-              : {}),
-            // 下载可能持续数分钟,提交副作用前按当前事实再算一次。
-            recheckOwnership: assertOwnership,
-          },
-          owner,
-          ledger,
-        ),
-      };
-    }).catch((error: unknown) => {
-      if (error instanceof GhostPackagePermissionReviewRequiredError) {
-        requireSameMarketOwner(owner);
-        return { reviewRequired: error.review };
-      }
-      throw error;
+      return ghost ? { ghost } : { cancelled: true };
     });
   }
 
@@ -694,73 +694,14 @@ export class PluginMarketService {
       if (!plugin) {
         throwIpcError('NOT_FOUND', 'The Plugin is no longer listed by this marketplace');
       }
-      // 与服务端详情同理:详情必须沿用列表的 conflict 口径,不能传空重复集合。
-      const { duplicates } = await this.crossSourceDuplicateGhostIds(owner);
-      requireSameMarketOwner(owner);
       return {
         ...this.customToItem(
           { config: discovered.config, plugin },
-          duplicates,
           this.localInstallSnapshot(this.ledgerForOwner(owner)),
         ),
         manifest: plugin.manifest,
       };
     });
-  }
-
-  /**
-   * 按 snapshot 的同一口径重算跨来源重复 ghostId(服务端目录 + 全部自定义来源)。
-   * 详情与安装都用它,保证"列表标成 conflict 并禁用"的判定不会在别处被放宽。
-   *
-   * 服务端目录可选:未配置或拉取失败时降级为仅自定义来源,并把 `serverKnown`
-   * 置为 false 供调用方判断。自定义安装本就不要求服务端可用;未安装的服务端插件
-   * 不构成本地运行期抢占,已安装的那种情况由安装侧的 `existing` 检查拦住。
-   */
-  private async crossSourceDuplicateGhostIds(
-    owner: ActiveAppSession,
-    knownServerPlugins?: readonly VisiblePluginSummary[],
-  ): Promise<{ duplicates: ReadonlySet<string>; serverKnown: boolean }> {
-    const customEntries = await this.discoverCustomEntriesSafe(owner);
-    let serverPlugins: readonly VisiblePluginSummary[] = knownServerPlugins ?? [];
-    let serverKnown = knownServerPlugins !== undefined;
-    if (!serverKnown && getClientEndpoint('pluginApiBaseUrl')) {
-      try {
-        serverPlugins = visiblePluginsForOwner(owner, (await this.api.listAll()).plugins);
-        serverKnown = true;
-      } catch (error) {
-        log.warn('market catalog unavailable while recomputing cross-source duplicates', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-    requireSameMarketOwner(owner);
-    return {
-      duplicates: combinedDuplicateGhostIds(serverPlugins, customEntries),
-      serverKnown,
-    };
-  }
-
-  /**
-   * 安装入口重算 ghostId 所有权:列表把跨来源重名标成 `conflict` 并禁用,但那份
-   * 判定是快照期算的。安装 IPC 可以被不可信 Renderer 直接调用,也可能在详情打开
-   * 后由另一个窗口添加了声明同一 ghostId 的来源 —— 所以真正产生副作用之前必须
-   * 用同一口径重新确认。服务端与自定义两条安装路径共用这道闸。
-   */
-  private async assertSourceOwnsGhostId(input: {
-    owner: ActiveAppSession;
-    ghostId: string;
-    ownsInstall: boolean;
-    knownServerPlugins?: readonly VisiblePluginSummary[];
-  }): Promise<void> {
-    // 已经拥有当前安装记录的来源保留所有权（先装先得，与列表判定一致）。
-    if (input.ownsInstall) return;
-    const { duplicates } = await this.crossSourceDuplicateGhostIds(
-      input.owner,
-      input.knownServerPlugins,
-    );
-    if (duplicates.has(input.ghostId)) {
-      throwIpcError('ALREADY_EXISTS', 'Another marketplace already provides this Plugin ID');
-    }
   }
 
   /**
@@ -840,7 +781,6 @@ export class PluginMarketService {
         if (existing && !ownsInstall && !adoptable) {
           throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
         }
-        await this.assertSourceOwnsGhostId({ owner, ghostId: plugin.ghostId, ownsInstall });
         if (
           existing &&
           // 与服务端安装同口径:对比已装 manifest 与候选包,只有新增权限才要求
@@ -856,9 +796,6 @@ export class PluginMarketService {
         const ghost = await installCustomMarketPlugin({
           pluginDir: plugin.dir,
           expected: options.expectedManifest,
-          // 打包耗时,期间另一窗口可以经独立的 market-sources 互斥键添加声明同一
-          // ghostId 的来源(来源变更与插件安装不共享互斥边界)。所以在真正改动
-          // Ghost 运行时之前把所有权再算一遍,而不是只依赖打包前那一次。
           beforeCommit: async () => {
             requireSameMarketOwner(owner);
             // 所选来源必须**仍然存在且仍是同一个来源**:移除来源会先拿
@@ -872,8 +809,7 @@ export class PluginMarketService {
                 'The marketplace source changed during the install',
               );
             }
-            await this.assertSourceOwnsGhostId({ owner, ghostId: plugin.ghostId, ownsInstall });
-            // runtime 所有权也要复核,不只来源所有权:打包窗口(秒到分钟级)内,
+            // runtime 所有权也要复核:打包窗口(秒到分钟级)内,
             // 本地插件页可以卸载同 id 插件(那条路径不持本服务的互斥锁)——不查
             // 会把"更新"降级成"首装+带电启用";反向地,窗口内新装入的同 id
             // 本地 .cindy 会被更新分支静默覆盖,还绕过了审阅时跳过的权限 diff。
@@ -993,19 +929,15 @@ export class PluginMarketService {
 
   private projectCustomItems(
     entries: readonly CustomMarketEntry[],
-    duplicateGhostIds?: ReadonlySet<string>,
     local?: LocalInstallSnapshot,
   ): PluginMarketItem[] {
-    const duplicates =
-      duplicateGhostIds ?? combinedDuplicateGhostIds([], entries);
     const snapshot = local ?? this.localInstallSnapshot();
-    return entries.map((entry) => this.customToItem(entry, duplicates, snapshot));
+    return entries.map((entry) => this.customToItem(entry, snapshot));
   }
 
   /** 自定义市场项的状态机与服务端 toItem 完全一致（冲突 / 首装 / 更新 / 已装）。 */
   private customToItem(
     entry: CustomMarketEntry,
-    duplicateGhostIds: ReadonlySet<string>,
     local: LocalInstallSnapshot,
   ): PluginMarketItem {
     const { config, plugin } = entry;
@@ -1032,12 +964,9 @@ export class PluginMarketService {
         !ownsInstall &&
         local.rawDigestByGhostId.get(plugin.ghostId) === ghostManifestDigest(plugin.manifest),
     );
-    // 已拥有当前安装记录的来源保留所有权（installed / update-available）；
-    // duplicate 只把未拥有安装的竞争来源标为冲突，避免“先装先得”被降格。
-    const conflict = Boolean(
-      (duplicateGhostIds.has(plugin.ghostId) && !ownsInstall) ||
-        (ghost && !ownsInstall && !adoptable),
-    );
+    // 市场目录只用于发现，不声明未安装 ghostId 的所有权。只有运行时已经存在
+    // 同 id 且不属于当前来源时才冲突，避免官方或其它市场接管用户已装插件。
+    const conflict = Boolean(ghost && !ownsInstall && !adoptable);
     const installState: PluginMarketItem['installState'] = conflict
       ? 'conflict'
       : !ownsInstall
@@ -1109,25 +1038,21 @@ export class PluginMarketService {
   }
 
   private async installDetail(
-    plugin: VisiblePluginSummary,
+    plugin: VisiblePluginSummary | VisiblePluginDetail,
     options: {
-      /** 官方手动安装只展示 Main 验证后的真实包权限。 */
-      reviewPackagePermissions?: boolean;
-      /** 用户确认真实包时的已装权限指纹。 */
+      /** 安装前已经向用户展示并确认的 manifest；默认安装不需要交互审阅。 */
+      reviewedManifest?: GhostManifest;
+      allowPermissionExpansion?: boolean;
+      /** 安装前权限确认所依据的已装权限指纹。 */
       reviewedBaseline?: string;
-      /** 用户确认过的真实下载包 SHA。 */
-      approvedPackageSha256?: string;
+      /** 真实包比展示清单多权限时，在当前安装事务内立即询问发起窗口。 */
+      reviewPackagePermissions?: PackagePermissionReviewer;
       /** 确认操作时的安装意图;下载窗口期目标被另一窗口卸载时拒绝滑入首装。 */
       expectedInstalled: boolean;
-      /**
-       * 提交副作用前的所有权复核。下载可能持续数分钟,期间另一窗口可经独立的
-       * market-sources 互斥键添加声明同一 ghostId 的来源,入口处那次判定已过期。
-       */
-      recheckOwnership?: () => Promise<void>;
     } = { expectedInstalled: false },
     owner = captureMarketOwner(),
     ledger = this.ledgerForOwner(owner),
-  ): Promise<InstalledGhost> {
+  ): Promise<InstalledGhost | null> {
     requireSameMarketOwner(owner);
     if (owner.mode === 'local' && plugin.scope !== 'public') {
       throwIpcError('PERMISSION_DENIED', 'Local mode can only access public Plugins');
@@ -1139,6 +1064,19 @@ export class PluginMarketService {
     if (existing && !serverMarketOwnsInstalledGhost(plugin.id, existing, currentRecord)) {
       throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
     }
+
+    const reviewedManifest = options.reviewedManifest
+      ? validateGhostManifest(options.reviewedManifest)
+      : null;
+    if (reviewedManifest && !reviewedManifest.ok) {
+      throwIpcError('GHOST_FILE_INVALID', 'This Plugin manifest is not supported');
+    }
+    this.assertServerPreviewExpansionApproved(
+      existing?.manifest ?? null,
+      reviewedManifest?.manifest,
+      options.allowPermissionExpansion,
+      options.reviewedBaseline,
+    );
 
     const download = await this.api.download(plugin.id, plugin.currentRelease.id);
     requireSameMarketOwner(owner);
@@ -1154,85 +1092,153 @@ export class PluginMarketService {
     }
 
     const tempPath = path.join(
-      app.getPath('temp'),
-      `cindy-plugin-${plugin.id}-${crypto.randomUUID()}.cindy`,
+      this.installTempRoot,
+      `${plugin.id}-${crypto.randomUUID()}.cindy`,
     );
     try {
+      await this.prepareInstallTempRoot();
       await downloadVerifiedPlugin(download.url, download, tempPath);
       requireSameMarketOwner(owner);
-      // 复核 + 落位 + 溯源写入在同一对锁内完成:
-      // - SOURCE_MUTATION_KEY:`installOrUpdateMarketGhostPackage` 会先 await 包
-      //   检查才开始改动运行时,复核若在锁外做,结论会在这段等待里过期。
-      // - withGhostInstallLock(ghostId):与本地 .cindy 装入/更新/卸载共用同一按 id
-      //   互斥。少了它,本地装入能在包检查窗口里落入同 id 的包,随后被本次安装当作
-      //   更新目标覆盖,而权限差异确认因审阅时目标不存在而没跑过。账本写入也必须在
-      //   锁内:否则本地装入可以插在"落位"与"写溯源"之间,让账本认领一个其实已被
-      //   替换掉的包(账本摘要若未对上当前安装内容,投影时不会认领)。
-      // 锁序:pluginId → SOURCE_MUTATION_KEY → ghostId → ledgerMutation,不可反向。
-      const ghost = await this.withMutation(SOURCE_MUTATION_KEY, () =>
-        withGhostInstallLock(plugin.ghostId, async () => {
-          const installedNow = getGhostManager()
-            .list()
-            .find((ghost) => ghost.manifest.id === plugin.ghostId);
-          const currentRecordNow = ledger.installationForGhost(plugin.ghostId);
-          // 下载期间本地页可能装入、卸载或换源同 id 插件。提交点只认本地安装事实
-          // 与账本归属：首装目标突然出现、更新目标消失、或来源已不再属于当前官方
-          // 插件时全部拒绝，不能让官方包静默接管用户安装。
-          if (Boolean(installedNow) !== options.expectedInstalled) {
-            throwIpcError(
-              'PRECONDITION_FAILED',
-              installedNow
-                ? 'A local Plugin appeared with this Plugin ID during the install'
-                : 'Plugin was uninstalled while the update was downloading',
-            );
-          }
-          if (
-            installedNow &&
-            !serverMarketOwnsInstalledGhost(plugin.id, installedNow, currentRecordNow)
-          ) {
-            throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
-          }
-          // 仍可读来源之间的 ghostId 冲突按当前事实重算；不可读来源不再拥有全局
-          // 否决权，上面的本地事实检查独立保护已安装插件。
-          await options.recheckOwnership?.();
-          requireSameMarketOwner(owner);
-          const installedRawManifest = installedNow
-            ? installedGhostRawManifest(installedNow.dir)
-            : null;
-          // 市场首装一律装完即开(2026-07-26 定案,见 installOrUpdateMarketGhostPackage);
-          // 已装过则走原位更新,唤醒/沉睡状态延续当前值。
-          const installed = await installOrUpdateMarketGhostPackage(tempPath, {
-            ghostId: plugin.ghostId,
-            version: plugin.currentRelease.version,
-            ...(options.reviewPackagePermissions
-              ? {
-                  reviewPackagePermissions: true,
-                  ...(installedRawManifest
-                    ? { permissionBaselineManifest: installedRawManifest }
-                    : {}),
-                }
+      try {
+        return await this.commitDownloadedPackage(
+          tempPath,
+          plugin,
+          {
+            expectedInstalled: options.expectedInstalled,
+            ...(reviewedManifest?.ok
+              ? { reviewedManifest: reviewedManifest.manifest }
               : {}),
-            ...(options.approvedPackageSha256 !== undefined
-              ? {
-                  approvedPackageSha256: options.approvedPackageSha256,
-                  reviewedBaseline: options.reviewedBaseline,
-                }
+            allowPermissionExpansion: options.allowPermissionExpansion,
+            reviewedBaseline: options.reviewedBaseline,
+          },
+          owner,
+          ledger,
+        );
+      } catch (error) {
+        if (!(error instanceof GhostPackagePermissionReviewRequiredError)) throw error;
+        requireSameMarketOwner(owner);
+        const approved = await options.reviewPackagePermissions?.(error.review);
+        requireSameMarketOwner(owner);
+        if (approved !== true) return null;
+        return this.commitDownloadedPackage(
+          tempPath,
+          plugin,
+          {
+            expectedInstalled: options.expectedInstalled,
+            ...(reviewedManifest?.ok
+              ? { reviewedManifest: reviewedManifest.manifest }
               : {}),
-          });
-          // Once the package directory is committed, finish provenance against
-          // the owner captured at operation start even if the active session
-          // changes. The bound ledger prevents this write from leaking into the
-          // new owner.
-          await this.withCapturedLedgerMutation(ledger, () => {
-            ledger.upsertInstallation(recordFrom(plugin, 'market', installed));
-          });
-          return installed;
-        }),
-      );
-      return ghost;
+            allowPermissionExpansion: options.allowPermissionExpansion,
+            reviewedBaseline: options.reviewedBaseline,
+            approvedPackageSha256: error.review.packageSha256,
+            approvedPackageBaseline: error.review.installedBaseline,
+          },
+          owner,
+          ledger,
+        );
+      }
     } finally {
       await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
     }
+  }
+
+  /** 首次安装前清掉上次异常退出留下的专用临时目录，并只初始化一次。 */
+  private prepareInstallTempRoot(): Promise<void> {
+    this.installTempReady ??= (async () => {
+      await fs.promises.rm(this.installTempRoot, { recursive: true, force: true });
+      await fs.promises.mkdir(this.installTempRoot, { recursive: true, mode: 0o700 });
+    })();
+    return this.installTempReady;
+  }
+
+  /** 把已验证临时包提交到运行时；确认前后复用同一文件。 */
+  private async commitDownloadedPackage(
+    tempPath: string,
+    plugin: VisiblePluginSummary | VisiblePluginDetail,
+    options: {
+      reviewedManifest?: GhostManifest;
+      allowPermissionExpansion?: boolean;
+      reviewedBaseline?: string;
+      approvedPackageSha256?: string;
+      approvedPackageBaseline?: string | null;
+      expectedInstalled: boolean;
+    },
+    owner: ActiveAppSession,
+    ledger: PluginMarketLedger,
+  ): Promise<InstalledGhost> {
+    return withGhostInstallLock(plugin.ghostId, async () => {
+      const installedNow = getGhostManager()
+        .list()
+        .find((ghost) => ghost.manifest.id === plugin.ghostId);
+      const currentRecordNow = ledger.installationForGhost(plugin.ghostId);
+      if (Boolean(installedNow) !== options.expectedInstalled) {
+        throwIpcError(
+          'PRECONDITION_FAILED',
+          installedNow
+            ? 'A local Plugin appeared with this Plugin ID during the install'
+            : 'Plugin was uninstalled while the update was downloading',
+        );
+      }
+      if (
+        installedNow &&
+        !serverMarketOwnsInstalledGhost(plugin.id, installedNow, currentRecordNow)
+      ) {
+        throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
+      }
+      requireSameMarketOwner(owner);
+      this.assertServerPreviewExpansionApproved(
+        installedNow?.manifest ?? null,
+        options.reviewedManifest,
+        options.allowPermissionExpansion,
+        options.reviewedBaseline,
+      );
+      const installedRawManifest = installedNow
+        ? installedGhostRawManifest(installedNow.dir)
+        : null;
+      const installed = await installOrUpdateMarketGhostPackage(tempPath, {
+        ghostId: plugin.ghostId,
+        version: plugin.currentRelease.version,
+        ...(options.reviewedManifest
+          ? {
+              reviewedManifest: options.reviewedManifest,
+              ...(installedRawManifest
+                ? { permissionBaselineManifest: installedRawManifest }
+                : {}),
+            }
+          : {}),
+        ...(options.approvedPackageSha256 !== undefined
+          ? {
+              approvedPackageSha256: options.approvedPackageSha256,
+              ...(options.approvedPackageBaseline !== null
+                ? { reviewedBaseline: options.approvedPackageBaseline }
+                : {}),
+            }
+          : {}),
+      });
+      await this.withCapturedLedgerMutation(ledger, () => {
+        ledger.upsertInstallation(recordFrom(plugin, 'market', installed));
+      });
+      return installed;
+    });
+  }
+
+  private assertServerPreviewExpansionApproved(
+    installed: GhostManifest | null,
+    reviewedManifest: GhostManifest | undefined,
+    allowPermissionExpansion: boolean | undefined,
+    reviewedBaseline: string | undefined,
+  ): void {
+    if (
+      !installed ||
+      !reviewedManifest ||
+      diffGhostPermissionItems(installed, reviewedManifest).added.length === 0
+    ) {
+      return;
+    }
+    if (allowPermissionExpansion !== true) {
+      throwIpcError('PRECONDITION_FAILED', 'Plugin permissions changed and require review');
+    }
+    assertReviewedBaselineFresh(installed, reviewedBaseline);
   }
 
   private requireConfigured(): void {
@@ -1243,7 +1249,6 @@ export class PluginMarketService {
 
   private toItem(
     plugin: VisiblePluginSummary,
-    duplicateGhostIds: ReadonlySet<string> = NO_DUPLICATE_GHOST_IDS,
     local = this.localInstallSnapshot(),
   ): PluginMarketItem {
     const ghost = local.ghostsById.get(plugin.ghostId);
@@ -1251,13 +1256,8 @@ export class PluginMarketService {
     const ownsInstall = Boolean(
       ghost && serverMarketOwnsInstalledGhost(plugin.id, ghost, record ?? null),
     );
-    // 与自定义侧 customToItem 对齐:已拥有当前安装记录的来源保留所有权
-    // (installed / update-available),duplicate 只标未拥有安装的竞争来源,
-    // 避免先安装者被重复 ghostId 降格、失去更新入口。
-    const conflict = Boolean(
-      (duplicateGhostIds.has(plugin.ghostId) && !ownsInstall) ||
-        (ghost && !ownsInstall),
-    );
+    // 未安装的其它市场条目不拥有 ghostId；真实已安装插件才建立所有权边界。
+    const conflict = Boolean(ghost && !ownsInstall);
     const installState: PluginMarketItem['installState'] = conflict
       ? 'conflict'
       : !ownsInstall
@@ -1442,8 +1442,6 @@ export class PluginMarketService {
     plugins: readonly VisiblePluginSummary[],
     owner: ActiveAppSession,
     ledger: PluginMarketLedger,
-    /** 服务端 + 全部自定义来源合并算出的重复 ghostId;命中的默认项一律跳过。 */
-    duplicateGhostIds: ReadonlySet<string>,
   ): Promise<void> {
     const installSubject = defaultInstallSubject(owner);
     const counts = ghostIdCounts(plugins);
@@ -1456,12 +1454,9 @@ export class PluginMarketService {
     const local = this.localInstallSnapshot(ledger, ledgerData.installations);
     for (const summary of plugins) {
       if (!summary.defaultInstall || !uniqueGhostIds.has(summary.ghostId)) continue;
-      // 跨来源重名:自动安装会替用户做出"服务端胜出"的抢占决定,必须交回用户手动
-      // 处置(列表把两边都标成 conflict)。
-      if (duplicateGhostIds.has(summary.ghostId)) continue;
       if (ledgerData.defaultInstallOptOuts[installSubject]?.includes(summary.id)) continue;
       if (isBuiltinGhostRemovedByUser(summary.ghostId)) continue;
-      const state = this.toItem(summary, duplicateGhostIds, local).installState;
+      const state = this.toItem(summary, local).installState;
       if (state !== 'not-installed') continue;
       try {
         await this.withMutation(summary.id, async () => {
@@ -1471,15 +1466,6 @@ export class PluginMarketService {
             summary,
             {
               expectedInstalled: false,
-              // 默认安装同样有下载窗口:提交前按当前事实重算跨来源所有权,
-              // 复用已有的服务端目录,不额外打网络请求。
-              recheckOwnership: () =>
-                this.assertSourceOwnsGhostId({
-                  owner,
-                  ghostId: summary.ghostId,
-                  ownsInstall: false,
-                  knownServerPlugins: plugins,
-                }),
             },
             owner,
             ledger,

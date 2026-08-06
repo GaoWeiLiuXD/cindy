@@ -1,6 +1,8 @@
 import {
+  parseGetPluginResponse,
   parseListPluginsResponse,
   parsePluginDownloadResponse,
+  type GetPluginResponse,
   type ListPluginsResponse,
   type PluginRemovalNotice,
   type PluginDownloadResponse,
@@ -70,6 +72,14 @@ export class PluginMarketApi {
       cursor = response.nextCursor;
     }
     throw new Error('Plugin 市场分页超过安全上限');
+  }
+
+  async detail(pluginId: string): Promise<GetPluginResponse['plugin']> {
+    return parseGetPluginResponse(
+      await this.fetcher<unknown>(`/api/plugins/${encodeURIComponent(pluginId)}`, {
+        cache: 'no-store',
+      }),
+    ).plugin;
   }
 
   async download(

@@ -29,9 +29,7 @@ export function MarketPluginDetailView({
   const presentationOrigin = pluginPresentationOrigin(detail);
   // 自定义市场（Git/本地源）的包字节未经服务端校验，安全说明必须如实区分。
   const isCustomSource = detail.sourceType !== 'server';
-  const permissions = isCustomSource && detail.manifest
-    ? ghostPermissionItems(detail.manifest)
-    : [];
+  const permissions = ghostPermissionItems(detail.manifest);
   const actionKey =
     detail.installState === 'update-available'
       ? 'settings.ghosts.market.update'
@@ -134,8 +132,7 @@ export function MarketPluginDetailView({
           </div>
         </section>
 
-        {isCustomSource ? (
-          <section className="mt-10" aria-labelledby="market-permissions-title">
+        <section className="mt-10" aria-labelledby="market-permissions-title">
             <div className="flex items-baseline gap-2">
               <h2
                 id="market-permissions-title"
@@ -163,8 +160,7 @@ export function MarketPluginDetailView({
                 </div>
               )}
             </div>
-          </section>
-        ) : null}
+        </section>
       </article>
     </main>
   );

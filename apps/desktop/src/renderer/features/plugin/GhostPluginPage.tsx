@@ -769,62 +769,23 @@ export function GhostPluginPage() {
     [t],
   );
 
-  /** 官方市场权限只展示 Main 验证后的真实包，并用包 SHA + 已装基线绑定重试。 */
+  /** 真实包的追加确认由窗口级 Host 在这一次 install IPC 事务内完成。 */
   const installReviewedMarketPackage = useCallback(
     async (input: {
       detail: PluginMarketDetail;
       lease: { pluginId: string };
       options: PluginMarketInstallOptions;
     }): Promise<InstalledGhost | null> => {
-      const initial = await window.electronAPI.pluginMarket.install(
+      const result = await window.electronAPI.pluginMarket.install(
         input.detail.pluginId,
         input.options,
       );
-      if (initial.ghost !== undefined) return initial.ghost;
-      if (!isMarketBusyLeaseActive(input.lease)) return null;
-
-      const review = initial.reviewRequired;
-      if (!review) return null;
-      const isUpdateReview = review.permissionDiff !== null;
-      const approved = await confirm({
-        title: isUpdateReview
-          ? t('settings.ghosts.updateConfirm.title', { name: input.detail.name })
-          : t('settings.ghosts.market.installConfirmTitle', { name: input.detail.name }),
-        description: isUpdateReview
-          ? t('settings.ghosts.market.updateConfirmDescription')
-          : t('settings.ghosts.market.installConfirmDescription'),
-        content: isUpdateReview ? (
-          <GhostUpdateReview diff={review.permissionDiff!} />
-        ) : (
-          <GhostPermissionList items={ghostPermissionItems(review.manifest)} />
-        ),
-        maxWidth: 520,
-        confirmText: isUpdateReview
-          ? t('settings.ghosts.updateConfirm.confirm')
-          : t('settings.ghosts.market.install'),
-        cancelText: isUpdateReview
-          ? t('settings.ghosts.updateConfirm.cancel')
-          : t('settings.ghosts.installConfirm.cancel'),
-        autoFocusConfirm: true,
-      });
-      if (!approved || !isMarketBusyLeaseActive(input.lease)) return null;
-
-      const retried = await window.electronAPI.pluginMarket.install(input.detail.pluginId, {
-        ...input.options,
-        reviewedBaseline: review.installedBaseline ?? undefined,
-        approvedPackageSha256: review.packageSha256,
-      });
-      if (retried.ghost !== undefined) return retried.ghost;
-
-      // 同一 release 的真实包不应漂移；再次要求复核说明已装基线在往返窗口内变化。
-      toast.error(t('settings.ghosts.market.errors.stateChanged'));
-      await refreshMarket();
-      return null;
+      return result.ghost ?? null;
     },
-    [confirm, isMarketBusyLeaseActive, refreshMarket, t],
+    [],
   );
 
-  // 官方更新直接交给 Main 下载并解析真实包；自定义市场继续审阅其本地真实清单。
+  // 所有来源先展示详情清单；官方包下载后仍以真实包清单兜底发现额外权限。
   const handleMarketUpdate = useCallback(
     async (ghostId: string) => {
       const marketItem = marketByGhostId.get(ghostId);
@@ -836,33 +797,30 @@ export function GhostPluginPage() {
       try {
         const next = await window.electronAPI.pluginMarket.detail(marketItem.pluginId);
         if (!isMarketBusyLeaseActive(marketBusyLease)) return;
-        let options: PluginMarketInstallOptions = { expectedReleaseId: next.releaseId };
-        if (next.sourceType !== 'server') {
-          const diff = diffGhostPermissionItems(
-            installedGhost?.manifest ?? next.manifest!,
-            next.manifest!,
-          );
-          const approved = await confirm({
-            title: t('settings.ghosts.updateConfirm.title', { name: next.name }),
-            description: t('settings.ghosts.updateConfirm.body', {
-              from: installedGhost?.manifest.version ?? next.version,
-              to: next.version,
-            }),
-            content: <GhostUpdateReview diff={diff} />,
-            maxWidth: 520,
-            confirmText: t('settings.ghosts.updateConfirm.confirm'),
-            cancelText: t('settings.ghosts.updateConfirm.cancel'),
-          });
-          if (!approved || !isMarketBusyLeaseActive(marketBusyLease)) return;
-          options = {
-            expectedReleaseId: next.releaseId,
-            expectedManifest: next.manifest!,
-            allowPermissionExpansion: diff.added.length > 0,
-            ...(installedGhost
-              ? { reviewedBaseline: ghostPermissionBaselineKey(installedGhost.manifest) }
-              : {}),
-          };
-        }
+        const diff = diffGhostPermissionItems(
+          installedGhost?.manifest ?? next.manifest,
+          next.manifest,
+        );
+        const approved = await confirm({
+          title: t('settings.ghosts.updateConfirm.title', { name: next.name }),
+          description: t('settings.ghosts.updateConfirm.body', {
+            from: installedGhost?.manifest.version ?? next.version,
+            to: next.version,
+          }),
+          content: <GhostUpdateReview diff={diff} />,
+          maxWidth: 520,
+          confirmText: t('settings.ghosts.updateConfirm.confirm'),
+          cancelText: t('settings.ghosts.updateConfirm.cancel'),
+        });
+        if (!approved || !isMarketBusyLeaseActive(marketBusyLease)) return;
+        const options: PluginMarketInstallOptions = {
+          expectedReleaseId: next.releaseId,
+          expectedManifest: next.manifest,
+          allowPermissionExpansion: diff.added.length > 0,
+          ...(installedGhost
+            ? { reviewedBaseline: ghostPermissionBaselineKey(installedGhost.manifest) }
+            : {}),
+        };
         const ghost = await installReviewedMarketPackage({
           detail: next,
           lease: marketBusyLease,
@@ -1173,63 +1131,62 @@ export function GhostPluginPage() {
       // 生效状态 —— 文案必须分支,不能对更新路径承诺"装完即开"(review P1)。
       const isUpdate = marketDetail.installState === 'update-available';
       try {
-        let options: PluginMarketInstallOptions = {
-          expectedReleaseId: marketDetail.releaseId,
-        };
-        if (marketDetail.sourceType !== 'server') {
-          let installedGhost =
-            ghosts.find((ghost) => ghost.manifest.id === marketDetail.ghostId) ?? null;
-          if (isUpdate && !installedGhost) {
-            installedGhost =
-              window.electronAPI.ghosts
-                .listSync()
-                .ghosts.find((ghost) => ghost.manifest.id === marketDetail.ghostId) ?? null;
-          }
-          if (isUpdate && !installedGhost) {
-            toast.error(t('settings.ghosts.market.errors.stateChanged'));
-            await refreshMarket();
-            return;
-          }
-          const diff = isUpdate
-            ? diffGhostPermissionItems(installedGhost!.manifest, marketDetail.manifest!)
-            : null;
-          const confirmed = await confirm({
-            title: isUpdate
-              ? t('settings.ghosts.updateConfirm.title', { name: marketDetail.name })
-              : t('settings.ghosts.market.installConfirmTitle', {
-                  name: marketDetail.name,
-                }),
-            description: isUpdate
-              ? t('settings.ghosts.market.updateConfirmDescription')
-              : t('settings.ghosts.market.customInstallConfirmDescription'),
-            content: isUpdate ? (
-              <GhostUpdateReview diff={diff!} />
-            ) : (
-              <GhostPermissionList items={ghostPermissionItems(marketDetail.manifest!)} />
-            ),
-            maxWidth: 520,
-            confirmText: isUpdate
-              ? t('settings.ghosts.updateConfirm.confirm')
-              : t('settings.ghosts.market.install'),
-            cancelText: isUpdate
-              ? t('settings.ghosts.updateConfirm.cancel')
-              : t('settings.ghosts.installConfirm.cancel'),
-            autoFocusConfirm: true,
-          });
-          if (!confirmed || !isMarketBusyLeaseActive(marketBusyLease)) return;
-          options = {
-            expectedReleaseId: marketDetail.releaseId,
-            expectedManifest: marketDetail.manifest!,
-            ...(isUpdate && diff!.added.length > 0
-              ? {
-                  allowPermissionExpansion: true,
-                  ...(installedGhost
-                    ? { reviewedBaseline: ghostPermissionBaselineKey(installedGhost.manifest) }
-                    : {}),
-                }
-              : {}),
-          };
+        let installedGhost =
+          ghosts.find((ghost) => ghost.manifest.id === marketDetail.ghostId) ?? null;
+        if (isUpdate && !installedGhost) {
+          installedGhost =
+            window.electronAPI.ghosts
+              .listSync()
+              .ghosts.find((ghost) => ghost.manifest.id === marketDetail.ghostId) ?? null;
         }
+        if (isUpdate && !installedGhost) {
+          toast.error(t('settings.ghosts.market.errors.stateChanged'));
+          await refreshMarket();
+          return;
+        }
+        const diff = isUpdate
+          ? diffGhostPermissionItems(installedGhost!.manifest, marketDetail.manifest)
+          : null;
+        const confirmed = await confirm({
+          title: isUpdate
+            ? t('settings.ghosts.updateConfirm.title', { name: marketDetail.name })
+            : t('settings.ghosts.market.installConfirmTitle', {
+                name: marketDetail.name,
+              }),
+          description: isUpdate
+            ? t('settings.ghosts.market.updateConfirmDescription')
+            : t(
+                marketDetail.sourceType === 'server'
+                  ? 'settings.ghosts.market.installConfirmDescription'
+                  : 'settings.ghosts.market.customInstallConfirmDescription',
+              ),
+          content: isUpdate ? (
+            <GhostUpdateReview diff={diff!} />
+          ) : (
+            <GhostPermissionList items={ghostPermissionItems(marketDetail.manifest)} />
+          ),
+          maxWidth: 520,
+          confirmText: isUpdate
+            ? t('settings.ghosts.updateConfirm.confirm')
+            : t('settings.ghosts.market.install'),
+          cancelText: isUpdate
+            ? t('settings.ghosts.updateConfirm.cancel')
+            : t('settings.ghosts.installConfirm.cancel'),
+          autoFocusConfirm: true,
+        });
+        if (!confirmed || !isMarketBusyLeaseActive(marketBusyLease)) return;
+        const options: PluginMarketInstallOptions = {
+          expectedReleaseId: marketDetail.releaseId,
+          expectedManifest: marketDetail.manifest,
+          ...(isUpdate && diff!.added.length > 0
+            ? {
+                allowPermissionExpansion: true,
+                ...(installedGhost
+                  ? { reviewedBaseline: ghostPermissionBaselineKey(installedGhost.manifest) }
+                  : {}),
+              }
+            : {}),
+        };
         const ghost = await installReviewedMarketPackage({
           detail: marketDetail,
           lease: marketBusyLease,

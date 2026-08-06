@@ -14,7 +14,18 @@ vi.mock('react-i18next', () => ({
 }));
 
 import { MarketPluginDetailView } from '../MarketPluginDetailView';
+import type { GhostManifest } from '../../../../shared/ghost';
 import type { PluginMarketDetail } from '../../../../shared/pluginMarket';
+
+const manifest: GhostManifest = {
+  schemaVersion: 2,
+  id: 'google-calendar',
+  name: 'Google Calendar',
+  version: '1.3.11',
+  kind: 'chip',
+  entry: 'main.js',
+  slots: ['notify'],
+};
 
 const detail: PluginMarketDetail = {
   pluginId: 'release-google-calendar',
@@ -33,6 +44,7 @@ const detail: PluginMarketDetail = {
   enabled: null,
   sourceType: 'server',
   sourceMarketName: null,
+  manifest,
 };
 
 const renderDetail = (overrides: Partial<PluginMarketDetail> = {}) =>
@@ -58,9 +70,9 @@ describe('MarketPluginDetailView', () => {
     ).toBeNull();
   });
 
-  it('does not present server catalog permissions before the package is downloaded', () => {
+  it('presents server catalog permissions before the package is downloaded', () => {
     renderDetail();
-    expect(screen.queryByText('settings.ghosts.perm.grantsTitle')).toBeNull();
+    expect(screen.getByText('settings.ghosts.perm.grantsTitle')).toBeTruthy();
   });
 
   it('explains why a conflicting plugin is unavailable and binds it to the action', () => {

@@ -62,6 +62,7 @@ vi.mock('../download.js', () => ({
 
 import type {
   PluginRemovalNotice,
+  VisiblePluginDetail,
   VisiblePluginSummary,
 } from '@cindy/plugin-protocol';
 
@@ -145,6 +146,13 @@ function summary(
   };
 }
 
+function reviewedInstallOptions(item: VisiblePluginSummary) {
+  return {
+    expectedReleaseId: item.currentRelease.id,
+    expectedManifest: manifest(item.ghostId, item.currentRelease.version),
+  };
+}
+
 function removal(
   overrides: Partial<PluginRemovalNotice> = {},
 ): PluginRemovalNotice {
@@ -168,6 +176,17 @@ function harness(
   const ledger = new PluginMarketLedger(path.join(root, 'ledger.json'));
   const api = {
     listAll: vi.fn(async () => ({ plugins: items, removals })),
+    detail: vi.fn(async (pluginId: string) => {
+      const item = items.find((candidate) => candidate.id === pluginId);
+      if (!item) throw new Error('not found');
+      return {
+        ...item,
+        currentRelease: {
+          ...item.currentRelease,
+          manifest: manifest(item.ghostId, item.currentRelease.version),
+        },
+      } satisfies VisiblePluginDetail;
+    }),
     download: vi.fn(async () => ({
       url: 'https://downloads.test.invalid/plugin.cindy',
       expiresAt: '2099-01-01T00:00:00.000Z',
@@ -480,21 +499,21 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    const { ghost } = await h.service.install(item.id, { expectedReleaseId: item.currentRelease.id });
+    const { ghost } = await h.service.install(item.id, reviewedInstallOptions(item));
 
     expect(runtime.install).toHaveBeenCalledWith(
       expect.stringMatching(/\.cindy$/),
       {
         ghostId: 'cindy-test',
         version: '1.0.0',
-        reviewPackagePermissions: true,
+        reviewedManifest: manifest(),
       },
     );
     // 锁定装完即开的最终结果:装入入口返回的 ghost 必须是启用态。
     expect(ghost?.enabled).toBe(true);
   });
 
-  it('does not use the server manifest as the permission approval source', async () => {
+  it('passes the reviewed server manifest to the package verification boundary', async () => {
     const item = summary();
     runtime.install.mockResolvedValue({
       manifest: manifest(),
@@ -503,15 +522,14 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    await h.service.install(item.id, { expectedReleaseId: item.currentRelease.id });
+    await h.service.install(item.id, reviewedInstallOptions(item));
 
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
-      reviewPackagePermissions: true,
+      reviewedManifest: manifest(),
     });
-    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('reviewedManifest');
   });
 
-  it('returns a recoverable package review result and forwards the bound approval on retry', async () => {
+  it('pauses one install transaction for package review and reuses the download', async () => {
     const item = summary();
     const review = {
       manifest: manifest('cindy-test', '1.0.0', ['notify', 'fs']),
@@ -519,31 +537,25 @@ describe('PluginMarketService migration and defaultInstall', () => {
       packageSha256: 'a'.repeat(64),
       installedBaseline: null,
     };
-    runtime.install.mockRejectedValueOnce(
-      new GhostPackagePermissionReviewRequiredError(review),
-    );
+    runtime.install
+      .mockRejectedValueOnce(new GhostPackagePermissionReviewRequiredError(review))
+      .mockResolvedValueOnce({
+        manifest: manifest(),
+        dir: '/userData/cindy-brain/cindy-test',
+        enabled: true,
+      });
     const h = harness([item]);
+    const confirmReview = vi.fn(async () => true);
 
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
-    ).resolves.toEqual({ reviewRequired: review });
-    expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
-
-    runtime.install.mockResolvedValueOnce({
-      manifest: manifest(),
-      dir: '/userData/cindy-brain/cindy-test',
-      enabled: true,
-    });
-    await expect(
-      h.service.install(item.id, {
-        expectedReleaseId: item.currentRelease.id,
-        approvedPackageSha256: review.packageSha256,
-      }),
+      h.service.install(item.id, reviewedInstallOptions(item), confirmReview),
     ).resolves.toMatchObject({ ghost: { manifest: { id: item.ghostId } } });
+    expect(confirmReview).toHaveBeenCalledWith(review);
+    expect(h.api.download).toHaveBeenCalledTimes(1);
     expect(runtime.install).toHaveBeenLastCalledWith(
       expect.stringMatching(/\.cindy$/),
       expect.objectContaining({
-        reviewPackagePermissions: true,
+        reviewedManifest: manifest(),
         approvedPackageSha256: review.packageSha256,
       }),
     );
@@ -568,7 +580,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const h = harness([item]);
 
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+      h.service.install(item.id, reviewedInstallOptions(item)),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
   });
@@ -601,7 +613,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       manifestDigest: ghostManifestDigest(installed),
     });
 
-    await h.service.install(item.id, { expectedReleaseId: item.currentRelease.id });
+    await h.service.install(item.id, reviewedInstallOptions(item));
 
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
       permissionBaselineManifest: installed,
@@ -627,7 +639,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
 
     expect((await h.service.snapshot()).items[0]?.installState).toBe('conflict');
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+      h.service.install(item.id, reviewedInstallOptions(item)),
     ).rejects.toThrow('[ALREADY_EXISTS]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
@@ -654,7 +666,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       version: '1.0.0',
     });
 
-    await h.service.install(item.id, { expectedReleaseId: item.currentRelease.id });
+    await h.service.install(item.id, reviewedInstallOptions(item));
 
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
       permissionBaselineManifest: installed,
@@ -708,7 +720,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).resolves.toMatchObject({
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
       ghost: { manifest: { id: 'cindy-test' }, enabled: false },
     });
     expect(h.api.download).toHaveBeenCalledWith(item.id, item.currentRelease.id);
@@ -733,9 +745,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
 
     const order: string[] = [];
-    const installing = h.service.install(item.id, {
-      expectedReleaseId: item.currentRelease.id,
-    });
+    const installing = h.service.install(item.id, reviewedInstallOptions(item));
     // 等安装推进到持锁并阻塞在 runtime.install 上。
     await vi.waitFor(() => expect(runtime.install).toHaveBeenCalled());
     const outsider = withGhostInstallLock(item.ghostId, async () => {
@@ -767,7 +777,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
     const h = harness([item]);
 
-    await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).rejects.toThrow('[NOT_FOUND]');
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow('[NOT_FOUND]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
 
@@ -1186,7 +1196,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       installed: false,
     });
 
-    await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).rejects.toThrow('[ALREADY_EXISTS]');
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow('[ALREADY_EXISTS]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
 
@@ -1210,13 +1220,13 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
 
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+      h.service.install(item.id, reviewedInstallOptions(item)),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
     expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
   });
 
-  it('returns the real package review before an update can add permissions', async () => {
+  it('continues the same update transaction after real-package approval', async () => {
     const item = summary({
       currentRelease: {
         ...summary().currentRelease,
@@ -1252,23 +1262,18 @@ describe('PluginMarketService migration and defaultInstall', () => {
       version: '1.0.0',
     });
 
+    const confirmReview = vi.fn(async () => true);
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
-    ).resolves.toEqual({ reviewRequired: review });
-
-    await expect(
-      h.service.install(item.id, {
-        expectedReleaseId: item.currentRelease.id,
-        reviewedBaseline: review.installedBaseline,
-        approvedPackageSha256: review.packageSha256,
-      }),
+      h.service.install(item.id, reviewedInstallOptions(item), confirmReview),
     ).resolves.toMatchObject({
       ghost: { manifest: { version: '2.0.0' } },
     });
+    expect(confirmReview).toHaveBeenCalledWith(review);
+    expect(h.api.download).toHaveBeenCalledTimes(1);
     expect(runtime.install).toHaveBeenCalledTimes(2);
   });
 
-  it('forwards the real-package approval binding to the install boundary', async () => {
+  it('cancels the current transaction when real-package approval is declined', async () => {
     const item = summary({
       currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
     });
@@ -1279,30 +1284,26 @@ describe('PluginMarketService migration and defaultInstall', () => {
         enabled: true,
       },
     ];
-    runtime.install.mockResolvedValue({
+    const review = {
       manifest: manifest('cindy-test', '2.0.0', ['notify', 'fs']),
-      dir: '/userData/cindy-brain/cindy-test',
-      enabled: true,
-    });
+      permissionDiff: diffGhostPermissionItems(
+        manifest(),
+        manifest('cindy-test', '2.0.0', ['notify', 'fs']),
+      ),
+      packageSha256: 'a'.repeat(64),
+      installedBaseline: ghostPermissionBaselineKey(manifest()),
+    };
+    runtime.install.mockRejectedValueOnce(
+      new GhostPackagePermissionReviewRequiredError(review),
+    );
     const h = harness([item]);
     h.ledger.upsertInstallation({ ...recordForTest(item), releaseId: 'release-1', version: '1.0.0' });
-    const reviewedBaseline = ghostPermissionBaselineKey(manifest());
-    const approvedPackageSha256 = 'b'.repeat(64);
+
     await expect(
-      h.service.install(item.id, {
-        expectedReleaseId: item.currentRelease.id,
-        reviewedBaseline,
-        approvedPackageSha256,
-      }),
-    ).resolves.toMatchObject({ ghost: { manifest: { version: '2.0.0' } } });
-    expect(runtime.install).toHaveBeenCalledWith(
-      expect.stringMatching(/\.cindy$/),
-      expect.objectContaining({
-        reviewPackagePermissions: true,
-        reviewedBaseline,
-        approvedPackageSha256,
-      }),
-    );
+      h.service.install(item.id, reviewedInstallOptions(item), async () => false),
+    ).resolves.toEqual({ cancelled: true });
+    expect(h.api.download).toHaveBeenCalledTimes(1);
+    expect(runtime.install).toHaveBeenCalledTimes(1);
   });
 
   it('captures the current installed package as the review baseline after download', async () => {
@@ -1333,7 +1334,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const h = harness([item]);
     h.ledger.upsertInstallation({ ...recordForTest(item), releaseId: 'release-1', version: '1.0.0' });
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+      h.service.install(item.id, reviewedInstallOptions(item)),
     ).resolves.toMatchObject({ ghost: { manifest: { version: '2.0.0' } } });
     expect(runtime.install).toHaveBeenCalledWith(
       expect.stringMatching(/\.cindy$/),
@@ -1368,7 +1369,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
 
     await expect(
-      h.service.install(item.id, { expectedReleaseId: item.currentRelease.id }),
+      h.service.install(item.id, reviewedInstallOptions(item)),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
@@ -1387,9 +1388,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     h.api.listAll.mockResolvedValueOnce({ plugins: [replacement], removals: [] });
 
     await expect(
-      h.service.install(reviewed.id, {
-        expectedReleaseId: reviewed.currentRelease.id,
-      }),
+      h.service.install(reviewed.id, reviewedInstallOptions(reviewed)),
     ).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(h.api.download).not.toHaveBeenCalled();
     expect(runtime.install).not.toHaveBeenCalled();
@@ -1405,7 +1404,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       sizeBytes: item.currentRelease.sizeBytes,
     });
 
-    await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).rejects.toThrow('[PRECONDITION_FAILED]');
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
   });
 
@@ -1421,7 +1420,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       return { plugins: [item], removals: [] };
     });
 
-    await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).rejects.toThrow('[PRECONDITION_FAILED]');
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow('[PRECONDITION_FAILED]');
     expect(runtime.install).not.toHaveBeenCalled();
     expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
   });
@@ -1444,7 +1443,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       return installedGhost;
     });
 
-    await expect(h.service.install(item.id, { expectedReleaseId: item.currentRelease.id })).resolves.toEqual({
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toEqual({
       ghost: installedGhost,
     });
     expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({

@@ -17,6 +17,7 @@ import {
   GHOST_NOTIFY_MIN_INTERVAL_MS,
   diffGhostPermissionItems,
   ghostPermissionBaselineKey,
+  unreviewedGhostPermissionItems,
   ghostWebviewEntryPaths,
   isCindyAccountGhostId,
   isOfficialGhostId,
@@ -33,7 +34,7 @@ import {
   type GhostVideoResultParams,
   type InstalledGhost,
 } from '../../shared/ghost.js';
-import type { PluginMarketPackageReview } from '../../shared/pluginMarket.js';
+import type { PluginMarketPackageReviewFacts } from '../../shared/pluginMarket.js';
 import { getAppCapabilities } from '../appCapabilities.js';
 import {
   activeOwnerScopeKey,
@@ -3513,10 +3514,10 @@ export async function installOrUpdateMarketGhostPackage(
     ghostId: string;
     version: string;
     /**
-     * 是否由本出口基于真实包裁决权限复核。官方手动安装开启；默认安装与
-     * 已经逐字节绑定本地 manifest 的自定义市场关闭。
+     * 安装前实际展示给用户的 manifest。真实包若声明了未展示权限，会在
+     * 落盘前暂停并把同一份已验证包交给上层复核。
      */
-    reviewPackagePermissions?: boolean;
+    reviewedManifest?: GhostManifest;
     /** 当前已装包的原始清单；权限 diff 与批准基线只认这份本地事实。 */
     permissionBaselineManifest?: GhostManifest;
     /** 用户确认过的真实下载包 SHA 与确认时的已装权限基线。 */
@@ -3537,7 +3538,7 @@ async function installOrUpdateMarketGhostPackageLocked(
   expected: {
     ghostId: string;
     version: string;
-    reviewPackagePermissions?: boolean;
+    reviewedManifest?: GhostManifest;
     permissionBaselineManifest?: GhostManifest;
     approvedPackageSha256?: string;
     reviewedBaseline?: string;
@@ -3560,7 +3561,7 @@ async function installOrUpdateMarketGhostPackageLocked(
     }
     requireGhostAvailableForActiveSession(expected.ghostId);
     const installed = manager.list().find((ghost) => ghost.manifest.id === expected.ghostId);
-    if (expected.reviewPackagePermissions) {
+    if (expected.reviewedManifest) {
       const baselineManifest = expected.permissionBaselineManifest ?? installed?.manifest ?? null;
       const installedBaseline = baselineManifest
         ? ghostPermissionBaselineKey(baselineManifest)
@@ -3576,21 +3577,24 @@ async function installOrUpdateMarketGhostPackageLocked(
           'Downloaded Plugin package changed after permission review',
         );
       }
-      // 首装必须展示真实包的完整权限；更新只在真实包相对当前已装包扩权时复核。
-      const permissionDiff = baselineManifest
-        ? diffGhostPermissionItems(baselineManifest, inspected.canonicalManifest)
-        : null;
-      if (permissionDiff === null || permissionDiff.added.length > 0) {
-        const review: PluginMarketPackageReview = {
+      const unreviewed = unreviewedGhostPermissionItems(
+        expected.reviewedManifest,
+        baselineManifest ?? undefined,
+        inspected.canonicalManifest,
+      );
+      if (unreviewed.length > 0) {
+        const review: PluginMarketPackageReviewFacts = {
           manifest: inspected.manifest,
-          permissionDiff,
+          permissionDiff: baselineManifest
+            ? diffGhostPermissionItems(baselineManifest, inspected.canonicalManifest)
+            : null,
           packageSha256: inspected.packageSha256,
           installedBaseline,
         };
         if (expected.approvedPackageSha256 === undefined) {
           log.info('market package requires permission review', {
             ghostId: expected.ghostId,
-            keys: permissionDiff?.added.map((item) => item.key) ?? [],
+            keys: unreviewed.map((item) => item.key),
           });
           throw new GhostPackagePermissionReviewRequiredError(review);
         }

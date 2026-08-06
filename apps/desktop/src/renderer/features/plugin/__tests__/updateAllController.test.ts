@@ -1,7 +1,7 @@
 /**
  * Regression coverage for the module-level update-all batch controller:
- * uninstall guards, reviewed-manifest passthrough, package-review baseline
- * drift recovery, and batch state surviving page unmount (review 定稿 2026-08-04).
+ * uninstall guards, reviewed-manifest passthrough, cancellation handling,
+ * baseline drift recovery, and batch state surviving page unmount.
  * [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
  * @vitest-environment jsdom
  */
@@ -21,11 +21,7 @@ import {
   setDataOwnerGeneration,
 } from '@/contexts/dataOwnerGeneration';
 import { toast } from '@/lib/toast';
-import {
-  diffGhostPermissionItems,
-  ghostPermissionBaselineKey,
-  type GhostManifest,
-} from '../../../../shared/ghost';
+import type { GhostManifest } from '../../../../shared/ghost';
 import type { PluginMarketDetail, PluginMarketItem } from '../../../../shared/pluginMarket';
 import {
   __resetUpdateAllBatchForTest,
@@ -70,13 +66,11 @@ function marketItem(overrides: Partial<PluginMarketItem>): PluginMarketItem {
 
 const detailMock = vi.fn<(pluginId: string) => Promise<PluginMarketDetail>>();
 const installMock = vi.fn(async () => ({ ghost: { manifest: manifest({}) } }) as never);
-let serverPackageManifest: GhostManifest | null = null;
 
 function stubDetail(overrides: {
   manifest: GhostManifest;
   sourceType: PluginMarketDetail['sourceType'];
 }): void {
-  serverPackageManifest = overrides.sourceType === 'server' ? overrides.manifest : null;
   detailMock.mockResolvedValue({
     ...marketItem({ sourceType: overrides.sourceType }),
     manifest: overrides.manifest,
@@ -100,34 +94,9 @@ beforeEach(() => {
   // mockReset 而非 mockClear:用例可能装过"卡住不 resolve"的实现(并发编排),
   // 只清调用记录会让它泄漏到后面的用例里把 waitFor 全部拖超时。
   installMock.mockReset();
-  installMock.mockImplementation(async (...args: unknown[]) => {
-    const options = (args[1] ?? {}) as { approvedPackageSha256?: string };
-    const installed = installedGhosts[0]?.manifest;
-    const permissionDiff =
-      serverPackageManifest && installed
-        ? diffGhostPermissionItems(installed, serverPackageManifest)
-        : null;
-    if (
-      serverPackageManifest &&
-      installed &&
-      options.approvedPackageSha256 === undefined &&
-      permissionDiff &&
-      permissionDiff.added.length > 0
-    ) {
-      return {
-        reviewRequired: {
-          manifest: serverPackageManifest,
-          permissionDiff,
-          packageSha256: 'a'.repeat(64),
-          installedBaseline: ghostPermissionBaselineKey(installed),
-        },
-      } as never;
-    }
-    return { ghost: { manifest: manifest({}) } } as never;
-  });
+  installMock.mockResolvedValue({ ghost: { manifest: manifest({}) } } as never);
   vi.mocked(toast.success).mockClear();
   installedGhosts = [{ manifest: manifest({ version: '1.0.0' }) }];
-  serverPackageManifest = null;
   (window as unknown as { electronAPI: unknown }).electronAPI = {
     pluginMarket: { detail: detailMock, install: installMock },
   };
@@ -145,64 +114,33 @@ describe('updateAllController', () => {
     expect(installMock).not.toHaveBeenCalled();
   });
 
-  it('holds actual package permissions for approval', async () => {
-    stubDetail({ manifest: manifest({}), sourceType: 'server' });
+  it('holds server preview permission expansion for approval', async () => {
     const targetManifest = manifest({ network: { hosts: ['api.example.com'] } });
-    const review = {
-      manifest: targetManifest,
-      permissionDiff: diffGhostPermissionItems(installedGhosts[0].manifest, targetManifest),
-      packageSha256: 'a'.repeat(64),
-      installedBaseline: ghostPermissionBaselineKey(installedGhosts[0].manifest),
-    };
-    installMock.mockResolvedValueOnce({ reviewRequired: review } as never);
+    stubDetail({ manifest: targetManifest, sourceType: 'server' });
 
     startUpdateAllBatch([marketItem({})]);
     await waitForSettledBatch();
     expect(getUpdateAllBatchState().rows?.[0]).toMatchObject({
       status: 'needs-confirm',
       releaseId: 'release-2',
-      packageReview: review,
+      expectedManifest: targetManifest,
     });
 
     await approveUpdateExpansion('plugin-a');
     expect(installMock).toHaveBeenLastCalledWith(
       'plugin-a',
-      expect.objectContaining({
-        approvedPackageSha256: review.packageSha256,
-      }),
+      expect.objectContaining({ expectedManifest: targetManifest }),
     );
   });
 
-  it('keeps package review recoverable when the installed baseline drifts in flight', async () => {
+  it('marks a transaction cancelled in Main as skipped', async () => {
     stubDetail({ manifest: manifest({}), sourceType: 'server' });
-    const targetManifest = manifest({ network: { hosts: ['api.example.com'] } });
-    const review = {
-      manifest: targetManifest,
-      permissionDiff: diffGhostPermissionItems(installedGhosts[0].manifest, targetManifest),
-      packageSha256: 'a'.repeat(64),
-      installedBaseline: ghostPermissionBaselineKey(installedGhosts[0].manifest),
-    };
-    installMock.mockImplementationOnce(async () => {
-      installedGhosts = [{ manifest: manifest({ version: '1.0.5', slots: ['fs'] }) }];
-      return { reviewRequired: review } as never;
-    });
+    installMock.mockResolvedValueOnce({ cancelled: true } as never);
 
     startUpdateAllBatch([marketItem({})]);
     await waitForSettledBatch();
 
-    expect(getUpdateAllBatchState().rows?.[0]).toMatchObject({
-      status: 'needs-confirm',
-      staleReview: true,
-      releaseId: 'release-2',
-      fromVersion: '1.0.5',
-      toVersion: '1.1.0',
-    });
-
-    await approveUpdateExpansion('plugin-a');
-    expect(installMock).toHaveBeenLastCalledWith('plugin-a', {
-      expectedReleaseId: 'release-2',
-    });
-    expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
+    expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('skipped');
   });
 
   it('passes the reviewed manifest back when approving a non-server expansion', async () => {
@@ -226,7 +164,7 @@ describe('updateAllController', () => {
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
   });
 
-  it('omits expectedManifest when approving a server-source expansion', async () => {
+  it('passes expectedManifest when approving a server-source expansion', async () => {
     stubDetail({
       manifest: manifest({ network: { hosts: ['api.example.com'] } }),
       sourceType: 'server',
@@ -240,8 +178,8 @@ describe('updateAllController', () => {
       'plugin-a',
       expect.objectContaining({
         expectedReleaseId: 'release-2',
+        expectedManifest: expect.any(Object),
         reviewedBaseline: expect.any(String),
-        approvedPackageSha256: 'a'.repeat(64),
       }),
     );
   });
@@ -259,7 +197,7 @@ describe('updateAllController', () => {
     await approveUpdateExpansion('plugin-a');
 
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('skipped');
-    expect(installMock).toHaveBeenCalledTimes(1);
+    expect(installMock).not.toHaveBeenCalled();
   });
 
   it('recomputes the diff when an external update replaced the permission baseline', async () => {
@@ -283,7 +221,10 @@ describe('updateAllController', () => {
 
     await approveUpdateExpansion('plugin-a');
     // 相对当前已装 manifest 已无扩权 → 按普通更新安装,不带 allowPermissionExpansion。
-    expect(installMock).toHaveBeenCalledWith('plugin-a', { expectedReleaseId: 'release-2' });
+    expect(installMock).toHaveBeenCalledWith('plugin-a', {
+      expectedReleaseId: 'release-2',
+      expectedManifest: expect.any(Object),
+    });
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
   });
 
@@ -304,8 +245,8 @@ describe('updateAllController', () => {
     const row = getUpdateAllBatchState().rows?.[0];
     expect(row).toMatchObject({ status: 'needs-confirm', staleReview: false, fromVersion: '1.0.5' });
     expect(row?.permissionDiff?.added.length).toBeGreaterThan(0);
-    // 重算后仍是扩权:Main 返回一份绑定当前基线的新 packageReview。
-    expect(installMock).toHaveBeenCalledTimes(2);
+    // 重算后仍是扩权：停在当前批次等待用户重新确认，不提前调用安装。
+    expect(installMock).not.toHaveBeenCalled();
   });
 
   it('recomputes on baseline drift even before reconcile flagged the row', async () => {
@@ -323,7 +264,10 @@ describe('updateAllController', () => {
     ];
     await approveUpdateExpansion('plugin-a');
 
-    expect(installMock).toHaveBeenCalledWith('plugin-a', { expectedReleaseId: 'release-2' });
+    expect(installMock).toHaveBeenCalledWith('plugin-a', {
+      expectedReleaseId: 'release-2',
+      expectedManifest: expect.any(Object),
+    });
   });
 
   it('invalidates the review when a same-version manifest swap widened permissions', async () => {
@@ -344,8 +288,8 @@ describe('updateAllController', () => {
     expect(held?.permissionDiff).toBeUndefined();
 
     await approveUpdateExpansion('plugin-a');
-    // 相对新基线仍是扩权 → Main 重新生成真实包复核，绝不沿用旧批准。
-    expect(installMock).toHaveBeenCalledTimes(2);
+    // 相对新基线仍是扩权 → 回到预览权限确认，绝不沿用旧批准或提前安装。
+    expect(installMock).not.toHaveBeenCalled();
     expect(getUpdateAllBatchState().rows?.[0]).toMatchObject({
       status: 'needs-confirm',
       staleReview: false,
@@ -374,7 +318,6 @@ describe('updateAllController', () => {
       expect.objectContaining({
         expectedReleaseId: 'release-2',
         reviewedBaseline: expect.any(String),
-        approvedPackageSha256: 'a'.repeat(64),
       }),
     );
   });
@@ -418,7 +361,7 @@ describe('updateAllController', () => {
     installedGhosts = [{ manifest: manifest({ version: '1.1.0' }) }];
     reconcileUpdateAllBatch([marketItem({ installState: 'installed' })]);
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
-    expect(installMock).toHaveBeenCalledTimes(1);
+    expect(installMock).not.toHaveBeenCalled();
 
     // 账号切换后对账直接作废整批。
     startUpdateAllBatch([]);
@@ -448,7 +391,6 @@ describe('updateAllController', () => {
       expect.objectContaining({
         expectedReleaseId: 'release-2',
         reviewedBaseline: expect.any(String),
-        approvedPackageSha256: 'a'.repeat(64),
       }),
     );
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
@@ -480,7 +422,7 @@ describe('updateAllController', () => {
     });
 
     await approveUpdateExpansion('plugin-a');
-    expect(installMock).toHaveBeenCalledTimes(2);
+    expect(installMock).not.toHaveBeenCalled();
     const row = getUpdateAllBatchState().rows?.[0];
     expect(row?.status).toBe('needs-confirm');
     // 新差异按当前事实重算,把没审过的 network 也摆出来。
