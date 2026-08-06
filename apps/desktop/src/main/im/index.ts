@@ -606,7 +606,7 @@ configureImAccountScope({
  * The gate MUST be `isUpdateRelaunchImminent()`, not the raw update status: a
  * `ready` (staged) patch may wait for a manual action throughout a running
  * session when idle auto-install is off. The update service separately treats
- * an in-flight cold-start update check as imminent.
+ * a cold-start update check and its accepted relaunch plan as imminent.
  */
 export function startImConnection(): void {
   if (connectionLifecycle.isStarted()) {

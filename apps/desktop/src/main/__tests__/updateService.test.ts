@@ -322,7 +322,8 @@ describe('startup update relaunch safety', () => {
   // historic behavior restored deliberately (owner-approved). A fresh launch has
   // no in-flight agent turn / schedule to protect, so the startup gate skips the
   // idle/busy/user-active checks that guard the *background* auto-relaunch and
-  // keeps only the essentials (dev / translocated / not-ready / relaunching).
+  // keeps only the essentials (dev / unsupported platform / translocated /
+  // not-ready / relaunching).
   // The idle-install preference controls running sessions, not applying a patch
   // on cold launch.
   it('auto-applies a staged startup update as soon as it is ready', async () => {
@@ -350,7 +351,7 @@ describe('startup update relaunch safety', () => {
     });
   });
 
-  it('auto-applies at startup even when idle auto-install is disabled', async () => {
+  it('auto-applies startup updates even when idle auto-install is disabled', async () => {
     await expect(runStartupUpdate({ enabled: false })).resolves.toMatchObject({
       hasUpdate: true,
       action: 'relaunch',
@@ -452,9 +453,7 @@ describe('startup update relaunch safety', () => {
       service.stopUpdateService();
     }
   });
-});
 
-describe('isUpdateRelaunchImminent', () => {
   /** Boots the startup flow (staging a patch) and hands back the live module. */
   async function bootWithStagedPatch(options: { enabled?: boolean } = {}) {
     vi.useFakeTimers();

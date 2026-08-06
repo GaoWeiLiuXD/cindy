@@ -276,7 +276,8 @@ async function getStartupRelaunchBlockReason(): Promise<AutoRelaunchBlockReason 
 /**
  * Startup update checks apply a staged patch as soon as it is ready (the historic
  * behavior), gated only by the lightweight startup policy above. Whenever that
- * policy blocks (dev / unsupported platform / translocated / not ready / already relaunching) the
+ * policy blocks (dev / unsupported platform / translocated / not ready /
+ * already relaunching), the
  * patch stays staged and the app enters normally, surfacing the UpdateBanner.
  */
 async function buildStartupReadyReply(version: string | undefined): Promise<{
