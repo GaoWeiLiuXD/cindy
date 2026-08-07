@@ -29,7 +29,10 @@ const runtime = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
-  app: { getPath: vi.fn(() => os.tmpdir()) },
+  app: {
+    getPath: vi.fn(() => os.tmpdir()),
+    getVersion: vi.fn(() => '1.0.0'),
+  },
 }));
 vi.mock('../../authManager.js', () => ({
   getCurrentUserId: vi.fn(() =>
