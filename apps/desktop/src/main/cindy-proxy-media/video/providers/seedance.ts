@@ -1,7 +1,7 @@
 /**
  * art/video/providers/seedance.ts
  * ---------------------------------------------------------------------------
- * VideoProvider implementation for Volcengine ARK doubao-seedance-2-0,
+ * VideoProvider implementation for Volcengine ARK Doubao Seedance 2.x models,
  * routed through XD Gateway's `/volcengine/api/v3/contents/generations/tasks`
  * passthrough.
  *
