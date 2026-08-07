@@ -3676,6 +3676,7 @@ async function installOrUpdateMarketGhostPackageLocked(
         const review: PluginMarketPackageReviewFacts = {
           manifest: inspected.manifest,
           permissionDiff,
+          isUpdate: installed !== undefined,
           packageSha256: inspected.packageSha256,
           installedBaseline,
           sourceType: expected.permissionPolicy.sourceType,

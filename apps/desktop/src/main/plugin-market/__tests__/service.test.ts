@@ -476,6 +476,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       new GhostPackagePermissionReviewRequiredError({
         manifest: manifest(item.ghostId, item.currentRelease.version, ['notify', 'fs']),
         permissionDiff: null,
+        isUpdate: false,
         packageSha256: item.currentRelease.sha256,
         installedBaseline: null,
         sourceType: 'server',
@@ -607,6 +608,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const review = {
       manifest: manifest('cindy-test', '1.0.0', ['notify', 'fs']),
       permissionDiff: null,
+      isUpdate: false,
       packageSha256: 'a'.repeat(64),
       installedBaseline: null,
       sourceType: 'server' as const,
@@ -640,6 +642,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const review = {
       manifest: manifest('cindy-test', '1.0.0', ['notify', 'fs']),
       permissionDiff: null,
+      isUpdate: false,
       packageSha256: 'a'.repeat(64),
       installedBaseline: null,
       sourceType: 'server' as const,
@@ -1325,6 +1328,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     const review = {
       manifest: targetManifest,
       permissionDiff: diffGhostPermissionItems(manifest(), targetManifest),
+      isUpdate: true,
       packageSha256: 'a'.repeat(64),
       installedBaseline: ghostPermissionBaselineKey(manifest()),
       sourceType: 'server' as const,
@@ -1371,6 +1375,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
         manifest(),
         manifest('cindy-test', '2.0.0', ['notify', 'fs']),
       ),
+      isUpdate: true,
       packageSha256: 'a'.repeat(64),
       installedBaseline: ghostPermissionBaselineKey(manifest()),
       sourceType: 'server' as const,

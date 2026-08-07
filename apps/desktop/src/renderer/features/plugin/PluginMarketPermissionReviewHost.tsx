@@ -22,7 +22,7 @@ export function PluginMarketPermissionReviewHost() {
       void (async () => {
         let confirmed = false;
         try {
-          const isUpdate = review.permissionDiff !== null;
+          const isUpdate = review.isUpdate;
           confirmed = await confirm({
             title: isUpdate
               ? t('settings.ghosts.updateConfirm.title', { name: review.manifest.name })
@@ -36,8 +36,8 @@ export function PluginMarketPermissionReviewHost() {
                     ? 'settings.ghosts.market.installConfirmDescription'
                     : 'settings.ghosts.market.customInstallConfirmDescription',
                 ),
-            content: isUpdate ? (
-              <GhostUpdateReview diff={review.permissionDiff!} />
+            content: review.permissionDiff ? (
+              <GhostUpdateReview diff={review.permissionDiff} />
             ) : (
               <GhostPermissionList items={ghostPermissionItems(review.manifest)} />
             ),

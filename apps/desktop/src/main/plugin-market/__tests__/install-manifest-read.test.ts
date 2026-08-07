@@ -148,6 +148,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
     const review = {
       manifest: GOOD_MANIFEST,
       permissionDiff: null,
+      isUpdate: false,
       packageSha256: 'a'.repeat(64),
       installedBaseline: null,
       sourceType: 'local-market' as const,
@@ -213,6 +214,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
     const review = {
       manifest: GOOD_MANIFEST,
       permissionDiff: null,
+      isUpdate: false,
       packageSha256: 'b'.repeat(64),
       installedBaseline: null,
       sourceType: 'local-market' as const,

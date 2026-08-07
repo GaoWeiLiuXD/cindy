@@ -56,10 +56,12 @@ export interface PluginMarketDetail extends PluginMarketItem {
 export interface PluginMarketPackageReviewFacts {
   /** 已按当前界面语言本地化，仅用于展示；安全指纹由 Main 基于原始清单计算。 */
   manifest: GhostManifest;
-  /** Main 基于当前已装原始清单与真实包原始清单算出的权限差异；首装为 null。 */
+  /** Main 基于当前已装原始清单与真实包原始清单算出的权限差异；无可靠基线时为 null。 */
   permissionDiff: GhostPermissionDiff | null;
+  /** Main 根据安装锁内的实际落位状态判定；不从 permissionDiff 间接推断。 */
+  isUpdate: boolean;
   packageSha256: string;
-  /** 产生复核结果时的已装权限基线；null 表示当时尚未安装。 */
+  /** 产生复核结果时的可靠已装权限基线；null 也可能是旧安装基线不可读。 */
   installedBaseline: string | null;
   /** 只用于让确认卡如实说明包来自官方还是用户添加的市场。 */
   sourceType: PluginMarketItemSource;
@@ -70,6 +72,7 @@ export interface PluginMarketPackageReviewRequest {
   requestId: string;
   manifest: GhostManifest;
   permissionDiff: GhostPermissionDiff | null;
+  isUpdate: boolean;
   sourceType: PluginMarketItemSource;
 }
 

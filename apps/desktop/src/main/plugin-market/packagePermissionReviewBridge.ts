@@ -35,6 +35,7 @@ export class PluginMarketPackagePermissionReviewBridge {
           requestId,
           manifest: facts.manifest,
           permissionDiff: facts.permissionDiff,
+          isUpdate: facts.isUpdate,
           sourceType: facts.sourceType,
         });
       } finally {
