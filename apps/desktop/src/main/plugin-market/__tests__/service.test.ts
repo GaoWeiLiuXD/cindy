@@ -514,6 +514,43 @@ describe('PluginMarketService migration and defaultInstall', () => {
     expect(h.ledger.installationForGhost(item.ghostId)?.manifestDigest).toBeUndefined();
   });
 
+  it('rejects an incompatible official Plugin detail', async () => {
+    const item = summary();
+    const incompatibleManifest = { ...manifest(), minCindyVersion: '2.0.0' };
+    const h = harness([item]);
+    h.api.detail.mockResolvedValueOnce({
+      ...item,
+      currentRelease: {
+        ...item.currentRelease,
+        manifest: incompatibleManifest,
+      },
+    } satisfies VisiblePluginDetail);
+
+    await expect(h.service.detail(item.id)).rejects.toThrow('[NOT_FOUND]');
+  });
+
+  it('rejects an incompatible official Plugin before download', async () => {
+    const item = summary();
+    const incompatibleManifest = { ...manifest(), minCindyVersion: '2.0.0' };
+    const h = harness([item]);
+    h.api.detail.mockResolvedValueOnce({
+      ...item,
+      currentRelease: {
+        ...item.currentRelease,
+        manifest: incompatibleManifest,
+      },
+    } satisfies VisiblePluginDetail);
+
+    await expect(
+      h.service.install(item.id, {
+        expectedReleaseId: item.currentRelease.id,
+        expectedManifest: incompatibleManifest,
+      }),
+    ).rejects.toThrow('[NOT_FOUND]');
+    expect(h.api.download).not.toHaveBeenCalled();
+    expect(runtime.install).not.toHaveBeenCalled();
+  });
+
   // 2026-07-26 定案:市场首装一律装完即开,手动安装与 defaultInstall 归一,
   // 不再向装入入口透传 initiallyEnabled(启用语义收敛在市场装入入口本身)。
   it('manual market install goes through the auto-enable install entry', async () => {
