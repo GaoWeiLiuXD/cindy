@@ -58,4 +58,25 @@ describe('market Ghost session boundary', () => {
     expect(leaseIndex).toBeGreaterThan(inspectIndex);
     expect(body).toContain('releaseMutation?.();');
   });
+
+  it('rejects local replacement of a market install before mutating its runtime', () => {
+    const updateStart = source.indexOf(
+      "ipcMain.handle('ghosts:update'",
+    );
+    const updateEnd = source.indexOf(
+      "ipcMain.handle('ghosts:pick-file'",
+      updateStart,
+    );
+    const body = source.slice(updateStart, updateEnd);
+
+    const ledgerReadIndex = body.indexOf(
+      'getPluginMarketLedger().installationForGhost(inspected.manifest.id)',
+    );
+    const sourceConflictIndex = body.indexOf("'GHOST_SOURCE_CONFLICT'");
+    const runtimeStopIndex = body.indexOf('runtime.stop(inspected.manifest.id)');
+
+    expect(ledgerReadIndex).toBeGreaterThan(-1);
+    expect(sourceConflictIndex).toBeGreaterThan(ledgerReadIndex);
+    expect(runtimeStopIndex).toBeGreaterThan(sourceConflictIndex);
+  });
 });

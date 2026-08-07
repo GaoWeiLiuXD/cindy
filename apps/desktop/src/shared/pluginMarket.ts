@@ -61,6 +61,8 @@ export interface PluginMarketPackageReviewFacts {
   packageSha256: string;
   /** 产生复核结果时的已装权限基线；null 表示当时尚未安装。 */
   installedBaseline: string | null;
+  /** 只用于让确认卡如实说明包来自官方还是用户添加的市场。 */
+  sourceType: PluginMarketItemSource;
 }
 
 /** Main 在安装事务内请求当前窗口立即确认真实包权限；不暴露内部批准绑定。 */
@@ -68,17 +70,12 @@ export interface PluginMarketPackageReviewRequest {
   requestId: string;
   manifest: GhostManifest;
   permissionDiff: GhostPermissionDiff | null;
+  sourceType: PluginMarketItemSource;
 }
 
 export interface PluginMarketInstallOptions {
-  /** 用户审阅时看到的目标 release；Main 会在下载前重新核对。 */
+  /** 用户点击时看到的目标 release；Main 会在下载前重新核对。 */
   expectedReleaseId: string;
-  /** 安装前展示给用户的完整清单；Main 会与当前来源事实重新核对。 */
-  expectedManifest: GhostManifest;
-  /** 仅用于自定义市场确认其本地真实 manifest 的扩权。 */
-  allowPermissionExpansion?: boolean;
-  /** 用户审阅目标权限时的已装权限基线。 */
-  reviewedBaseline?: string;
 }
 
 /** 安装成功，或用户在事务内取消真实包权限确认。 */

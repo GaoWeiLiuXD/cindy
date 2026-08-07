@@ -16,6 +16,7 @@ const facts: PluginMarketPackageReviewFacts = {
   permissionDiff: null,
   packageSha256: 'a'.repeat(64),
   installedBaseline: null,
+  sourceType: 'server',
 };
 
 describe('PluginMarketPackagePermissionReviewBridge', () => {

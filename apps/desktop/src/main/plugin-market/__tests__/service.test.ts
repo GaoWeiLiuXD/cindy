@@ -152,7 +152,6 @@ function summary(
 function reviewedInstallOptions(item: VisiblePluginSummary) {
   return {
     expectedReleaseId: item.currentRelease.id,
-    expectedManifest: manifest(item.ghostId, item.currentRelease.version),
   };
 }
 
@@ -453,7 +452,11 @@ describe('PluginMarketService migration and defaultInstall', () => {
       {
         ghostId: 'cindy-test',
         version: '1.0.0',
-        reviewedManifest: manifest(),
+        permissionPolicy: {
+          mode: 'cap',
+          manifest: manifest(),
+          sourceType: 'server',
+        },
       },
     );
     expect(snapshot.items[0]).toMatchObject({
@@ -475,6 +478,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
         permissionDiff: null,
         packageSha256: item.currentRelease.sha256,
         installedBaseline: null,
+        sourceType: 'server',
       }),
     );
     const h = harness([item]);
@@ -483,7 +487,13 @@ describe('PluginMarketService migration and defaultInstall', () => {
 
     expect(runtime.install).toHaveBeenCalledWith(
       expect.stringMatching(/\.cindy$/),
-      expect.objectContaining({ reviewedManifest: manifest() }),
+      expect.objectContaining({
+        permissionPolicy: {
+          mode: 'cap',
+          manifest: manifest(),
+          sourceType: 'server',
+        },
+      }),
     );
     expect(snapshot.items[0]?.installState).toBe('not-installed');
     expect(h.ledger.installationForGhost(item.ghostId)).toBeNull();
@@ -544,7 +554,6 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await expect(
       h.service.install(item.id, {
         expectedReleaseId: item.currentRelease.id,
-        expectedManifest: incompatibleManifest,
       }),
     ).rejects.toThrow('[NOT_FOUND]');
     expect(h.api.download).not.toHaveBeenCalled();
@@ -569,14 +578,14 @@ describe('PluginMarketService migration and defaultInstall', () => {
       {
         ghostId: 'cindy-test',
         version: '1.0.0',
-        reviewedManifest: manifest(),
+        permissionPolicy: { mode: 'manual', sourceType: 'server' },
       },
     );
     // 锁定装完即开的最终结果:装入入口返回的 ghost 必须是启用态。
     expect(ghost?.enabled).toBe(true);
   });
 
-  it('passes the reviewed server manifest to the package verification boundary', async () => {
+  it('keeps the server manifest out of the manual package permission boundary', async () => {
     const item = summary();
     runtime.install.mockResolvedValue({
       manifest: manifest(),
@@ -588,8 +597,9 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await h.service.install(item.id, reviewedInstallOptions(item));
 
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
-      reviewedManifest: manifest(),
+      permissionPolicy: { mode: 'manual', sourceType: 'server' },
     });
+    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('permissionBaselineManifest');
   });
 
   it('pauses one install transaction for package review and reuses the download', async () => {
@@ -599,6 +609,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       permissionDiff: null,
       packageSha256: 'a'.repeat(64),
       installedBaseline: null,
+      sourceType: 'server' as const,
     };
     runtime.install
       .mockRejectedValueOnce(new GhostPackagePermissionReviewRequiredError(review))
@@ -618,7 +629,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     expect(runtime.install).toHaveBeenLastCalledWith(
       expect.stringMatching(/\.cindy$/),
       expect.objectContaining({
-        reviewedManifest: manifest(),
+        permissionPolicy: { mode: 'manual', sourceType: 'server' },
         approvedPackageSha256: review.packageSha256,
       }),
     );
@@ -631,6 +642,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       permissionDiff: null,
       packageSha256: 'a'.repeat(64),
       installedBaseline: null,
+      sourceType: 'server' as const,
     };
     runtime.install.mockImplementationOnce(async () => {
       runtime.session = {
@@ -707,7 +719,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     expect(runtime.install).not.toHaveBeenCalled();
   });
 
-  it('does not trust an installed manifest as the permission baseline without a digest', async () => {
+  it('uses the actual installed manifest as the permission baseline for a legacy record', async () => {
     const item = summary({
       currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
     });
@@ -731,7 +743,9 @@ describe('PluginMarketService migration and defaultInstall', () => {
 
     await h.service.install(item.id, reviewedInstallOptions(item));
 
-    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('permissionBaselineManifest');
+    expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
+      permissionBaselineManifest: installed,
+    });
   });
 
   it('installs and enables a public defaultInstall package in local mode', async () => {
@@ -759,7 +773,11 @@ describe('PluginMarketService migration and defaultInstall', () => {
       {
         ghostId: item.ghostId,
         version: item.currentRelease.version,
-        reviewedManifest: manifest(),
+        permissionPolicy: {
+          mode: 'cap',
+          manifest: manifest(),
+          sourceType: 'server',
+        },
       },
     );
     expect(snapshot.items[0]).toMatchObject({
@@ -1309,6 +1327,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       permissionDiff: diffGhostPermissionItems(manifest(), targetManifest),
       packageSha256: 'a'.repeat(64),
       installedBaseline: ghostPermissionBaselineKey(manifest()),
+      sourceType: 'server' as const,
     };
     runtime.install
       .mockRejectedValueOnce(new GhostPackagePermissionReviewRequiredError(review))
@@ -1354,6 +1373,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       ),
       packageSha256: 'a'.repeat(64),
       installedBaseline: ghostPermissionBaselineKey(manifest()),
+      sourceType: 'server' as const,
     };
     runtime.install.mockRejectedValueOnce(
       new GhostPackagePermissionReviewRequiredError(review),
@@ -1368,7 +1388,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     expect(runtime.install).toHaveBeenCalledTimes(1);
   });
 
-  it('does not trust the current installed package without a digest after download', async () => {
+  it('re-reads the actual installed package as the permission baseline after download', async () => {
     const item = summary({
       currentRelease: { ...summary().currentRelease, id: 'release-2', version: '2.0.0' },
     });
@@ -1398,7 +1418,9 @@ describe('PluginMarketService migration and defaultInstall', () => {
     await expect(
       h.service.install(item.id, reviewedInstallOptions(item)),
     ).resolves.toMatchObject({ ghost: { manifest: { version: '2.0.0' } } });
-    expect(runtime.install.mock.calls[0]?.[1]).not.toHaveProperty('permissionBaselineManifest');
+    expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
+      permissionBaselineManifest: currentInstalled,
+    });
   });
 
   it('rejects an update when the installed target disappears during download', async () => {

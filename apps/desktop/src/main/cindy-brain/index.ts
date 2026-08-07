@@ -36,7 +36,10 @@ import {
   type GhostVideoResultParams,
   type InstalledGhost,
 } from '../../shared/ghost.js';
-import type { PluginMarketPackageReviewFacts } from '../../shared/pluginMarket.js';
+import type {
+  PluginMarketItemSource,
+  PluginMarketPackageReviewFacts,
+} from '../../shared/pluginMarket.js';
 import { getAppCapabilities } from '../appCapabilities.js';
 import {
   activeOwnerScopeKey,
@@ -213,7 +216,11 @@ import { getGhostGrantConfirmBridge } from './ghostGrantConfirmBridge.js';
 import { getSessionFsSnapshot } from '../localDb/ipc/sessions.js';
 import { getDirDepositVault, getSaveDepositVault, isPathInsideDir } from './dirDeposit.js';
 import { readBoundedFileNoFollowSync } from '../utils/readBoundedFile.js';
-import { ghostManifestDigest, PluginMarketLedger } from '../plugin-market/ledger.js';
+import {
+  ghostManifestDigest,
+  PluginMarketLedger,
+  type PluginMarketInstallationRecord,
+} from '../plugin-market/ledger.js';
 import {
   GhostSubscriptionGateway,
   GhostActivityTracker,
@@ -3578,11 +3585,13 @@ export async function installOrUpdateMarketGhostPackage(
     ghostId: string;
     version: string;
     /**
-     * 安装前实际展示给用户的 manifest。真实包若声明了未展示权限，会在
-     * 落盘前暂停并把同一份已验证包交给上层复核。
+     * 手动首装确认真实包、同来源更新仅在真实包扩权时确认；默认安装只把
+     * 市场目录 manifest 当作 fail-closed 权限上限。目录 manifest 不记作批准。
      */
-    reviewedManifest?: GhostManifest;
-    /** 经来源账本摘要认证的已装清单；缺失时不得回退到可变运行时清单。 */
+    permissionPolicy?:
+      | { mode: 'manual'; sourceType: PluginMarketItemSource }
+      | { mode: 'cap'; manifest: GhostManifest; sourceType: PluginMarketItemSource };
+    /** 安装锁内从当前已落位包读取的 canonical 权限基线。 */
     permissionBaselineManifest?: GhostManifest;
     /** 用户确认过的真实下载包 SHA 与确认时的已装权限基线。 */
     approvedPackageSha256?: string;
@@ -3602,7 +3611,9 @@ async function installOrUpdateMarketGhostPackageLocked(
   expected: {
     ghostId: string;
     version: string;
-    reviewedManifest?: GhostManifest;
+    permissionPolicy?:
+      | { mode: 'manual'; sourceType: PluginMarketItemSource }
+      | { mode: 'cap'; manifest: GhostManifest; sourceType: PluginMarketItemSource };
     permissionBaselineManifest?: GhostManifest;
     approvedPackageSha256?: string;
     reviewedBaseline?: string;
@@ -3626,7 +3637,7 @@ async function installOrUpdateMarketGhostPackageLocked(
     }
     requireGhostAvailableForActiveSession(expected.ghostId);
     const installed = manager.list().find((ghost) => ghost.manifest.id === expected.ghostId);
-    if (expected.reviewedManifest) {
+    if (expected.permissionPolicy) {
       const baselineManifest = expected.permissionBaselineManifest ?? null;
       const installedBaseline = baselineManifest
         ? ghostPermissionBaselineKey(baselineManifest)
@@ -3642,27 +3653,39 @@ async function installOrUpdateMarketGhostPackageLocked(
           'Downloaded Plugin package changed after permission review',
         );
       }
-      const unreviewed = unreviewedGhostPermissionItems(
-        expected.reviewedManifest,
-        baselineManifest ?? undefined,
-        inspected.canonicalManifest,
-      );
-      if (unreviewed.length > 0) {
+      const permissionDiff = baselineManifest
+        ? diffGhostPermissionItems(baselineManifest, inspected.canonicalManifest)
+        : null;
+      const unreviewed =
+        expected.permissionPolicy.mode === 'cap'
+          ? unreviewedGhostPermissionItems(
+              expected.permissionPolicy.manifest,
+              baselineManifest ?? undefined,
+              inspected.canonicalManifest,
+            )
+          : [];
+      const needsReview =
+        expected.permissionPolicy.mode === 'manual'
+          ? permissionDiff === null || permissionDiff.added.length > 0
+          : unreviewed.length > 0;
+      if (needsReview && expected.approvedPackageSha256 === undefined) {
+        const reviewKeys =
+          expected.permissionPolicy.mode === 'manual'
+            ? (permissionDiff?.added.map((item) => item.key) ?? [])
+            : unreviewed.map((item) => item.key);
         const review: PluginMarketPackageReviewFacts = {
           manifest: inspected.manifest,
-          permissionDiff: baselineManifest
-            ? diffGhostPermissionItems(baselineManifest, inspected.canonicalManifest)
-            : null,
+          permissionDiff,
           packageSha256: inspected.packageSha256,
           installedBaseline,
+          sourceType: expected.permissionPolicy.sourceType,
         };
-        if (expected.approvedPackageSha256 === undefined) {
-          log.info('market package requires permission review', {
-            ghostId: expected.ghostId,
-            keys: unreviewed.map((item) => item.key),
-          });
-          throw new GhostPackagePermissionReviewRequiredError(review);
-        }
+        log.info('market package requires permission review', {
+          ghostId: expected.ghostId,
+          mode: expected.permissionPolicy.mode,
+          keys: reviewKeys,
+        });
+        throw new GhostPackagePermissionReviewRequiredError(review);
       }
     }
     rejectUnauthorizedTokenBroker(inspected.canonicalManifest);
@@ -4922,6 +4945,27 @@ export function registerGhostIpc(): void {
     // 装入/卸载不得插入(否则并发装入会与本次 rename 竞争、留下不一致态)。
     return withGhostInstallLock(inspected.manifest.id, async () => {
       const previousGhost = manager.list().find((g) => g.manifest.id === inspected.manifest.id);
+      // 不支持已安装插件原地切换来源。只要 owner-scoped ledger 仍把当前 id
+      // 标为市场安装，本地更新就必须先显式卸载；卸载会清理 ledger 与敏感
+      // 资产，避免本地包静默继承官方/第三方市场身份和历史凭证。这里刻意
+      // 不用 manifestDigest 放宽：摘要失配可能是旧版本写路径或中断留下的
+      // 不确定状态，不确定时也不能把它当成已获准切换到 local。
+      let marketRecord: PluginMarketInstallationRecord | null;
+      try {
+        marketRecord = getPluginMarketLedger().installationForGhost(inspected.manifest.id);
+      } catch (error) {
+        log.warn('failed to verify Plugin provenance before local update', {
+          ghostId: inspected.manifest.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throwIpcError('INTERNAL', 'Unable to verify the installed Plugin source');
+      }
+      if (marketRecord?.installed) {
+        throwIpcError(
+          'GHOST_SOURCE_CONFLICT',
+          'Uninstall the market Plugin before installing a local package',
+        );
+      }
       runtime.stop(inspected.manifest.id);
       getGhostNodeRuntimeBroker().stop(inspected.manifest.id);
       getGhostAgentSlot().clearGhost(inspected.manifest.id);
