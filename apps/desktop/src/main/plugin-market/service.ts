@@ -795,11 +795,11 @@ export class PluginMarketService {
           // 溯源写入仍在上面那把 ghost 锁内(afterCommit 由 commit 段调用):
           // 放到锁外时,本地装入能插在"包已落位"与"写下溯源"之间换掉同 id 的包。
           // 锁序:pluginId → SOURCE_MUTATION_KEY → ghostId → ledgerMutation。
-          afterCommit: async (installed) => {
-            const manifestDigest = installedGhostRawManifestDigest(installed.dir);
-            if (manifestDigest === null) {
-              throwIpcError('INTERNAL', 'Installed Plugin manifest is unreadable');
-            }
+          afterCommit: async (_installed, packagedManifest) => {
+            // packGhostDirToFile 返回的是写入真实临时包的 canonical manifest；
+            // Main 随后复验并用包 SHA 钉死同一文件，因此无需在包已经落位后
+            // 再读一次目录。后置 I/O 失败不应把成功安装误报成失败或漏写来源。
+            const manifestDigest = ghostManifestDigest(packagedManifest);
             await this.withCapturedLedgerMutation(ledger, () => {
               ledger.upsertInstallation({
                 pluginId,
@@ -815,10 +815,8 @@ export class PluginMarketService {
                 updatedAt: new Date().toISOString(),
                 // 来源指纹与 pluginId 一起构成所有权:同名异源的重加对不上它。
                 sourceKey,
-                // 落位那一刻的 manifest 摘要:降级期间运行时被换成别的包后,认领
-                // 对不上摘要即失效。摘要来自发现层的原始 manifest(校验器输出),
-                // **不是**安装返回的 ghost.manifest——后者按当前界面语言本地化过,
-                // 切语言会被误判成包被替换。
+                // 摘要来自实际临时包的 canonical manifest,不是发现快照，也不是
+                // 安装返回的本地化 ghost.manifest；降级后包被替换时即无法再认领。
                 manifestDigest,
               });
             });

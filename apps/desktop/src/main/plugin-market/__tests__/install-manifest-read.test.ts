@@ -57,7 +57,11 @@ let workDir: string;
 
 beforeEach(async () => {
   workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cindy-market-install-'));
-  brain.packGhostDirToFile.mockClear();
+  brain.packGhostDirToFile.mockReset();
+  brain.packGhostDirToFile.mockResolvedValue({
+    ok: true as const,
+    manifest: GOOD_MANIFEST,
+  });
   brain.installOrUpdateMarketGhostPackage.mockReset();
   brain.installOrUpdateMarketGhostPackage.mockResolvedValue({
     manifest: GOOD_MANIFEST,
@@ -212,7 +216,10 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
       approvedPackageSha256: review.packageSha256,
       permissionPolicy: { mode: 'manual', sourceType: 'local-market' },
     });
-    expect(afterCommit).toHaveBeenCalledTimes(1);
+    expect(afterCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ manifest: GOOD_MANIFEST }),
+      GOOD_MANIFEST,
+    );
     expect(fs.existsSync(String(commitPath))).toBe(false);
   });
 

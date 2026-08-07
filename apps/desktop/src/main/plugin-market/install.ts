@@ -87,7 +87,10 @@ export async function installCustomMarketPlugin(input: {
    * 插在"包已落位"与"写下溯源"之间换掉同 id 的包,账本随后认领一个其实已被替换
    * 的包。抛错则整个安装按失败上报(包已落位,由调用方决定补偿)。
    */
-  afterCommit?: (installed: InstalledGhost) => Promise<void>;
+  afterCommit?: (
+    installed: InstalledGhost,
+    packagedManifest: PluginMarketPackageReviewFacts['manifest'],
+  ) => Promise<void>;
 }): Promise<InstalledGhost | null> {
   // input.pluginDir 是发现层已 realpath、且已校验落在市场根内的规范路径。
   // 发现之后、打包之前,若插件目录或其某个父目录被换成指向市场外的符号链接,
@@ -189,7 +192,7 @@ export async function installCustomMarketPlugin(input: {
             : {}),
         });
         // 溯源写入与落位同锁(见 afterCommit 注释)。
-        await input.afterCommit?.(installed);
+        await input.afterCommit?.(installed, packed.manifest);
         return installed;
       };
       return input.withCommitLock ? input.withCommitLock(run) : run();
