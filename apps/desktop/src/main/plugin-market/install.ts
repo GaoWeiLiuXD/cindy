@@ -57,6 +57,8 @@ function sanitizeInstallDetail(message: string): string {
 
 export async function installCustomMarketPlugin(input: {
   pluginDir: string;
+  expectedGhostId: string;
+  expectedVersion: string;
   sourceType: Extract<PluginMarketItemSource, 'git-market' | 'local-market'>;
   permissionBaselineManifest?: PluginMarketPackageReviewFacts['manifest'];
   reviewPackagePermissions?: (
@@ -134,6 +136,12 @@ export async function installCustomMarketPlugin(input: {
   if (!validated.ok) {
     throwIpcError('GHOST_FILE_INVALID', sanitizeInstallDetail(validated.reason));
   }
+  if (
+    validated.manifest.id !== input.expectedGhostId ||
+    validated.manifest.version !== input.expectedVersion
+  ) {
+    throwIpcError('PRECONDITION_FAILED', 'The Plugin identity changed after selection');
+  }
   rejectReservedGhostIdForCustomMarket(validated.manifest.id);
 
   const tempPath = path.join(
@@ -163,8 +171,10 @@ export async function installCustomMarketPlugin(input: {
       const run = async (): Promise<InstalledGhost> => {
         await input.beforeCommit?.();
         const installed = await installOrUpdateMarketGhostPackage(tempPath, {
-          ghostId: validated.manifest.id,
-          version: validated.manifest.version,
+          // Main 会从真实临时包再次解析并与所选市场条目的身份核对；不能使用
+          // 打包前活目录里的值，否则目录在打包窗口变化时会把另一个插件装入。
+          ghostId: input.expectedGhostId,
+          version: input.expectedVersion,
           permissionPolicy,
           ...(input.permissionBaselineManifest
             ? { permissionBaselineManifest: input.permissionBaselineManifest }

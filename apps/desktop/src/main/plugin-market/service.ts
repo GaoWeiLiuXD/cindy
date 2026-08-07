@@ -741,6 +741,8 @@ export class PluginMarketService {
         requireSameMarketOwner(owner);
         const ghost = await installCustomMarketPlugin({
           pluginDir: plugin.dir,
+          expectedGhostId: plugin.ghostId,
+          expectedVersion: plugin.version,
           sourceType:
             discovered.config.source.type === 'git' ? 'git-market' : 'local-market',
           reviewPackagePermissions,

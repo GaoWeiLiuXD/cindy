@@ -48,6 +48,10 @@ const GOOD_MANIFEST: GhostManifest = {
   slots: ['tool'],
   tools: [{ name: 'do_thing', description: '做点事' }],
 };
+const GOOD_IDENTITY = {
+  expectedGhostId: GOOD_MANIFEST.id,
+  expectedVersion: GOOD_MANIFEST.version,
+};
 
 let workDir: string;
 
@@ -81,6 +85,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
       await expect(
         installCustomMarketPlugin({
           pluginDir,
+          ...GOOD_IDENTITY,
           sourceType: 'local-market',
         }),
       ).rejects.toMatchObject({ code: 'GHOST_FILE_INVALID' });
@@ -101,10 +106,33 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
     await expect(
       installCustomMarketPlugin({
         pluginDir,
+        ...GOOD_IDENTITY,
         sourceType: 'local-market',
       }),
     ).rejects.toMatchObject({ code: 'GHOST_FILE_INVALID' });
     expect(brain.packGhostDirToFile).not.toHaveBeenCalled();
+  });
+
+  it('目录身份在发现后变化 → 拒绝安装另一个插件', async () => {
+    const pluginDir = path.join(workDir, 'plugin-changed-identity');
+    await fs.promises.mkdir(pluginDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(pluginDir, 'ghost.json'),
+      JSON.stringify({ ...GOOD_MANIFEST, id: 'other-plugin', version: '2.0.0' }),
+    );
+
+    await expect(
+      installCustomMarketPlugin({
+        pluginDir: await fs.promises.realpath(pluginDir),
+        ...GOOD_IDENTITY,
+        sourceType: 'local-market',
+      }),
+    ).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('identity changed'),
+    });
+    expect(brain.packGhostDirToFile).not.toHaveBeenCalled();
+    expect(brain.installOrUpdateMarketGhostPackage).not.toHaveBeenCalled();
   });
 
   it('把已校验的规范根同时作为打包输入与打包器锚点传下去', async () => {
@@ -127,6 +155,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
 
     await installCustomMarketPlugin({
       pluginDir: canonical,
+      ...GOOD_IDENTITY,
       sourceType: 'local-market',
     });
 
@@ -165,6 +194,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
 
     await installCustomMarketPlugin({
       pluginDir: canonical,
+      ...GOOD_IDENTITY,
       sourceType: 'local-market',
       reviewPackagePermissions: reviewer,
       afterCommit,
@@ -177,6 +207,8 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
       brain.installOrUpdateMarketGhostPackage.mock.calls[1] ?? [];
     expect(commitPath).toBe(reviewPath);
     expect(commitOptions).toMatchObject({
+      ghostId: GOOD_IDENTITY.expectedGhostId,
+      version: GOOD_IDENTITY.expectedVersion,
       approvedPackageSha256: review.packageSha256,
       permissionPolicy: { mode: 'manual', sourceType: 'local-market' },
     });
@@ -195,6 +227,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
 
     await installCustomMarketPlugin({
       pluginDir: await fs.promises.realpath(pluginDir),
+      ...GOOD_IDENTITY,
       sourceType: 'local-market',
       permissionBaselineManifest: GOOD_MANIFEST,
       reviewPackagePermissions: reviewer,
@@ -227,6 +260,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
 
     const result = await installCustomMarketPlugin({
       pluginDir: await fs.promises.realpath(pluginDir),
+      ...GOOD_IDENTITY,
       sourceType: 'local-market',
       reviewPackagePermissions: reviewer,
       afterCommit,
@@ -269,6 +303,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
       await expect(
         installCustomMarketPlugin({
           pluginDir: discovered, // 传发现时的规范路径
+          ...GOOD_IDENTITY,
           sourceType: 'local-market',
         }),
       ).rejects.toMatchObject({
@@ -291,6 +326,7 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
     await expect(
       installCustomMarketPlugin({
         pluginDir: await fs.promises.realpath(pluginDir),
+        ...GOOD_IDENTITY,
         sourceType: 'local-market',
       }),
     ).rejects.toMatchObject({
