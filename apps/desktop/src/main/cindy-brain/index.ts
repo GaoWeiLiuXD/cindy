@@ -4946,14 +4946,12 @@ export function registerGhostIpc(): void {
     // 装入/卸载不得插入(否则并发装入会与本次 rename 竞争、留下不一致态)。
     return withGhostInstallLock(inspected.manifest.id, async () => {
       const previousGhost = manager.list().find((g) => g.manifest.id === inspected.manifest.id);
-      // 不支持已安装插件原地切换来源。只要 owner-scoped ledger 仍把当前 id
-      // 标为市场安装，本地更新就必须先显式卸载；卸载会清理 ledger 与敏感
-      // 资产，避免本地包静默继承官方/第三方市场身份和历史凭证。这里刻意
-      // 不用 manifestDigest 放宽：摘要失配可能是旧版本写路径或中断留下的
-      // 不确定状态，不确定时也不能把它当成已获准切换到 local。
+      const marketLedger = getPluginMarketLedger().bind(
+        ownerScopedUserDataPath('plugin-market', 'ledger.v1.json'),
+      );
       let marketRecord: PluginMarketInstallationRecord | null;
       try {
-        marketRecord = getPluginMarketLedger().installationForGhost(inspected.manifest.id);
+        marketRecord = marketLedger.installationForGhost(inspected.manifest.id);
       } catch (error) {
         log.warn('failed to verify Plugin provenance before local update', {
           ghostId: inspected.manifest.id,
@@ -4961,7 +4959,19 @@ export function registerGhostIpc(): void {
         });
         throwIpcError('INTERNAL', 'Unable to verify the installed Plugin source');
       }
-      if (marketRecord?.installed) {
+      // 旧版允许本地包原位覆盖市场安装，却不会清理市场账本。只有账本带摘要、
+      // 当前真实包也可读且两者明确不同时，才把它视为已发生的历史本地覆盖；
+      // 摘要相同/缺失/不可读仍拒绝，不能借迁移路径切换一个仍由市场拥有的包。
+      const installedManifestDigest = previousGhost
+        ? readInstalledGhostManifestDigest(inspected.manifest.id)
+        : null;
+      const detachStaleMarketRecord = Boolean(
+        marketRecord?.installed &&
+        marketRecord.manifestDigest !== undefined &&
+        installedManifestDigest !== null &&
+        installedManifestDigest !== marketRecord.manifestDigest,
+      );
+      if (marketRecord?.installed && !detachStaleMarketRecord) {
         throwIpcError(
           'GHOST_SOURCE_CONFLICT',
           'Uninstall the market Plugin before installing a local package',
@@ -4982,6 +4992,18 @@ export function registerGhostIpc(): void {
       if ('rejection' in result) {
         if (previousGhost) spawnIfResident(previousGhost);
         throwInstallError(result.rejection);
+      }
+      if (detachStaleMarketRecord) {
+        try {
+          // 本地包已经原子落位后再解除陈旧来源；失败不回滚已成功的包更新，
+          // 摘要失配仍会阻止任何市场把当前包重新认领。
+          marketLedger.markRemoved(inspected.manifest.id, null);
+        } catch (error) {
+          log.warn('failed to detach stale Plugin market provenance after local update', {
+            ghostId: inspected.manifest.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       runtime.resetFuse(inspected.manifest.id); // 换了代码,给新版本干净的熔断记账
       const store = getLayoutStore();
