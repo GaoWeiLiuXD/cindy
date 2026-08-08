@@ -18,6 +18,7 @@ const log = createLogger('plugin-market-ipc');
 let registered = false;
 let serviceSingleton: PluginMarketService | null = null;
 const REMOVAL_NOTICE_AVAILABLE_CHANNEL = 'plugin-market:removal-notice-available';
+const UPGRADE_NOTICE_AVAILABLE_CHANNEL = 'plugin-market:upgrade-notice-available';
 const PACKAGE_PERMISSION_REVIEW_CHANNEL = 'plugin-market:package-permission-review';
 const trackedReviewRequesters = new WeakSet<WebContents>();
 const packagePermissionReviewBridge = new PluginMarketPackagePermissionReviewBridge();
@@ -32,6 +33,11 @@ function signalRemovalNoticeAvailable(): void {
   sendToTrustedAppWindows(REMOVAL_NOTICE_AVAILABLE_CHANNEL, undefined);
 }
 
+function signalUpgradeNoticeAvailable(): void {
+  if (!service().hasPendingUpgradeNotice()) return;
+  sendToTrustedAppWindows(UPGRADE_NOTICE_AVAILABLE_CHANNEL, undefined);
+}
+
 async function snapshotAndSignalRemovalNotice() {
   try {
     return await service().snapshot();
@@ -39,6 +45,7 @@ async function snapshotAndSignalRemovalNotice() {
     // 清理已成功但后续默认安装等步骤失败时，pending 仍必须通知 Renderer；
     // snapshot 的原始异常继续向上抛，不把通知信号伪装成整轮成功。
     signalRemovalNoticeAvailable();
+    signalUpgradeNoticeAvailable();
   }
 }
 
@@ -103,6 +110,10 @@ export function registerPluginMarketIpc(): void {
   ipcMain.handle('plugin-market:consume-removal-notice', (event) => {
     assertTrustedAppRendererEvent(event);
     return invokePluginMarket(async () => service().consumeRemovalNotice());
+  });
+  ipcMain.handle('plugin-market:consume-upgrade-notice', (event) => {
+    assertTrustedAppRendererEvent(event);
+    return invokePluginMarket(async () => service().consumeUpgradeNotice());
   });
   ipcMain.handle('plugin-market:detail', (event, pluginId: unknown) => {
     assertTrustedAppRendererEvent(event);
