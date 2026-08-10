@@ -1111,13 +1111,20 @@ export class PluginMarketService {
         const permissionBaselineManifest = existing
           ? installedGhostRawManifest(existing.dir)
           : null;
+        let replacedRoute: PluginMarketInstallationRecord | null = null;
+        let packageLanded = false;
         requireSameMarketOwner(owner);
         const ghost = await installCustomMarketPlugin({
           pluginDir: plugin.dir,
           expectedGhostId: plugin.ghostId,
           expectedVersion: plugin.version,
           sourceType: discovered.config.source.type === 'git' ? 'git-market' : 'local-market',
-          reviewPackagePermissions,
+          reviewPackagePermissions: async (facts) => {
+            requireSameMarketOwner(owner);
+            const approved = await reviewPackagePermissions?.(facts);
+            requireSameMarketOwner(owner);
+            return approved === true;
+          },
           ...(permissionBaselineManifest ? { permissionBaselineManifest } : {}),
           beforeCommit: async () => {
             requireSameMarketOwner(owner);
@@ -1152,6 +1159,21 @@ export class PluginMarketService {
               throwIpcError('PRECONDITION_FAILED', 'Installed Plugin changed during the install');
             }
           },
+          beforePackagePlacement: () => {
+            const record = ledger.installationForGhost(plugin.ghostId);
+            const matchesSelectedRoute = Boolean(
+              existing &&
+                record?.installed &&
+                record.pluginId === pluginId &&
+                record.sourceKey === sourceKey &&
+                record.manifestDigest != null &&
+                record.manifestDigest === reviewInstalledDigest,
+            );
+            if (existing && record?.installed && !matchesSelectedRoute) {
+              this.detachMarketRouteForReplacement(ledger, record);
+              replacedRoute = record;
+            }
+          },
           // 复核与落位的双重互斥:
           // - SOURCE_MUTATION_KEY:beforeCommit 返回后包检查还要跑一段,期间不能
           //   让来源被增删,否则复核结论在落位前过期。
@@ -1159,11 +1181,14 @@ export class PluginMarketService {
           //   按 id 互斥,beforeCommit 的 runtime 复核到 installOrUpdate 落位之间,
           //   同 id 的本地装入/卸载插不进来(否则复核仍会在落位前过期)。
           withCommitLock: (fn) =>
-            this.withMutation(SOURCE_MUTATION_KEY, () => withGhostInstallLock(plugin.ghostId, fn)),
+            this.withMutation(SOURCE_MUTATION_KEY, () =>
+              withGhostInstallLock(plugin.ghostId, fn),
+            ),
           // 溯源写入仍在上面那把 ghost 锁内(afterCommit 由 commit 段调用):
           // 放到锁外时,本地装入能插在"包已落位"与"写下溯源"之间换掉同 id 的包。
           // 锁序:pluginId → SOURCE_MUTATION_KEY → ghostId → ledgerMutation。
           afterCommit: async (_installed, packagedManifest) => {
+            packageLanded = true;
             // packGhostDirToFile 返回的是写入真实临时包的 canonical manifest；
             // Main 随后复验并用包 SHA 钉死同一文件，因此无需在包已经落位后
             // 再读一次目录。后置 I/O 失败不应把成功安装误报成失败或漏写来源。
@@ -1188,7 +1213,13 @@ export class PluginMarketService {
                 manifestDigest,
               });
             });
+            replacedRoute = null;
           },
+        }).catch((error) => {
+          if (!packageLanded && replacedRoute) {
+            this.restoreMarketRouteAfterFailedReplacement(ledger, replacedRoute);
+          }
+          throw error;
         });
         return ghost ? { ghost } : { cancelled: true };
       });
@@ -1580,6 +1611,19 @@ export class PluginMarketService {
       // 上面的 serverRecordMatchesInstalledGhost 单独判断；把两者捆绑会让旧记录
       // 因缺摘要被当成首次安装，升级时无端要求重新批准全部权限。
       const permissionBaselineManifest = installedRawManifest;
+      const replacingSource = Boolean(
+        installedNow &&
+          options.allowSourceReplacement &&
+          currentRecordNow?.installed &&
+          !serverRecordMatchesInstalledGhost(plugin.id, installedNow, currentRecordNow),
+      );
+      let routeDetached = false;
+      const detachPreviousRoute = (): void => {
+        options.beforeCommitInLock?.();
+        if (!replacingSource || !currentRecordNow) return;
+        this.detachMarketRouteForReplacement(ledger, currentRecordNow);
+        routeDetached = true;
+      };
       const installed = await installOrUpdateMarketGhostPackage(tempPath, {
         ghostId: plugin.ghostId,
         version: plugin.currentRelease.version,
@@ -1598,7 +1642,14 @@ export class PluginMarketService {
                 : {}),
             }
           : {}),
-        ...(options.beforeCommitInLock ? { beforeCommitInLock: options.beforeCommitInLock } : {}),
+        ...(options.beforeCommitInLock || replacingSource
+          ? { beforeCommitInLock: detachPreviousRoute }
+          : {}),
+      }).catch((error) => {
+        if (routeDetached && currentRecordNow) {
+          this.restoreMarketRouteAfterFailedReplacement(ledger, currentRecordNow);
+        }
+        throw error;
       });
       await this.withCapturedLedgerMutation(ledger, () => {
         ledger.upsertInstallation(recordFrom(plugin, 'market', installed));
@@ -2102,6 +2153,38 @@ export class PluginMarketService {
       () => undefined,
     );
     return current;
+  }
+
+  private detachMarketRouteForReplacement(
+    ledger: PluginMarketLedger,
+    record: PluginMarketInstallationRecord,
+  ): void {
+    try {
+      ledger.markRemoved(record.ghostId, null);
+    } catch (error) {
+      this.restoreMarketRouteAfterFailedReplacement(ledger, record);
+      log.warn('failed to detach Plugin market route before replacement', {
+        pluginId: record.pluginId,
+        ghostId: record.ghostId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throwIpcError('INTERNAL', 'Unable to detach the installed Plugin source');
+    }
+  }
+
+  private restoreMarketRouteAfterFailedReplacement(
+    ledger: PluginMarketLedger,
+    record: PluginMarketInstallationRecord,
+  ): void {
+    try {
+      ledger.upsertInstallation(record);
+    } catch (error) {
+      log.error('failed to restore Plugin market route after replacement failure', {
+        pluginId: record.pluginId,
+        ghostId: record.ghostId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private withMutation<T>(pluginId: string, operation: () => Promise<T>): Promise<T> {

@@ -79,7 +79,12 @@ import {
   pluginMarketCustomIconSourceToken,
 } from '../../../shared/pluginMarket';
 import { GHOST_ICON_MAX_BYTES, type GhostManifest } from '../../../shared/ghost';
-import { PluginMarketLedger, ghostManifestDigest } from '../ledger';
+import { GhostPackagePermissionReviewRequiredError } from '../../cindy-brain/packagePermissionReview';
+import {
+  PluginMarketLedger,
+  ghostManifestDigest,
+  type PluginMarketInstallationRecord,
+} from '../ledger';
 import { PluginMarketService } from '../service';
 import { MarketSourceManager } from '../sources';
 import { MarketSourceStore } from '../sources/store';
@@ -1201,6 +1206,36 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     runtime.session = { mode: 'cloud', dataOwnerId: 'user-1', generation: 1 };
   });
 
+  it('does not expose custom package review facts after the active owner changes', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-custom-fixture-'));
+    roots.push(root);
+    const dir = writeLocalMarket(root, 'team-lib', [{ rel: 'plugins/alpha', id: 'alpha' }]);
+    const h = harness([], [{ name: 'team-lib', dir }]);
+    const detail = await h.service.detail(customMarketPluginId('team-lib', 'alpha'));
+    runtime.install.mockImplementationOnce(async () => {
+      runtime.session = { mode: 'cloud', dataOwnerId: 'user-2', generation: 2 };
+      throw new GhostPackagePermissionReviewRequiredError({
+        manifest: ghostManifest('alpha', '1.0.0', { slots: ['notify', 'fs'] }),
+        permissionDiff: null,
+        isUpdate: false,
+        packageSha256: 'a'.repeat(64),
+        installedBaseline: null,
+        sourceType: 'local-market',
+      });
+    });
+    const confirmReview = vi.fn(async () => true);
+
+    await expect(
+      h.service.install(
+        customMarketPluginId('team-lib', 'alpha'),
+        { expectedReleaseId: detail.releaseId },
+        confirmReview,
+      ),
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(confirmReview).not.toHaveBeenCalled();
+    runtime.session = { mode: 'cloud', dataOwnerId: 'user-1', generation: 1 };
+  });
+
   it('rejects install when the plugin is uninstalled during packaging (runtime 复核)', async () => {
     // F1:审阅时 alpha 已装(existing 存在),打包窗口内本地页把它卸载。
     // beforeCommit 的 runtime 复核必须发现 existing→缺失并拒,避免"更新"被
@@ -1310,13 +1345,8 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     const h = harness([], [{ name: 'team-lib', dir }]);
     const current = installedGhost(root, 'alpha');
     runtime.ghosts = [current];
-    runtime.install.mockResolvedValue({
-      manifest: ghostManifest('alpha'),
-      dir: '/ghosts/replaced-alpha',
-      enabled: true,
-    });
     // 服务端市场装过同 id 插件
-    h.ledger.upsertInstallation({
+    const previousRecord = {
       pluginId: PLUGIN_ID,
       ghostId: 'alpha',
       releaseId: 'release-1',
@@ -1327,9 +1357,30 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
       source: 'market',
       installed: true,
       updatedAt: '2026-07-30T02:00:00.000Z',
-    });
+    } satisfies PluginMarketInstallationRecord;
+    h.ledger.upsertInstallation(previousRecord);
 
     await h.service.detail(customMarketPluginId('team-lib', 'alpha'));
+    runtime.install.mockImplementationOnce(async (_file, options) => {
+      options.beforeCommitInLock?.();
+      expect(h.ledger.installationForGhost('alpha')).toMatchObject({ installed: false });
+      throw new Error('placement failed');
+    });
+    await expect(
+      h.service.install(customMarketPluginId('team-lib', 'alpha'), {
+        expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+      }),
+    ).rejects.toThrow('placement failed');
+    expect(h.ledger.installationForGhost('alpha')).toEqual(previousRecord);
+    runtime.install.mockImplementationOnce(async (_file, options) => {
+      options.beforeCommitInLock?.();
+      expect(h.ledger.installationForGhost('alpha')).toMatchObject({ installed: false });
+      return {
+        manifest: ghostManifest('alpha'),
+        dir: '/ghosts/replaced-alpha',
+        enabled: true,
+      };
+    });
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),

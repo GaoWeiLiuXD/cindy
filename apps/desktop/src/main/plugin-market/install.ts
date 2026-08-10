@@ -71,6 +71,8 @@ export async function installCustomMarketPlugin(input: {
    * 这里同时复核当前账号、所选来源和运行时已安装插件事实。
    */
   beforeCommit?: () => void | Promise<void>;
+  /** 真实包完成检查后、即将改动运行时前的同步事务钩。 */
+  beforePackagePlacement?: () => void;
   /**
    * 提交段(复核 + 落位)的互斥包装,与来源增删共享同一把锁。
    *
@@ -189,6 +191,9 @@ export async function installCustomMarketPlugin(input: {
                   ? { reviewedBaseline: approval.installedBaseline }
                   : {}),
               }
+            : {}),
+          ...(input.beforePackagePlacement
+            ? { beforeCommitInLock: input.beforePackagePlacement }
             : {}),
         });
         // 溯源写入与落位同锁(见 afterCommit 注释)。

@@ -1053,19 +1053,33 @@ describe('PluginMarketService migration and defaultInstall', () => {
     fs.writeFileSync(path.join(installedDir, 'ghost.json'), JSON.stringify(installed));
     runtime.ghosts = [{ manifest: installed, dir: installedDir, enabled: true }];
     const h = harness([item]);
-    h.ledger.upsertInstallation({
+    const previousRecord = {
       ...recordForTest(item),
       releaseId: 'release-1',
       version: '1.0.0',
       manifestDigest: ghostManifestDigest({ ...installed, slots: ['notify'] }),
-    });
-    runtime.install.mockResolvedValue({
-      manifest: manifest(item.ghostId, '2.0.0', ['notify']),
-      dir: '/userData/cindy-brain/cindy-test',
-      enabled: true,
+    } satisfies PluginMarketInstallationRecord;
+    h.ledger.upsertInstallation(previousRecord);
+    runtime.install.mockImplementationOnce(async (_file, options) => {
+      options.beforeCommitInLock?.();
+      expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({ installed: false });
+      throw new Error('placement failed');
     });
 
     expect((await h.service.snapshot()).items[0]?.installState).toBe('conflict');
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+      'placement failed',
+    );
+    expect(h.ledger.installationForGhost(item.ghostId)).toEqual(previousRecord);
+    runtime.install.mockImplementationOnce(async (_file, options) => {
+      options.beforeCommitInLock?.();
+      expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({ installed: false });
+      return {
+        manifest: manifest(item.ghostId, '2.0.0', ['notify']),
+        dir: '/userData/cindy-brain/cindy-test',
+        enabled: true,
+      };
+    });
     await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
       ghost: { manifest: { version: '2.0.0' } },
     });
