@@ -82,7 +82,7 @@ describe('market Ghost session boundary', () => {
     const runtimeStopIndex = body.indexOf('runtime.stop(inspected.manifest.id)');
     const managerUpdateIndex = body.indexOf('result = await manager.update(');
     const detachIndex = body.indexOf(
-      'marketLedger.markRemoved(inspected.manifest.id, null)',
+      'marketLedger.markRemoved(inspected.manifest.id, marketInstallSubject)',
     );
 
     expect(captureIndex).toBeGreaterThan(-1);
@@ -94,7 +94,12 @@ describe('market Ghost session boundary', () => {
     expect(detachIndex).toBeGreaterThan(detachDecisionIndex);
     expect(runtimeStopIndex).toBeGreaterThan(detachIndex);
     expect(managerUpdateIndex).toBeGreaterThan(runtimeStopIndex);
-    expect(body).toContain('restoreMarketRecord();');
+    expect(body).toContain('marketLedger.isDefaultInstallSuppressed(');
+    expect(body).toContain('marketLedger.restoreInstallation(');
+    expect(body).toContain('suppressed: marketRecordWasSuppressed');
+    expect(body).toContain('onPackagePlaced: () => {');
+    expect(body).toContain('packagePlaced = true;');
+    expect(body).toContain('if (!packagePlaced) {\n            restoreMarketRecord();');
     expect(body).toContain('releaseMutation();');
     expect(body).not.toContain('GHOST_SOURCE_CONFLICT');
   });

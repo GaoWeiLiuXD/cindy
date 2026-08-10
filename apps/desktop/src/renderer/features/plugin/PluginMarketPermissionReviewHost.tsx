@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { GhostPermissionList, GhostUpdateReview } from '@/cindy-brain/GhostPermissionList';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
+import { getDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { ghostPermissionItems } from '../../../shared/ghost';
 
 /**
@@ -21,36 +22,57 @@ export function PluginMarketPermissionReviewHost() {
       if (!review || typeof review.requestId !== 'string') return;
       void (async () => {
         let confirmed = false;
+        const owner = getDataOwnerGeneration();
+        const abort = new AbortController();
+        const unsubscribeAuth = window.electronAPI.onAuthStateChange((state) => {
+          if (
+            state.dataOwnerId !== owner.dataOwnerId ||
+            state.ownerGeneration !== owner.generation
+          ) {
+            abort.abort();
+          }
+        });
+        const currentOwner = getDataOwnerGeneration();
+        if (
+          currentOwner.dataOwnerId !== owner.dataOwnerId ||
+          currentOwner.generation !== owner.generation
+        ) {
+          abort.abort();
+        }
         try {
           const isUpdate = review.isUpdate;
-          confirmed = await confirm({
-            title: isUpdate
-              ? t('settings.ghosts.updateConfirm.title', { name: review.manifest.name })
-              : t('settings.ghosts.market.installConfirmTitle', {
-                  name: review.manifest.name,
-                }),
-            description: isUpdate
-              ? t('settings.ghosts.market.updateConfirmDescription')
-              : t(
-                  review.sourceType === 'server'
-                    ? 'settings.ghosts.market.installConfirmDescription'
-                    : 'settings.ghosts.market.customInstallConfirmDescription',
-                ),
-            content: review.permissionDiff ? (
-              <GhostUpdateReview diff={review.permissionDiff} />
-            ) : (
-              <GhostPermissionList items={ghostPermissionItems(review.manifest)} />
-            ),
-            maxWidth: 520,
-            confirmText: isUpdate
-              ? t('settings.ghosts.updateConfirm.confirm')
-              : t('settings.ghosts.market.install'),
-            cancelText: isUpdate
-              ? t('settings.ghosts.updateConfirm.cancel')
-              : t('settings.ghosts.installConfirm.cancel'),
-            autoFocusConfirm: true,
-          });
+          confirmed = await confirm(
+            {
+              title: isUpdate
+                ? t('settings.ghosts.updateConfirm.title', { name: review.manifest.name })
+                : t('settings.ghosts.market.installConfirmTitle', {
+                    name: review.manifest.name,
+                  }),
+              description: isUpdate
+                ? t('settings.ghosts.market.updateConfirmDescription')
+                : t(
+                    review.sourceType === 'server'
+                      ? 'settings.ghosts.market.installConfirmDescription'
+                      : 'settings.ghosts.market.customInstallConfirmDescription',
+                  ),
+              content: review.permissionDiff ? (
+                <GhostUpdateReview diff={review.permissionDiff} />
+              ) : (
+                <GhostPermissionList items={ghostPermissionItems(review.manifest)} />
+              ),
+              maxWidth: 520,
+              confirmText: isUpdate
+                ? t('settings.ghosts.updateConfirm.confirm')
+                : t('settings.ghosts.market.install'),
+              cancelText: isUpdate
+                ? t('settings.ghosts.updateConfirm.cancel')
+                : t('settings.ghosts.installConfirm.cancel'),
+              autoFocusConfirm: true,
+            },
+            abort.signal,
+          );
         } finally {
+          unsubscribeAuth();
           try {
             await window.electronAPI.pluginMarket.resolvePackagePermissionReview(
               review.requestId,

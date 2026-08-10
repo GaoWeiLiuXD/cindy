@@ -81,7 +81,12 @@ import {
   recordBuiltinTombstone,
   type ProvisionIdentity,
 } from './builtinGhostProvisioner.js';
-import { getAccessToken, getAuthState, onAuthStateChange } from '../authManager.js';
+import {
+  getAccessToken,
+  getAuthState,
+  getCurrentUserId,
+  onAuthStateChange,
+} from '../authManager.js';
 import { serverApiFetch } from '../serverApiClient.js';
 import { getClientEndpoint } from '../clientEndpointsService.js';
 import { createGhostOauthBrokerClient } from './ghostOauthBroker.js';
@@ -5280,8 +5285,22 @@ export function registerGhostIpc(): void {
       try {
         const previousGhost = manager.list().find((g) => g.manifest.id === inspected.manifest.id);
         let marketRecord: PluginMarketInstallationRecord | null;
+        let marketInstallSubject: string | null = null;
+        let marketRecordWasSuppressed = false;
         try {
           marketRecord = marketLedger.installationForGhost(inspected.manifest.id);
+          if (
+            marketRecord?.installed &&
+            (marketRecord.source === 'market' || marketRecord.source === 'legacy-adopted')
+          ) {
+            marketInstallSubject = getCurrentUserId() ?? mutationOwner.dataOwnerId;
+            marketRecordWasSuppressed = marketInstallSubject
+              ? marketLedger.isDefaultInstallSuppressed(
+                  marketInstallSubject,
+                  marketRecord.pluginId,
+                )
+              : false;
+          }
         } catch (error) {
           log.warn('failed to verify Plugin provenance before local update', {
             ghostId: inspected.manifest.id,
@@ -5296,7 +5315,15 @@ export function registerGhostIpc(): void {
         const restoreMarketRecord = (): void => {
           if (!detachMarketRecord || !marketRecord) return;
           try {
-            marketLedger.upsertInstallation(marketRecord);
+            marketLedger.restoreInstallation(
+              marketRecord,
+              marketInstallSubject
+                ? {
+                    userId: marketInstallSubject,
+                    suppressed: marketRecordWasSuppressed,
+                  }
+                : undefined,
+            );
           } catch (error) {
             // 恢复失败时保持路由失效是安全降级：不能让旧市场自动覆盖用户
             // 明确选择的本地包。用户仍可从任一市场显式替换同 ID 插件。
@@ -5310,7 +5337,7 @@ export function registerGhostIpc(): void {
           try {
             // 先持久化切断自动更新路由，再改真实包。账本不可写时不触碰包，
             // 避免同 manifest 的本地代码被旧市场静默覆盖。
-            marketLedger.markRemoved(inspected.manifest.id, null);
+            marketLedger.markRemoved(inspected.manifest.id, marketInstallSubject);
           } catch (error) {
             restoreMarketRecord();
             log.warn('failed to detach Plugin market provenance before local update', {
@@ -5325,13 +5352,28 @@ export function registerGhostIpc(): void {
         getGhostAgentSlot().clearGhost(inspected.manifest.id);
         getGhostErrandSlot().clearGhost(inspected.manifest.id);
         let result: Awaited<ReturnType<typeof manager.update>>;
+        let packagePlaced = false;
         try {
-          result = await manager.update(lizFilePath, { expectedPackageSha256 });
+          result = await manager.update(lizFilePath, {
+            expectedPackageSha256,
+            onPackagePlaced: () => {
+              packagePlaced = true;
+            },
+          });
         } catch (err) {
-          restoreMarketRecord();
-          // 更新失败:恢复旧版本的常驻 Node 工作进程(如果是 resident 且已启用)
-          if (previousGhost) spawnIfResident(previousGhost);
-          throw err;
+          if (!packagePlaced) {
+            restoreMarketRecord();
+            // 更新失败:恢复旧版本的常驻 Node 工作进程(如果是 resident 且已启用)
+            if (previousGhost) spawnIfResident(previousGhost);
+            throw err;
+          }
+          const placed = manager.list().find((ghost) => ghost.manifest.id === inspected.manifest.id);
+          if (!placed) throw err;
+          log.warn('local ghost post-placement notification failed', {
+            ghostId: inspected.manifest.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          result = { ghost: placed };
         }
         if ('rejection' in result) {
           restoreMarketRecord();
