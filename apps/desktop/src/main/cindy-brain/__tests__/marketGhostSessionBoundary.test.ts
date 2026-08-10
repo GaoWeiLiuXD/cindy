@@ -59,7 +59,7 @@ describe('market Ghost session boundary', () => {
     expect(body).toContain('releaseMutation?.();');
   });
 
-  it('allows explicit local replacement and detaches market routing only after landing', () => {
+  it('allows explicit local replacement and detaches market routing before landing', () => {
     const updateStart = source.indexOf(
       "ipcMain.handle('ghosts:update'",
     );
@@ -91,9 +91,10 @@ describe('market Ghost session boundary', () => {
     expect(leaseIndex).toBeGreaterThan(inspectIndex);
     expect(ledgerReadIndex).toBeGreaterThan(leaseIndex);
     expect(detachDecisionIndex).toBeGreaterThan(ledgerReadIndex);
-    expect(runtimeStopIndex).toBeGreaterThan(detachDecisionIndex);
+    expect(detachIndex).toBeGreaterThan(detachDecisionIndex);
+    expect(runtimeStopIndex).toBeGreaterThan(detachIndex);
     expect(managerUpdateIndex).toBeGreaterThan(runtimeStopIndex);
-    expect(detachIndex).toBeGreaterThan(managerUpdateIndex);
+    expect(body).toContain('restoreMarketRecord();');
     expect(body).toContain('releaseMutation();');
     expect(body).not.toContain('GHOST_SOURCE_CONFLICT');
   });

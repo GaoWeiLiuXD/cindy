@@ -373,6 +373,15 @@ export function GhostPluginPage() {
   }, [refreshMarket, mode, dataOwnerId]);
   const refreshMarketOnForeground = useCallback(() => refreshMarket(true), [refreshMarket]);
   usePluginMarketForegroundRefresh(refreshMarketOnForeground, lastMarketRefreshAtRef);
+  useEffect(
+    () =>
+      window.electronAPI.pluginMarket.onUpgradeNoticeAvailable(() => {
+        // 默认插件升级在初始快照返回后异步落位；原位升级不会改变已装 ID，
+        // 复用现有完成通知刷新目录，避免继续展示旧 release 的更新入口。
+        void refreshMarket(true).catch(() => undefined);
+      }),
+    [refreshMarket],
+  );
   useEffect(() => {
     if (installedGhostIdsKeyRef.current === installedGhostIdsKey) return;
     installedGhostIdsKeyRef.current = installedGhostIdsKey;

@@ -270,6 +270,53 @@ describe('PluginMarketService 自定义市场聚合', () => {
     expect(snapshot.unavailableCustomSourceNames).toEqual(['offline-market']);
   });
 
+  it('preserves completed custom sources when a later source exceeds the snapshot timeout', async () => {
+    vi.useFakeTimers();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cindy-custom-timeout-'));
+    roots.push(root);
+    const readyDir = writeLocalMarket(root, 'ready-market', [
+      { rel: 'plugins/ready', id: 'ready' },
+    ]);
+    const slowDir = writeLocalMarket(root, 'slow-market', [{ rel: 'plugins/slow', id: 'slow' }]);
+    const h = harness(
+      [],
+      [
+        { name: 'ready-market', dir: readyDir },
+        { name: 'slow-market', dir: slowDir },
+      ],
+    );
+    const original = MarketSourceManager.prototype.forEachDiscoveredSource;
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const discover = vi
+      .spyOn(MarketSourceManager.prototype, 'forEachDiscoveredSource')
+      .mockImplementation(async function (this: MarketSourceManager, fn) {
+        await original.call(this, async (entry) => {
+          if (entry.config.name === 'slow-market') {
+            await new Promise<void>(() => undefined);
+            return;
+          }
+          await fn(entry);
+          resolveReady();
+        });
+      });
+
+    try {
+      const snapshotPromise = h.service.snapshot();
+      await ready;
+      await vi.advanceTimersByTimeAsync(3_100);
+      const snapshot = await snapshotPromise;
+
+      expect(snapshot.items.map((item) => item.ghostId)).toEqual(['ready']);
+      expect(snapshot.unavailableCustomSourceNames).toEqual(['slow-market']);
+    } finally {
+      discover.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('does not mark a custom market installation removed when discovery is temporarily empty', async () => {
     const h = harness([], []);
     const pluginId = customMarketPluginId('team-lib', 'alpha');

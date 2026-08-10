@@ -258,6 +258,12 @@ interface CustomMarketDiscovery {
   unavailableSourceNames: string[];
 }
 
+interface CustomMarketDiscoveryProgress {
+  entries: CustomMarketEntry[];
+  settledSourceNames: Set<string>;
+  unavailableSourceNames: Set<string>;
+}
+
 export interface PluginMarketSnapshotOptions {
   /** Renderer 目录请求先返回；默认安装/升级在同一 owner 上后台补做。 */
   deferDefaultReconciliation?: boolean;
@@ -1216,18 +1222,35 @@ export class PluginMarketService {
     iconProjectionGeneration: string,
     configuredSourceNames: readonly string[],
   ): Promise<CustomMarketDiscovery> {
+    const progress: CustomMarketDiscoveryProgress = {
+      entries: [],
+      settledSourceNames: new Set<string>(),
+      unavailableSourceNames: new Set<string>(),
+    };
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const unavailable = new Promise<CustomMarketDiscovery>((resolve) => {
       timeout = setTimeout(() => {
+        const unavailableSourceNames = new Set(progress.unavailableSourceNames);
+        for (const name of configuredSourceNames) {
+          if (!progress.settledSourceNames.has(name)) unavailableSourceNames.add(name);
+        }
         log.warn('custom marketplace snapshot discovery timed out', {
           markets: configuredSourceNames.length,
         });
-        resolve({ entries: [], unavailableSourceNames: [...configuredSourceNames] });
+        resolve({
+          entries: [...progress.entries],
+          unavailableSourceNames: [...unavailableSourceNames],
+        });
       }, CUSTOM_MARKET_SNAPSHOT_TIMEOUT_MS);
     });
     try {
       return await Promise.race([
-        this.discoverCustomEntriesSafe(owner, iconProjectionGeneration, configuredSourceNames),
+        this.discoverCustomEntriesSafe(
+          owner,
+          iconProjectionGeneration,
+          configuredSourceNames,
+          progress,
+        ),
         unavailable,
       ]);
     } finally {
@@ -1239,15 +1262,14 @@ export class PluginMarketService {
     owner: ActiveAppSession,
     iconProjectionGeneration: string,
     configuredSourceNames: readonly string[],
+    progress: CustomMarketDiscoveryProgress,
   ): Promise<CustomMarketDiscovery> {
-    const entries: CustomMarketEntry[] = [];
-    const completedSourceNames = new Set<string>();
-    const unavailableSourceNames = new Set<string>();
     try {
       const manager = this.sourceManagerForOwner(owner);
       await manager.forEachDiscoveredSource(async ({ config, result }) => {
         if (!result.ok) {
-          unavailableSourceNames.add(config.name);
+          progress.unavailableSourceNames.add(config.name);
+          progress.settledSourceNames.add(config.name);
           log.warn('custom marketplace discovery failed', {
             market: config.name,
             code: result.code,
@@ -1260,15 +1282,18 @@ export class PluginMarketService {
             unreadableCount: result.marketplace.unreadableCount,
           });
         }
+        const sourceEntries: CustomMarketEntry[] = [];
         for (const plugin of result.marketplace.plugins) {
           if (!manifestSupportsCurrentCindy(plugin.manifest)) continue;
-          entries.push({
+          sourceEntries.push({
             config,
             plugin,
             iconKey: await customMarketIconKey(owner, config, plugin, iconProjectionGeneration),
           });
         }
-        completedSourceNames.add(config.name);
+        // 只在整个来源（含 icon 投影）完成后发布，超时快照不会暴露半个市场。
+        progress.entries.push(...sourceEntries);
+        progress.settledSourceNames.add(config.name);
       });
     } catch (error) {
       log.warn('custom marketplace enumeration failed', {
@@ -1277,10 +1302,13 @@ export class PluginMarketService {
       // 未走完的来源统一标记不可用；已经成功发现的来源仍保留，不因另一个
       // 来源抛出意外 I/O 错误而从列表消失。
       for (const name of configuredSourceNames) {
-        if (!completedSourceNames.has(name)) unavailableSourceNames.add(name);
+        if (!progress.settledSourceNames.has(name)) progress.unavailableSourceNames.add(name);
       }
     }
-    return { entries, unavailableSourceNames: [...unavailableSourceNames] };
+    return {
+      entries: [...progress.entries],
+      unavailableSourceNames: [...progress.unavailableSourceNames],
+    };
   }
 
   private projectCustomItems(

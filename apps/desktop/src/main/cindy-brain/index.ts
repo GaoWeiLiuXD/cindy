@@ -5272,9 +5272,36 @@ export function registerGhostIpc(): void {
           throwIpcError('INTERNAL', 'Unable to verify the installed Plugin source');
         }
         // 用户已在本地包确认流程中明确选择了这份真实包：同 id 可以原位替换，
-        // 市场来源不是永久所有权。替换成功后再解除旧市场更新路由，不清理
-        // Secret、KV、偏好或其它按 ghostId 保存的用户状态。
+        // 市场来源不是永久所有权。替换前先切断旧市场更新路由；落位失败再恢复，
+        // 全程不清理 Secret、KV、偏好或其它按 ghostId 保存的用户状态。
         const detachMarketRecord = Boolean(marketRecord?.installed);
+        const restoreMarketRecord = (): void => {
+          if (!detachMarketRecord || !marketRecord) return;
+          try {
+            marketLedger.upsertInstallation(marketRecord);
+          } catch (error) {
+            // 恢复失败时保持路由失效是安全降级：不能让旧市场自动覆盖用户
+            // 明确选择的本地包。用户仍可从任一市场显式替换同 ID 插件。
+            log.error('failed to restore Plugin market provenance after local update failure', {
+              ghostId: inspected.manifest.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        };
+        if (detachMarketRecord) {
+          try {
+            // 先持久化切断自动更新路由，再改真实包。账本不可写时不触碰包，
+            // 避免同 manifest 的本地代码被旧市场静默覆盖。
+            marketLedger.markRemoved(inspected.manifest.id, null);
+          } catch (error) {
+            restoreMarketRecord();
+            log.warn('failed to detach Plugin market provenance before local update', {
+              ghostId: inspected.manifest.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throwIpcError('INTERNAL', 'Unable to detach the installed Plugin source');
+          }
+        }
         runtime.stop(inspected.manifest.id);
         getGhostNodeRuntimeBroker().stop(inspected.manifest.id);
         getGhostAgentSlot().clearGhost(inspected.manifest.id);
@@ -5283,24 +5310,15 @@ export function registerGhostIpc(): void {
         try {
           result = await manager.update(lizFilePath, { expectedPackageSha256 });
         } catch (err) {
+          restoreMarketRecord();
           // 更新失败:恢复旧版本的常驻 Node 工作进程(如果是 resident 且已启用)
           if (previousGhost) spawnIfResident(previousGhost);
           throw err;
         }
         if ('rejection' in result) {
+          restoreMarketRecord();
           if (previousGhost) spawnIfResident(previousGhost);
           throwInstallError(result.rejection);
-        }
-        if (detachMarketRecord) {
-          try {
-            // 包原子落位后再解除旧市场更新路由；失败不回滚已成功的包更新。
-            marketLedger.markRemoved(inspected.manifest.id, null);
-          } catch (error) {
-            log.warn('failed to detach Plugin market provenance after local update', {
-              ghostId: inspected.manifest.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
         }
         runtime.resetFuse(inspected.manifest.id); // 换了代码,给新版本干净的熔断记账
         const store = getLayoutStore();

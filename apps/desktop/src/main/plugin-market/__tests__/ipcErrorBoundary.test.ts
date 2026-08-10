@@ -21,6 +21,10 @@ describe('Plugin Market IPC error boundary', () => {
     resolve(process.cwd(), 'src/main/bootstrap-electron.ts'),
     'utf8',
   ).replace(/\r\n/g, '\n');
+  const ghostPluginPageSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/features/plugin/GhostPluginPage.tsx'),
+    'utf8',
+  ).replace(/\r\n/g, '\n');
 
   it('preserves structured errors and normalizes unexpected failures', () => {
     const start = registerSource.indexOf('async function invokePluginMarket');
@@ -101,6 +105,10 @@ describe('Plugin Market IPC error boundary', () => {
 
     expect(registerSource).toContain('deferDefaultReconciliation: true');
     expect(registerSource).toContain('onDeferredReconciliationSettled: () => {');
+    expect(ghostPluginPageSource).toContain(
+      'window.electronAPI.pluginMarket.onUpgradeNoticeAvailable(() => {',
+    );
+    expect(ghostPluginPageSource).toContain('void refreshMarket(true).catch(() => undefined);');
 
     const ownerSyncStart = bootstrapSource.indexOf(
       'function syncDefaultPluginsForActiveOwner(): void',
