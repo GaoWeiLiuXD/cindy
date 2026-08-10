@@ -72,6 +72,10 @@ describe('market Ghost session boundary', () => {
     const ledgerReadIndex = body.indexOf(
       'marketLedger.installationForGhost(inspected.manifest.id)',
     );
+    const captureIndex = body.indexOf('const mutationOwner = captureGhostMutationOwner();');
+    const ledgerBindIndex = body.indexOf('const marketLedger = getPluginMarketLedger().bind(');
+    const inspectIndex = body.indexOf('await manager.inspect(lizFilePath)');
+    const leaseIndex = body.indexOf('const releaseMutation = beginGhostMutation(mutationOwner);');
     const detachDecisionIndex = body.indexOf(
       'const detachMarketRecord = Boolean(marketRecord?.installed)',
     );
@@ -81,11 +85,16 @@ describe('market Ghost session boundary', () => {
       'marketLedger.markRemoved(inspected.manifest.id, null)',
     );
 
-    expect(ledgerReadIndex).toBeGreaterThan(-1);
+    expect(captureIndex).toBeGreaterThan(-1);
+    expect(ledgerBindIndex).toBeGreaterThan(captureIndex);
+    expect(ledgerBindIndex).toBeLessThan(inspectIndex);
+    expect(leaseIndex).toBeGreaterThan(inspectIndex);
+    expect(ledgerReadIndex).toBeGreaterThan(leaseIndex);
     expect(detachDecisionIndex).toBeGreaterThan(ledgerReadIndex);
     expect(runtimeStopIndex).toBeGreaterThan(detachDecisionIndex);
     expect(managerUpdateIndex).toBeGreaterThan(runtimeStopIndex);
     expect(detachIndex).toBeGreaterThan(managerUpdateIndex);
+    expect(body).toContain('releaseMutation();');
     expect(body).not.toContain('GHOST_SOURCE_CONFLICT');
   });
 

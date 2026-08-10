@@ -5243,6 +5243,10 @@ export function registerGhostIpc(): void {
     ) {
       throwIpcError('INVALID_PARAMS', 'expectedPackageSha256 must come from ghosts:inspect');
     }
+    const mutationOwner = captureGhostMutationOwner();
+    const marketLedger = getPluginMarketLedger().bind(
+      ownerScopedUserDataPath('plugin-market', 'ledger.v1.json'),
+    );
     const inspected = await manager.inspect(lizFilePath);
     if ('rejection' in inspected) throwInstallError(inspected.rejection);
     assertGhostSupportsCurrentCindy(inspected.canonicalManifest);
@@ -5254,65 +5258,67 @@ export function registerGhostIpc(): void {
     // 与市场装入/本地装入/卸载共用按 ghostId 的互斥:换目录期间同 id 的其它
     // 装入/卸载不得插入(否则并发装入会与本次 rename 竞争、留下不一致态)。
     return withGhostInstallLock(inspected.manifest.id, async () => {
-      const previousGhost = manager.list().find((g) => g.manifest.id === inspected.manifest.id);
-      const marketLedger = getPluginMarketLedger().bind(
-        ownerScopedUserDataPath('plugin-market', 'ledger.v1.json'),
-      );
-      let marketRecord: PluginMarketInstallationRecord | null;
+      const releaseMutation = beginGhostMutation(mutationOwner);
       try {
-        marketRecord = marketLedger.installationForGhost(inspected.manifest.id);
-      } catch (error) {
-        log.warn('failed to verify Plugin provenance before local update', {
-          ghostId: inspected.manifest.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throwIpcError('INTERNAL', 'Unable to verify the installed Plugin source');
-      }
-      // 用户已在本地包确认流程中明确选择了这份真实包：同 id 可以原位替换，
-      // 市场来源不是永久所有权。替换成功后再解除旧市场更新路由，不清理
-      // Secret、KV、偏好或其它按 ghostId 保存的用户状态。
-      const detachMarketRecord = Boolean(marketRecord?.installed);
-      runtime.stop(inspected.manifest.id);
-      getGhostNodeRuntimeBroker().stop(inspected.manifest.id);
-      getGhostAgentSlot().clearGhost(inspected.manifest.id);
-      getGhostErrandSlot().clearGhost(inspected.manifest.id);
-      let result: Awaited<ReturnType<typeof manager.update>>;
-      try {
-        result = await manager.update(lizFilePath, { expectedPackageSha256 });
-      } catch (err) {
-        // 更新失败:恢复旧版本的常驻 Node 工作进程(如果是 resident 且已启用)
-        if (previousGhost) spawnIfResident(previousGhost);
-        throw err;
-      }
-      if ('rejection' in result) {
-        if (previousGhost) spawnIfResident(previousGhost);
-        throwInstallError(result.rejection);
-      }
-      if (detachMarketRecord) {
+        const previousGhost = manager.list().find((g) => g.manifest.id === inspected.manifest.id);
+        let marketRecord: PluginMarketInstallationRecord | null;
         try {
-          // 包原子落位后再解除旧市场更新路由；失败不回滚已成功的包更新。
-          marketLedger.markRemoved(inspected.manifest.id, null);
+          marketRecord = marketLedger.installationForGhost(inspected.manifest.id);
         } catch (error) {
-          log.warn('failed to detach Plugin market provenance after local update', {
+          log.warn('failed to verify Plugin provenance before local update', {
             ghostId: inspected.manifest.id,
             error: error instanceof Error ? error.message : String(error),
           });
+          throwIpcError('INTERNAL', 'Unable to verify the installed Plugin source');
         }
-      }
-      runtime.resetFuse(inspected.manifest.id); // 换了代码,给新版本干净的熔断记账
-      const store = getLayoutStore();
-      const docked = layoutWithGhostPanel(store.getLayout(), result.ghost.manifest);
-      if (docked) {
-        const applied = store.setLayout(docked);
-        if ('rejection' in applied) {
-          log.warn('ghost panel dock rejected', {
-            id: result.ghost.manifest.id,
-            reason: applied.rejection,
-          });
+        // 用户已在本地包确认流程中明确选择了这份真实包：同 id 可以原位替换，
+        // 市场来源不是永久所有权。替换成功后再解除旧市场更新路由，不清理
+        // Secret、KV、偏好或其它按 ghostId 保存的用户状态。
+        const detachMarketRecord = Boolean(marketRecord?.installed);
+        runtime.stop(inspected.manifest.id);
+        getGhostNodeRuntimeBroker().stop(inspected.manifest.id);
+        getGhostAgentSlot().clearGhost(inspected.manifest.id);
+        getGhostErrandSlot().clearGhost(inspected.manifest.id);
+        let result: Awaited<ReturnType<typeof manager.update>>;
+        try {
+          result = await manager.update(lizFilePath, { expectedPackageSha256 });
+        } catch (err) {
+          // 更新失败:恢复旧版本的常驻 Node 工作进程(如果是 resident 且已启用)
+          if (previousGhost) spawnIfResident(previousGhost);
+          throw err;
         }
+        if ('rejection' in result) {
+          if (previousGhost) spawnIfResident(previousGhost);
+          throwInstallError(result.rejection);
+        }
+        if (detachMarketRecord) {
+          try {
+            // 包原子落位后再解除旧市场更新路由；失败不回滚已成功的包更新。
+            marketLedger.markRemoved(inspected.manifest.id, null);
+          } catch (error) {
+            log.warn('failed to detach Plugin market provenance after local update', {
+              ghostId: inspected.manifest.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        runtime.resetFuse(inspected.manifest.id); // 换了代码,给新版本干净的熔断记账
+        const store = getLayoutStore();
+        const docked = layoutWithGhostPanel(store.getLayout(), result.ghost.manifest);
+        if (docked) {
+          const applied = store.setLayout(docked);
+          if ('rejection' in applied) {
+            log.warn('ghost panel dock rejected', {
+              id: result.ghost.manifest.id,
+              reason: applied.rejection,
+            });
+          }
+        }
+        spawnIfResident(result.ghost); // 常驻意识:换完代码立即用新版本点火
+        return { ghost: result.ghost };
+      } finally {
+        releaseMutation();
       }
-      spawnIfResident(result.ghost); // 常驻意识:换完代码立即用新版本点火
-      return { ghost: result.ghost };
     });
   });
 
