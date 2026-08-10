@@ -3855,6 +3855,8 @@ export async function installOrUpdateMarketGhostPackage(
     approvedPackageSha256?: string;
     reviewedBaseline?: string;
     beforeCommitInLock?: () => void;
+    /** 新包已经原子换位；后续异常不能再按落位失败回滚来源路由。 */
+    onPackagePlacedInLock?: () => void;
     /** 仅 server-market 主机路径可传；custom/local 不传。 */
     officialCindyGithub?: boolean;
   },
@@ -3879,6 +3881,8 @@ async function installOrUpdateMarketGhostPackageLocked(
     approvedPackageSha256?: string;
     reviewedBaseline?: string;
     beforeCommitInLock?: () => void;
+    /** 新包已经原子换位；后续异常不能再按落位失败回滚来源路由。 */
+    onPackagePlacedInLock?: () => void;
     officialCindyGithub?: boolean;
   },
 ): Promise<InstalledGhost> {
@@ -3987,15 +3991,29 @@ async function installOrUpdateMarketGhostPackageLocked(
     getGhostAgentSlot().clearGhost(expected.ghostId);
     getGhostErrandSlot().clearGhost(expected.ghostId);
     let result: Awaited<ReturnType<typeof manager.update>>;
+    let packagePlaced = false;
     try {
       // 与首装分支同一口径:钉住 inspect 时校验过的包字节(见上)。
       result = await manager.update(cindyFilePath, {
         expectedPackageSha256: inspected.packageSha256,
         ...(trustOverride ? { trustOverride } : {}),
+        onPackagePlaced: () => {
+          packagePlaced = true;
+          expected.onPackagePlacedInLock?.();
+        },
       });
     } catch (error) {
-      spawnIfResident(installed);
-      throw error;
+      if (!packagePlaced) {
+        spawnIfResident(installed);
+        throw error;
+      }
+      const placed = manager.list().find((ghost) => ghost.manifest.id === expected.ghostId);
+      if (!placed) throw error;
+      log.warn('market ghost post-placement notification failed', {
+        ghostId: expected.ghostId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      result = { ghost: placed };
     }
     if ('rejection' in result) {
       spawnIfResident(installed);

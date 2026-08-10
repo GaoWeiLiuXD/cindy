@@ -1372,6 +1372,19 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
       }),
     ).rejects.toThrow('placement failed');
     expect(h.ledger.installationForGhost('alpha')).toEqual(previousRecord);
+    expect(h.ledger.isDefaultInstallSuppressed('user-1', PLUGIN_ID)).toBe(false);
+    runtime.install.mockImplementationOnce(async (_file, options) => {
+      options.beforeCommitInLock?.();
+      options.onPackagePlacedInLock?.();
+      throw new Error('notification failed after placement');
+    });
+    await expect(
+      h.service.install(customMarketPluginId('team-lib', 'alpha'), {
+        expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+      }),
+    ).rejects.toThrow('notification failed after placement');
+    expect(h.ledger.installationForGhost('alpha')).toMatchObject({ installed: false });
+    expect(h.ledger.isDefaultInstallSuppressed('user-1', PLUGIN_ID)).toBe(true);
     runtime.install.mockImplementationOnce(async (_file, options) => {
       options.beforeCommitInLock?.();
       expect(h.ledger.installationForGhost('alpha')).toMatchObject({ installed: false });

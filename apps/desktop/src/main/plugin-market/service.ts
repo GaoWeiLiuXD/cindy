@@ -1112,6 +1112,7 @@ export class PluginMarketService {
           ? installedGhostRawManifest(existing.dir)
           : null;
         let replacedRoute: PluginMarketInstallationRecord | null = null;
+        let replacedRouteWasSuppressed = false;
         let packageLanded = false;
         requireSameMarketOwner(owner);
         const ghost = await installCustomMarketPlugin({
@@ -1170,9 +1171,16 @@ export class PluginMarketService {
                 record.manifestDigest === reviewInstalledDigest,
             );
             if (existing && record?.installed && !matchesSelectedRoute) {
-              this.detachMarketRouteForReplacement(ledger, record);
+              replacedRouteWasSuppressed = this.detachMarketRouteForReplacement(
+                ledger,
+                record,
+                defaultInstallSubject(owner),
+              );
               replacedRoute = record;
             }
+          },
+          onPackagePlaced: () => {
+            packageLanded = true;
           },
           // 复核与落位的双重互斥:
           // - SOURCE_MUTATION_KEY:beforeCommit 返回后包检查还要跑一段,期间不能
@@ -1188,7 +1196,6 @@ export class PluginMarketService {
           // 放到锁外时,本地装入能插在"包已落位"与"写下溯源"之间换掉同 id 的包。
           // 锁序:pluginId → SOURCE_MUTATION_KEY → ghostId → ledgerMutation。
           afterCommit: async (_installed, packagedManifest) => {
-            packageLanded = true;
             // packGhostDirToFile 返回的是写入真实临时包的 canonical manifest；
             // Main 随后复验并用包 SHA 钉死同一文件，因此无需在包已经落位后
             // 再读一次目录。后置 I/O 失败不应把成功安装误报成失败或漏写来源。
@@ -1217,7 +1224,12 @@ export class PluginMarketService {
           },
         }).catch((error) => {
           if (!packageLanded && replacedRoute) {
-            this.restoreMarketRouteAfterFailedReplacement(ledger, replacedRoute);
+            this.restoreMarketRouteAfterFailedReplacement(
+              ledger,
+              replacedRoute,
+              defaultInstallSubject(owner),
+              replacedRouteWasSuppressed,
+            );
           }
           throw error;
         });
@@ -1618,10 +1630,16 @@ export class PluginMarketService {
           !serverRecordMatchesInstalledGhost(plugin.id, installedNow, currentRecordNow),
       );
       let routeDetached = false;
+      let replacedRouteWasSuppressed = false;
+      let packageLanded = false;
       const detachPreviousRoute = (): void => {
         options.beforeCommitInLock?.();
         if (!replacingSource || !currentRecordNow) return;
-        this.detachMarketRouteForReplacement(ledger, currentRecordNow);
+        replacedRouteWasSuppressed = this.detachMarketRouteForReplacement(
+          ledger,
+          currentRecordNow,
+          defaultInstallSubject(owner),
+        );
         routeDetached = true;
       };
       const installed = await installOrUpdateMarketGhostPackage(tempPath, {
@@ -1645,9 +1663,21 @@ export class PluginMarketService {
         ...(options.beforeCommitInLock || replacingSource
           ? { beforeCommitInLock: detachPreviousRoute }
           : {}),
+        ...(replacingSource
+          ? {
+              onPackagePlacedInLock: () => {
+                packageLanded = true;
+              },
+            }
+          : {}),
       }).catch((error) => {
-        if (routeDetached && currentRecordNow) {
-          this.restoreMarketRouteAfterFailedReplacement(ledger, currentRecordNow);
+        if (routeDetached && !packageLanded && currentRecordNow) {
+          this.restoreMarketRouteAfterFailedReplacement(
+            ledger,
+            currentRecordNow,
+            defaultInstallSubject(owner),
+            replacedRouteWasSuppressed,
+          );
         }
         throw error;
       });
@@ -2158,11 +2188,21 @@ export class PluginMarketService {
   private detachMarketRouteForReplacement(
     ledger: PluginMarketLedger,
     record: PluginMarketInstallationRecord,
-  ): void {
+    installSubject: string,
+  ): boolean {
+    const tracksDefaultInstall = record.source === 'market' || record.source === 'legacy-adopted';
+    const wasSuppressed = tracksDefaultInstall
+      ? ledger.isDefaultInstallSuppressed(installSubject, record.pluginId)
+      : false;
     try {
-      ledger.markRemoved(record.ghostId, null);
+      ledger.markRemoved(record.ghostId, tracksDefaultInstall ? installSubject : null);
     } catch (error) {
-      this.restoreMarketRouteAfterFailedReplacement(ledger, record);
+      this.restoreMarketRouteAfterFailedReplacement(
+        ledger,
+        record,
+        installSubject,
+        wasSuppressed,
+      );
       log.warn('failed to detach Plugin market route before replacement', {
         pluginId: record.pluginId,
         ghostId: record.ghostId,
@@ -2170,14 +2210,22 @@ export class PluginMarketService {
       });
       throwIpcError('INTERNAL', 'Unable to detach the installed Plugin source');
     }
+    return wasSuppressed;
   }
 
   private restoreMarketRouteAfterFailedReplacement(
     ledger: PluginMarketLedger,
     record: PluginMarketInstallationRecord,
+    installSubject: string,
+    wasSuppressed: boolean,
   ): void {
     try {
-      ledger.upsertInstallation(record);
+      ledger.restoreInstallation(
+        record,
+        record.source === 'market' || record.source === 'legacy-adopted'
+          ? { userId: installSubject, suppressed: wasSuppressed }
+          : undefined,
+      );
     } catch (error) {
       log.error('failed to restore Plugin market route after replacement failure', {
         pluginId: record.pluginId,

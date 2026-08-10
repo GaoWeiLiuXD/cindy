@@ -1071,6 +1071,17 @@ describe('PluginMarketService migration and defaultInstall', () => {
       'placement failed',
     );
     expect(h.ledger.installationForGhost(item.ghostId)).toEqual(previousRecord);
+    expect(h.ledger.isDefaultInstallSuppressed('user-1', item.id)).toBe(false);
+    runtime.install.mockImplementationOnce(async (_file, options) => {
+      options.beforeCommitInLock?.();
+      options.onPackagePlacedInLock?.();
+      throw new Error('notification failed after placement');
+    });
+    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+      'notification failed after placement',
+    );
+    expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({ installed: false });
+    expect(h.ledger.isDefaultInstallSuppressed('user-1', item.id)).toBe(true);
     runtime.install.mockImplementationOnce(async (_file, options) => {
       options.beforeCommitInLock?.();
       expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({ installed: false });

@@ -73,6 +73,8 @@ export async function installCustomMarketPlugin(input: {
   beforeCommit?: () => void | Promise<void>;
   /** 真实包完成检查后、即将改动运行时前的同步事务钩。 */
   beforePackagePlacement?: () => void;
+  /** 新包完成原子换位后的同步事务钩。 */
+  onPackagePlaced?: () => void;
   /**
    * 提交段(复核 + 落位)的互斥包装,与来源增删共享同一把锁。
    *
@@ -194,6 +196,9 @@ export async function installCustomMarketPlugin(input: {
             : {}),
           ...(input.beforePackagePlacement
             ? { beforeCommitInLock: input.beforePackagePlacement }
+            : {}),
+          ...(input.onPackagePlaced
+            ? { onPackagePlacedInLock: input.onPackagePlaced }
             : {}),
         });
         // 溯源写入与落位同锁(见 afterCommit 注释)。
