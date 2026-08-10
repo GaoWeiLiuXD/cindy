@@ -12,6 +12,7 @@ import type {
   PluginMarketPackageReviewFacts,
   PluginMarketPackageReviewRequest,
 } from '../../shared/pluginMarket.js';
+import type { DataOwnerPushStamp } from '../../shared/dataOwnerPush.js';
 
 interface PendingReview {
   requesterId: number;
@@ -24,6 +25,7 @@ export class PluginMarketPackagePermissionReviewBridge {
   request(
     requesterId: number,
     facts: PluginMarketPackageReviewFacts,
+    ownerStamp: DataOwnerPushStamp,
     send: (request: PluginMarketPackageReviewRequest) => boolean,
   ): Promise<boolean> {
     const requestId = randomUUID();
@@ -33,6 +35,7 @@ export class PluginMarketPackagePermissionReviewBridge {
       try {
         delivered = send({
           requestId,
+          ownerStamp,
           manifest: facts.manifest,
           permissionDiff: facts.permissionDiff,
           isUpdate: facts.isUpdate,

@@ -153,9 +153,13 @@ function summary(overrides: Partial<VisiblePluginSummary> = {}): VisiblePluginSu
   };
 }
 
-function reviewedInstallOptions(item: VisiblePluginSummary) {
+function reviewedInstallOptions(
+  item: VisiblePluginSummary,
+  allowSourceReplacement = false,
+) {
   return {
     expectedReleaseId: item.currentRelease.id,
+    allowSourceReplacement,
   };
 }
 
@@ -1067,7 +1071,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
     });
 
     expect((await h.service.snapshot()).items[0]?.installState).toBe('conflict');
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item, true))).rejects.toThrow(
       'placement failed',
     );
     expect(h.ledger.installationForGhost(item.ghostId)).toEqual(previousRecord);
@@ -1077,7 +1081,7 @@ describe('PluginMarketService migration and defaultInstall', () => {
       options.onPackagePlacedInLock?.();
       throw new Error('notification failed after placement');
     });
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).rejects.toThrow(
+    await expect(h.service.install(item.id, reviewedInstallOptions(item, true))).rejects.toThrow(
       'notification failed after placement',
     );
     expect(h.ledger.installationForGhost(item.ghostId)).toMatchObject({ installed: false });
@@ -1091,7 +1095,9 @@ describe('PluginMarketService migration and defaultInstall', () => {
         enabled: true,
       };
     });
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
+    await expect(
+      h.service.install(item.id, reviewedInstallOptions(item, true)),
+    ).resolves.toMatchObject({
       ghost: { manifest: { version: '2.0.0' } },
     });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
@@ -2319,7 +2325,9 @@ describe('PluginMarketService migration and defaultInstall', () => {
       installed: false,
     });
 
-    await expect(h.service.install(item.id, reviewedInstallOptions(item))).resolves.toMatchObject({
+    await expect(
+      h.service.install(item.id, reviewedInstallOptions(item, true)),
+    ).resolves.toMatchObject({
       ghost: { manifest: { id: item.ghostId } },
     });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({

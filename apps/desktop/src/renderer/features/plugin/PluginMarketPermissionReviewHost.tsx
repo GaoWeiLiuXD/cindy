@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { GhostPermissionList, GhostUpdateReview } from '@/cindy-brain/GhostPermissionList';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog-provider';
-import { getDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
+import { isDataOwnerPushStampCurrent } from '@/contexts/dataOwnerGeneration';
 import { ghostPermissionItems } from '../../../shared/ghost';
 
 /**
@@ -22,24 +22,23 @@ export function PluginMarketPermissionReviewHost() {
       if (!review || typeof review.requestId !== 'string') return;
       void (async () => {
         let confirmed = false;
-        const owner = getDataOwnerGeneration();
-        const abort = new AbortController();
-        const unsubscribeAuth = window.electronAPI.onAuthStateChange((state) => {
-          if (
-            state.dataOwnerId !== owner.dataOwnerId ||
-            state.ownerGeneration !== owner.generation
-          ) {
-            abort.abort();
-          }
-        });
-        const currentOwner = getDataOwnerGeneration();
-        if (
-          currentOwner.dataOwnerId !== owner.dataOwnerId ||
-          currentOwner.generation !== owner.generation
-        ) {
-          abort.abort();
-        }
+        let unsubscribeAuth: () => void = () => undefined;
         try {
+          // 先核对 Main 投递时的 owner stamp，再读取或渲染任何私有包事实。
+          if (!isDataOwnerPushStampCurrent(review.ownerStamp)) return;
+          const ownerStamp = review.ownerStamp;
+          const abort = new AbortController();
+          unsubscribeAuth = window.electronAPI.onAuthStateChange((state) => {
+            if (
+              state.dataOwnerId !== ownerStamp.dataOwnerId ||
+              state.ownerGeneration !== ownerStamp.ownerGeneration
+            ) {
+              abort.abort();
+            }
+          });
+          // 订阅前后无 await，但 AuthContext 可能已先消费同一 auth push；再核对一次
+          // 可同时覆盖回调顺序差异和未来同步 listener 实现。
+          if (!isDataOwnerPushStampCurrent(ownerStamp)) abort.abort();
           const isUpdate = review.isUpdate;
           confirmed = await confirm(
             {

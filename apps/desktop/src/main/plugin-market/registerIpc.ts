@@ -4,6 +4,7 @@ import { ipcMain, type WebContents } from 'electron';
 
 import { isIpcError } from '../../shared/ipc-errors.js';
 import { isPluginMarketCustomIconKey } from '../../shared/pluginMarket.js';
+import { getActiveDataOwnerPushStamp } from '../appSessionState.js';
 import {
   sendToTrustedAppWindows,
   setGhostUninstallLedgerPreparer,
@@ -166,17 +167,26 @@ export function registerPluginMarketIpc(): void {
         typeof options === 'object' && options !== null
           ? (options as {
               expectedReleaseId?: unknown;
+              allowSourceReplacement?: unknown;
             })
           : null;
       const expectedReleaseId = requireString(obj?.expectedReleaseId, 'expectedReleaseId');
+      const allowSourceReplacement = obj?.allowSourceReplacement;
+      if (typeof allowSourceReplacement !== 'boolean') {
+        throwIpcError('INVALID_PARAMS', 'allowSourceReplacement must be a boolean');
+      }
       return invokePluginMarket(() =>
         service().install(
           requireString(pluginId, 'pluginId'),
-          { expectedReleaseId },
+          {
+            expectedReleaseId,
+            allowSourceReplacement,
+          },
           (facts) =>
             packagePermissionReviewBridge.request(
               event.sender.id,
               facts,
+              getActiveDataOwnerPushStamp(),
               (request) => {
                 if (event.sender.isDestroyed()) return false;
                 event.sender.send(PACKAGE_PERMISSION_REVIEW_CHANNEL, request);

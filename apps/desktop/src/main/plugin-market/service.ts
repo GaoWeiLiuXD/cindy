@@ -880,7 +880,7 @@ export class PluginMarketService {
           expectedInstalled: Boolean(existing),
           permissionPolicy: { mode: 'manual', sourceType: 'server' },
           reviewPackagePermissions,
-          allowSourceReplacement: true,
+          allowSourceReplacement: options.allowSourceReplacement === true,
         },
         owner,
         ledger,
@@ -1105,9 +1105,21 @@ export class PluginMarketService {
         const reviewInstalledDigest = existing
           ? installedGhostRawManifestDigest(existing.dir)
           : null;
-        // 来源只决定后台更新路由，不是 ghostId 的永久所有权。进入本方法表示
-        // 用户已在这个市场条目上明确点击安装；可以原地替换同 id 包，成功后再
-        // 把后续更新路由记到本来源。权限基线始终取当前真实安装，避免换源绕过扩权确认。
+        const currentRecord = ledger.installationForGhost(plugin.ghostId);
+        const matchesSelectedRoute = Boolean(
+          existing &&
+            currentRecord?.installed &&
+            currentRecord.pluginId === pluginId &&
+            currentRecord.sourceKey === sourceKey &&
+            currentRecord.manifestDigest != null &&
+            currentRecord.manifestDigest === reviewInstalledDigest,
+        );
+        if (existing && !matchesSelectedRoute && options.allowSourceReplacement !== true) {
+          throwIpcError('ALREADY_EXISTS', 'A local Plugin already uses this Plugin ID');
+        }
+        // 来源只决定后台更新路由，不是 ghostId 的永久所有权。只有详情页明确
+        // 选择“替换”才允许原地切换来源；普通更新和“全部更新”必须保持当前路由。
+        // 权限基线始终取当前真实安装，避免换源绕过扩权确认。
         const permissionBaselineManifest = existing
           ? installedGhostRawManifest(existing.dir)
           : null;
@@ -1162,7 +1174,7 @@ export class PluginMarketService {
           },
           beforePackagePlacement: () => {
             const record = ledger.installationForGhost(plugin.ghostId);
-            const matchesSelectedRoute = Boolean(
+            const routeStillMatches = Boolean(
               existing &&
                 record?.installed &&
                 record.pluginId === pluginId &&
@@ -1170,7 +1182,10 @@ export class PluginMarketService {
                 record.manifestDigest != null &&
                 record.manifestDigest === reviewInstalledDigest,
             );
-            if (existing && record?.installed && !matchesSelectedRoute) {
+            if (existing && !routeStillMatches && options.allowSourceReplacement !== true) {
+              throwIpcError('PRECONDITION_FAILED', 'Installed Plugin source changed');
+            }
+            if (existing && record?.installed && !routeStillMatches) {
               replacedRouteWasSuppressed = this.detachMarketRouteForReplacement(
                 ledger,
                 record,

@@ -1361,6 +1361,11 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     h.ledger.upsertInstallation(previousRecord);
 
     await h.service.detail(customMarketPluginId('team-lib', 'alpha'));
+    await expect(
+      h.service.install(customMarketPluginId('team-lib', 'alpha'), {
+        expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+      }),
+    ).rejects.toMatchObject({ code: 'ALREADY_EXISTS' });
     runtime.install.mockImplementationOnce(async (_file, options) => {
       options.beforeCommitInLock?.();
       expect(h.ledger.installationForGhost('alpha')).toMatchObject({ installed: false });
@@ -1369,6 +1374,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+        allowSourceReplacement: true,
       }),
     ).rejects.toThrow('placement failed');
     expect(h.ledger.installationForGhost('alpha')).toEqual(previousRecord);
@@ -1381,6 +1387,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+        allowSourceReplacement: true,
       }),
     ).rejects.toThrow('notification failed after placement');
     expect(h.ledger.installationForGhost('alpha')).toMatchObject({ installed: false });
@@ -1397,6 +1404,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+        allowSourceReplacement: true,
       }),
     ).resolves.toMatchObject({ ghost: { manifest: { id: 'alpha' } } });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
@@ -1651,6 +1659,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '2.0.0'),
+        allowSourceReplacement: true,
       }),
     ).resolves.toMatchObject({ ghost: { manifest: { version: '2.0.0' } } });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
@@ -1747,6 +1756,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '2.0.0'),
+        allowSourceReplacement: true,
       }),
     ).resolves.toMatchObject({ ghost: { manifest: { version: '2.0.0' } } });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
@@ -1896,6 +1906,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(item.id, {
         expectedReleaseId: item.currentRelease.id,
+        allowSourceReplacement: true,
       }),
     ).resolves.toMatchObject({ ghost: { manifest: { id: 'server-plugin' } } });
     expect(h.api.download).toHaveBeenCalled();
@@ -1976,6 +1987,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(customMarketPluginId('team-lib', 'alpha'), {
         expectedReleaseId: customMarketReleaseId('team-lib', 'alpha', '1.0.0'),
+        allowSourceReplacement: true,
       }),
     ).resolves.toMatchObject({ ghost: { manifest: { id: 'alpha' } } });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({

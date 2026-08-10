@@ -148,6 +148,10 @@ async function runQueue(generation: number): Promise<void> {
           patchRow(generation, next.pluginId, { status: 'done' });
           continue;
         }
+        if (detail.installState !== 'update-available') {
+          patchRow(generation, next.pluginId, { status: 'skipped' });
+          continue;
+        }
         const installed = readInstalledGhostsSnapshot().find(
           (ghost) => ghost.manifest.id === next.ghostId,
         );
@@ -161,6 +165,7 @@ async function runQueue(generation: number): Promise<void> {
         });
         const result = await window.electronAPI.pluginMarket.install(next.pluginId, {
           expectedReleaseId: detail.releaseId,
+          allowSourceReplacement: false,
         });
         if (generation !== batchGeneration) return;
         if (!batchOwnerCurrent()) {
@@ -222,6 +227,12 @@ export function reconcileUpdateAllBatch(marketItems: readonly PluginMarketItem[]
       changed = true;
     } else if (installStateByPluginId.get(row.pluginId) === 'installed') {
       rows = updateRow(rows, row.pluginId, { status: 'done' });
+      changed = true;
+    } else if (
+      installStateByPluginId.has(row.pluginId) &&
+      installStateByPluginId.get(row.pluginId) !== 'update-available'
+    ) {
+      rows = updateRow(rows, row.pluginId, { status: 'skipped' });
       changed = true;
     } else if (installed.version !== row.fromVersion) {
       rows = updateRow(rows, row.pluginId, { fromVersion: installed.version });

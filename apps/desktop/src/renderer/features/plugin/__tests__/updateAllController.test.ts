@@ -127,8 +127,8 @@ describe('updateAllController', () => {
     await waitForFinishedBatch();
 
     expect(installMock.mock.calls).toEqual([
-      ['plugin-a', { expectedReleaseId: 'release-2' }],
-      ['plugin-b', { expectedReleaseId: 'release-b2' }],
+      ['plugin-a', { expectedReleaseId: 'release-2', allowSourceReplacement: false }],
+      ['plugin-b', { expectedReleaseId: 'release-b2', allowSourceReplacement: false }],
     ]);
     expect(getUpdateAllBatchState().rows?.map((row) => row.status)).toEqual([
       'done',
@@ -163,6 +163,37 @@ describe('updateAllController', () => {
 
     expect(getUpdateAllBatchState().rows?.[0]?.status).toBe('done');
     expect(installMock).not.toHaveBeenCalled();
+  });
+
+  it('skips a queued update that changed to a source conflict before its turn', async () => {
+    installedGhosts.push({ manifest: manifest({ id: 'ghost-b', version: '2.0.0' }) });
+    let resolveFirstInstall: (() => void) | undefined;
+    installMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstInstall = () => resolve({ ghost: { manifest: manifest() } });
+        }),
+    );
+    detailMock.mockImplementation(async (pluginId) =>
+      pluginId === 'plugin-a'
+        ? detail()
+        : detail({
+            pluginId: 'plugin-b',
+            ghostId: 'ghost-b',
+            installState: 'conflict',
+          }),
+    );
+
+    startUpdateAllBatch([
+      marketItem(),
+      marketItem({ pluginId: 'plugin-b', ghostId: 'ghost-b' }),
+    ]);
+    await vi.waitFor(() => expect(resolveFirstInstall).toBeDefined());
+    resolveFirstInstall?.();
+    await waitForFinishedBatch();
+
+    expect(installMock).toHaveBeenCalledTimes(1);
+    expect(getUpdateAllBatchState().rows?.[1]?.status).toBe('skipped');
   });
 
   it('keeps ordinary install failures as terminal failed rows', async () => {

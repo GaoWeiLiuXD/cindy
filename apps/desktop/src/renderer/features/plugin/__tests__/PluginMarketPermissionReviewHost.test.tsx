@@ -63,6 +63,7 @@ describe('PluginMarketPermissionReviewHost', () => {
     act(() => {
       reviewListener?.({
         requestId: 'review-a',
+        ownerStamp: { dataOwnerId: 'owner-a', ownerGeneration: 1 },
         manifest: {
           schemaVersion: 2,
           id: 'private-plugin',
@@ -99,5 +100,38 @@ describe('PluginMarketPermissionReviewHost', () => {
       expect(screen.queryByText('settings.ghosts.market.installConfirmTitle')).toBeNull();
       expect(resolveReview).toHaveBeenCalledWith('review-a', false);
     });
+  });
+
+  it('never shows a review whose Main delivery owner is already stale', async () => {
+    render(
+      <ConfirmDialogProvider>
+        <PluginMarketPermissionReviewHost />
+      </ConfirmDialogProvider>,
+    );
+    setDataOwnerGeneration('owner-b', 2);
+
+    act(() => {
+      reviewListener?.({
+        requestId: 'stale-review',
+        ownerStamp: { dataOwnerId: 'owner-a', ownerGeneration: 1 },
+        manifest: {
+          schemaVersion: 2,
+          id: 'private-plugin',
+          name: 'Private Plugin',
+          version: '1.0.0',
+          kind: 'chip',
+          entry: 'main.js',
+          slots: ['tool'],
+        },
+        permissionDiff: null,
+        isUpdate: false,
+        sourceType: 'server',
+      });
+    });
+
+    await waitFor(() => {
+      expect(resolveReview).toHaveBeenCalledWith('stale-review', false);
+    });
+    expect(screen.queryByText('settings.ghosts.market.installConfirmTitle')).toBeNull();
   });
 });

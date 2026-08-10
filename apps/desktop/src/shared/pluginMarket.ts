@@ -1,5 +1,6 @@
 import type { GhostManifest, GhostPermissionDiff, InstalledGhost } from './ghost';
 import type { PluginIconMetadata } from '@cindy/plugin-protocol';
+import type { DataOwnerPushStamp } from './dataOwnerPush';
 
 export type PluginMarketScope = 'public' | 'organization' | 'personal';
 export type PluginMarketInstallState =
@@ -127,6 +128,8 @@ export interface PluginMarketPackageReviewFacts {
 /** Main 在安装事务内请求当前窗口立即确认真实包权限；不暴露内部批准绑定。 */
 export interface PluginMarketPackageReviewRequest {
   requestId: string;
+  /** Main 投递这份私有包事实时的账号代际；Renderer 必须匹配后才可展示。 */
+  ownerStamp: DataOwnerPushStamp;
   manifest: GhostManifest;
   permissionDiff: GhostPermissionDiff | null;
   isUpdate: boolean;
@@ -136,6 +139,8 @@ export interface PluginMarketPackageReviewRequest {
 export interface PluginMarketInstallOptions {
   /** 用户点击时看到的目标 release；Main 会在下载前重新核对。 */
   expectedReleaseId: string;
+  /** 仅详情页上用户明确点击“替换”时为 true；更新和批量更新不得切换来源。 */
+  allowSourceReplacement?: boolean;
 }
 
 /** 安装成功，或用户在事务内取消真实包权限确认。 */

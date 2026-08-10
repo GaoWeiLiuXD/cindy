@@ -808,8 +808,14 @@ export function GhostPluginPage() {
       try {
         const next = await window.electronAPI.pluginMarket.detail(marketItem.pluginId);
         if (!isMarketBusyLeaseActive(marketBusyLease)) return;
+        if (next.installState !== 'update-available') {
+          toast.error(t('settings.ghosts.market.errors.stateChanged'));
+          await refreshMarket();
+          return;
+        }
         const options: PluginMarketInstallOptions = {
           expectedReleaseId: next.releaseId,
+          allowSourceReplacement: false,
         };
         const ghost = await installReviewedMarketPackage({
           pluginId: next.pluginId,
@@ -1142,6 +1148,7 @@ export function GhostPluginPage() {
         if (!isMarketBusyLeaseActive(marketBusyLease)) return;
         const options: PluginMarketInstallOptions = {
           expectedReleaseId: marketDetail.releaseId,
+          allowSourceReplacement: marketDetail.installState === 'conflict',
         };
         const ghost = await installReviewedMarketPackage({
           pluginId: marketDetail.pluginId,
