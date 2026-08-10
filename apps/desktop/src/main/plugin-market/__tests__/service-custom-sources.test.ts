@@ -1950,6 +1950,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
     await expect(
       h.service.install(item.id, {
         expectedReleaseId: item.currentRelease.id,
+        allowSourceReplacement: true,
       }),
     ).resolves.toMatchObject({ ghost: { manifest: { id: 'server-plugin' } } });
     expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
