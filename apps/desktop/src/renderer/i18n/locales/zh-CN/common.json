@@ -3268,10 +3268,11 @@
         "update": "从市场更新",
         "updateTo": "更新到 v{{version}}",
         "installed": "已安装",
-        "conflict": "暂不可用",
-        "conflictAria": "{{name}} 存在插件标识冲突",
-        "conflictDescription": "插件标识已被占用，当前无法安装",
+        "replace": "替换",
+        "replaceAria": "使用此市场版本替换 {{name}}",
+        "replaceDescription": "已安装相同标识的插件；继续安装会用此市场版本替换，并保留插件数据。",
         "unavailable": "插件市场暂时不可用；已安装插件仍可正常管理和使用。",
+        "customSourcesUnavailable": "以下自定义市场暂时不可用：{{names}}。其他市场不受影响。",
         "authenticationRequired": "登录 Cindy 后才能查看插件市场。",
         "notConfigured": "当前环境未配置插件市场；已安装插件仍可正常管理和使用。",
         "upgradeNotice": {
@@ -3566,7 +3567,6 @@
         "alreadyInstalled": "这个插件已经安装",
         "commandConflict": "它的指令和已装插件撞名了，先卸载占用方或让作者改名",
         "idReserved": "该 id 使用了官方保留前缀 cindy-，仅随应用内置的插件可用",
-        "sourceConflict": "这个插件由插件市场安装。请先卸载当前版本，再安装本地插件包。",
         "sourceMissing": "找不到所选文件",
         "generic": "操作失败，请稍后重试",
         "updateIdMismatch": "所选文件是插件「{{id}}」，与当前插件「{{expected}}」不一致"

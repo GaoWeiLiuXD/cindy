@@ -22,7 +22,12 @@ const brain = vi.hoisted(() => ({
     },
   ),
   rejectReservedGhostIdForCustomMarket: vi.fn(),
-  packGhostDirToFile: vi.fn(async () => ({ ok: true as const, manifest: {} })),
+  packGhostDirToFile: vi.fn(
+    async (_pluginDir: string, _tempPath: string, _expectedRoot: string) => ({
+      ok: true as const,
+      manifest: {},
+    }),
+  ),
 }));
 vi.mock('../../cindy-brain/index.js', () => ({
   installOrUpdateMarketGhostPackage: brain.installOrUpdateMarketGhostPackage,
@@ -186,23 +191,47 @@ describe('installCustomMarketPlugin · 身份卡读取闸', () => {
       installedBaseline: null,
       sourceType: 'local-market' as const,
     };
+    brain.packGhostDirToFile.mockImplementationOnce(async (_pluginDir, tempPath) => {
+      await fs.promises.writeFile(tempPath, 'verified-package');
+      return { ok: true as const, manifest: GOOD_MANIFEST };
+    });
+    let resolveCommit!: () => void;
+    const allowCommit = new Promise<void>((resolve) => {
+      resolveCommit = resolve;
+    });
+    let resolveCommitStarted!: () => void;
+    const commitStarted = new Promise<void>((resolve) => {
+      resolveCommitStarted = resolve;
+    });
+    let reviewedTempPath = '';
     brain.installOrUpdateMarketGhostPackage
       .mockRejectedValueOnce(new GhostPackagePermissionReviewRequiredError(review))
-      .mockResolvedValueOnce({
-        manifest: GOOD_MANIFEST,
-        dir: path.join(workDir, 'installed'),
-        enabled: true,
-      } as never);
+      .mockImplementationOnce(async (tempPath: string) => {
+        reviewedTempPath = tempPath;
+        resolveCommitStarted();
+        await allowCommit;
+        expect(fs.existsSync(tempPath)).toBe(true);
+        return {
+          manifest: GOOD_MANIFEST,
+          dir: path.join(workDir, 'installed'),
+          enabled: true,
+        } as never;
+      });
     const reviewer = vi.fn(async () => true);
     const afterCommit = vi.fn(async () => undefined);
 
-    await installCustomMarketPlugin({
+    const installing = installCustomMarketPlugin({
       pluginDir: canonical,
       ...GOOD_IDENTITY,
       sourceType: 'local-market',
       reviewPackagePermissions: reviewer,
       afterCommit,
     });
+    await commitStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fs.existsSync(reviewedTempPath)).toBe(true);
+    resolveCommit();
+    await installing;
 
     expect(reviewer).toHaveBeenCalledWith(review);
     expect(brain.installOrUpdateMarketGhostPackage).toHaveBeenCalledTimes(2);

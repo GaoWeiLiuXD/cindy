@@ -59,7 +59,7 @@ describe('market Ghost session boundary', () => {
     expect(body).toContain('releaseMutation?.();');
   });
 
-  it('rejects a current market install but detaches a historical local override', () => {
+  it('allows explicit local replacement and detaches market routing only after landing', () => {
     const updateStart = source.indexOf(
       "ipcMain.handle('ghosts:update'",
     );
@@ -72,13 +72,9 @@ describe('market Ghost session boundary', () => {
     const ledgerReadIndex = body.indexOf(
       'marketLedger.installationForGhost(inspected.manifest.id)',
     );
-    const installedDigestIndex = body.indexOf(
-      'readInstalledGhostManifestDigest(inspected.manifest.id)',
+    const detachDecisionIndex = body.indexOf(
+      'const detachMarketRecord = Boolean(marketRecord?.installed)',
     );
-    const staleOverrideIndex = body.indexOf(
-      'const detachStaleMarketRecord = Boolean(',
-    );
-    const sourceConflictIndex = body.indexOf("'GHOST_SOURCE_CONFLICT'");
     const runtimeStopIndex = body.indexOf('runtime.stop(inspected.manifest.id)');
     const managerUpdateIndex = body.indexOf('result = await manager.update(');
     const detachIndex = body.indexOf(
@@ -86,15 +82,11 @@ describe('market Ghost session boundary', () => {
     );
 
     expect(ledgerReadIndex).toBeGreaterThan(-1);
-    expect(installedDigestIndex).toBeGreaterThan(ledgerReadIndex);
-    expect(staleOverrideIndex).toBeGreaterThan(installedDigestIndex);
-    expect(body.slice(staleOverrideIndex, sourceConflictIndex)).toContain(
-      'marketRecord.manifestDigest !== undefined',
-    );
-    expect(sourceConflictIndex).toBeGreaterThan(staleOverrideIndex);
-    expect(runtimeStopIndex).toBeGreaterThan(sourceConflictIndex);
+    expect(detachDecisionIndex).toBeGreaterThan(ledgerReadIndex);
+    expect(runtimeStopIndex).toBeGreaterThan(detachDecisionIndex);
     expect(managerUpdateIndex).toBeGreaterThan(runtimeStopIndex);
     expect(detachIndex).toBeGreaterThan(managerUpdateIndex);
+    expect(body).not.toContain('GHOST_SOURCE_CONFLICT');
   });
 
   it('runs the final market callback before both initial install and update placement', () => {

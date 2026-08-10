@@ -90,11 +90,17 @@ describe('Plugin Market IPC error boundary', () => {
     expect(syncBody).toContain('await snapshotAndSignalRemovalNotice();');
     expect(syncBody).toContain("log.warn('default plugin startup sync failed'");
 
-    const snapshotStart = registerSource.indexOf('async function snapshotAndSignalRemovalNotice()');
+    const snapshotStart = registerSource.indexOf(
+      'async function snapshotAndSignalRemovalNotice(options?: PluginMarketSnapshotOptions)',
+    );
     const snapshotEnd = registerSource.indexOf('\n}\n\n/**', snapshotStart);
     const snapshotBody = registerSource.slice(snapshotStart, snapshotEnd);
     expect(snapshotBody).toContain('finally {');
     expect(snapshotBody).toContain('signalRemovalNoticeAvailable();');
+    expect(snapshotBody).toContain('signalUpgradeNoticeAvailable();');
+
+    expect(registerSource).toContain('deferDefaultReconciliation: true');
+    expect(registerSource).toContain('onDeferredReconciliationSettled: () => {');
 
     const ownerSyncStart = bootstrapSource.indexOf(
       'function syncDefaultPluginsForActiveOwner(): void',

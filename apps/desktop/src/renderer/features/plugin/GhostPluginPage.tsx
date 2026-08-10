@@ -355,6 +355,7 @@ export function GhostPluginPage() {
               items: [],
               unavailableReason: error instanceof Error ? error.message : String(error),
               customSourceNames: [],
+              unavailableCustomSourceNames: [],
             },
       );
       // Background icon renewal keeps the current snapshot visible, but must still report
@@ -483,6 +484,8 @@ export function GhostPluginPage() {
   const marketByGhostId = useMemo(() => {
     const map = new Map<string, PluginMarketItem>();
     for (const item of marketItems) {
+      // 非当前路由的同 id 条目只出现在「可替换」市场卡片，
+      // 不得投影成已装卡片的普通更新。
       if (item.installState !== 'conflict') map.set(item.ghostId, item);
     }
     return map;
@@ -1108,9 +1111,11 @@ export function GhostPluginPage() {
       // 旧确认回调恢复后必须先验权,不能在新会话里继续安装。
       const marketBusyLease = acquireMarketBusy(marketDetail.pluginId);
       if (!marketBusyLease) return;
-      // 详情页按钮在 update-available 态复用本入口,后端走原位更新并保留
-      // 生效状态 —— 文案必须分支,不能对更新路径承诺"装完即开"(review P1)。
-      const isUpdate = marketDetail.installState === 'update-available';
+      // 市场更新与用户显式选择的同 id 替换都走原位更新，
+      // 保留生效状态和按 ghostId 存储的用户数据。
+      const isUpdate =
+        marketDetail.installState === 'update-available' ||
+        marketDetail.installState === 'conflict';
       try {
         let installedGhost =
           ghosts.find((ghost) => ghost.manifest.id === marketDetail.ghostId) ?? null;
@@ -1458,7 +1463,8 @@ export function GhostPluginPage() {
 
             {availableMarketItems.length > 0 ||
             searchedAvailableMarketItems.length > 0 ||
-            marketSnapshot?.unavailableReason ? (
+            marketSnapshot?.unavailableReason ||
+            marketSnapshot?.unavailableCustomSourceNames.length ? (
               <section className="plugin-motion-page-section mt-10 min-w-0">
                 <div className={PLUGIN_CATALOG_TOOLBAR_CLASS}>
                   {/* 推荐区标题不带数字(设计定稿):数量感由卡片自身传达。 */}
@@ -1515,6 +1521,14 @@ export function GhostPluginPage() {
                   </p>
                 ) : null}
 
+                {marketSnapshot?.unavailableCustomSourceNames.length ? (
+                  <p className="mb-4 rounded-xl border border-[var(--border-default)] bg-[var(--surface-chip)] px-4 py-3 text-12 text-[var(--text-secondary)]">
+                    {t('settings.ghosts.market.customSourcesUnavailable', {
+                      names: marketSnapshot.unavailableCustomSourceNames.join(', '),
+                    })}
+                  </p>
+                ) : null}
+
                 {availableMarketItems.length > 0 ? (
                   customGroups && customGroups.length > 1 ? (
                     <div className="flex flex-col gap-6">
@@ -1562,7 +1576,8 @@ export function GhostPluginPage() {
                       ))}
                     </div>
                   )
-                ) : marketSnapshot?.unavailableReason ? null : (
+                ) : marketSnapshot?.unavailableReason ||
+                  marketSnapshot?.unavailableCustomSourceNames.length ? null : (
                   <div className="rounded-xl border-[0.5px] border-[var(--border-default)] px-5 py-10 text-center">
                     <p className="text-13 text-[var(--text-secondary)]">
                       {t('settings.ghosts.page.emptyFiltered')}
@@ -1655,10 +1670,12 @@ export function MarketPluginCard({
 }) {
   const { t } = useTranslation();
   const marketIcon = usePluginMarketIcon(item, { deferUntilVisible: true });
-  const unavailable = busy || item.installState === 'conflict';
-  const conflictDescriptionId = useId();
-  const conflictDescription =
-    item.installState === 'conflict' ? t('settings.ghosts.market.conflictDescription') : undefined;
+  const unavailable = busy;
+  const replacementDescriptionId = useId();
+  const replacementDescription =
+    item.installState === 'conflict'
+      ? t('settings.ghosts.market.replaceDescription')
+      : undefined;
   return (
     <article
       className={cn(
@@ -1673,15 +1690,13 @@ export function MarketPluginCard({
         onClick={onSelect}
         disabled={unavailable}
         aria-label={item.name}
-        aria-describedby={conflictDescription ? conflictDescriptionId : undefined}
+        aria-describedby={
+          replacementDescription ? replacementDescriptionId : undefined
+        }
         className={cn(
           'flex min-w-0 flex-1 items-start gap-4 self-stretch text-left',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]',
-          unavailable
-            ? item.installState === 'conflict'
-              ? 'cursor-not-allowed'
-              : 'cursor-wait'
-            : 'cursor-pointer',
+          unavailable ? 'cursor-wait' : 'cursor-pointer',
         )}
       >
         <GhostPluginIcon
@@ -1718,10 +1733,10 @@ export function MarketPluginCard({
             ) : null}
           </span>
           <span
-            id={conflictDescription ? conflictDescriptionId : undefined}
+            id={replacementDescription ? replacementDescriptionId : undefined}
             className="mt-1.5 line-clamp-2 text-13 leading-5 text-[var(--text-secondary)]"
           >
-            {conflictDescription ?? (item.description || item.ghostId)}
+            {replacementDescription ?? (item.description || item.ghostId)}
           </span>
         </span>
       </button>
@@ -1730,13 +1745,10 @@ export function MarketPluginCard({
           type="button"
           onClick={onSelect}
           disabled={unavailable}
-          aria-label={t(
-            item.installState === 'conflict'
-              ? 'settings.ghosts.market.conflictAria'
-              : 'settings.ghosts.market.detailsAria',
-            { name: item.name },
-          )}
-          aria-describedby={conflictDescription ? conflictDescriptionId : undefined}
+          aria-label={t('settings.ghosts.market.detailsAria', { name: item.name })}
+          aria-describedby={
+            replacementDescription ? replacementDescriptionId : undefined
+          }
           className={cn(
             'group/market-details absolute inset-0 flex items-start justify-end rounded-xl text-[var(--text-tertiary)]',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40',
@@ -1751,14 +1763,7 @@ export function MarketPluginCard({
             <ChevronRight size={16} aria-hidden="true" />
           </span>
         </button>
-        {item.installState === 'conflict' ? (
-          <span
-            role="status"
-            className="relative z-[1] inline-flex h-8 shrink-0 select-none items-center rounded-full border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3 text-11 font-medium text-[var(--text-secondary)]"
-          >
-            {t('settings.ghosts.market.conflict')}
-          </span>
-        ) : onInstall ? (
+        {onInstall ? (
           <button
             type="button"
             onClick={(event) => {
@@ -1766,15 +1771,25 @@ export function MarketPluginCard({
               onInstall();
             }}
             disabled={unavailable}
-            aria-label={t('settings.ghosts.page.installAria', { name: item.name })}
-            aria-describedby={conflictDescription ? conflictDescriptionId : undefined}
+            aria-label={
+              item.installState === 'conflict'
+                ? t('settings.ghosts.market.replaceAria', { name: item.name })
+                : t('settings.ghosts.page.installAria', { name: item.name })
+            }
+            aria-describedby={
+              replacementDescription ? replacementDescriptionId : undefined
+            }
             className={cn(
               'relative z-[1] inline-flex h-8 shrink-0 items-center rounded-full border border-[var(--border-default)] bg-[var(--surface-elevated)] px-3.5 text-12 font-medium text-[var(--text-primary)]',
               'transition-[background-color,border-color,transform,opacity] duration-150 hover:bg-[var(--surface-hover-soft)] active:scale-[0.98]',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-40',
             )}
           >
-            {t('settings.ghosts.market.install')}
+            {t(
+              item.installState === 'conflict'
+                ? 'settings.ghosts.market.replace'
+                : 'settings.ghosts.market.install',
+            )}
           </button>
         ) : null}
       </div>

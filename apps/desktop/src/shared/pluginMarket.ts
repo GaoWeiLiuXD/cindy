@@ -44,6 +44,8 @@ export interface PluginMarketSnapshot {
   unavailableReason: string | null;
   /** 已添加的自定义市场名（按添加顺序）；驱动"自定义"筛选 tab 的可见性。 */
   customSourceNames: string[];
+  /** 本轮发现失败的自定义市场名；失败来源不影响其它来源和官方市场。 */
+  unavailableCustomSourceNames: string[];
 }
 
 /** 服务端清理的一次性汇总提示：按 owner 缓存，consume 前跨多轮对账累加，consume 后即清。 */

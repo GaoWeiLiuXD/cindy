@@ -3269,10 +3269,11 @@
         "update": "Update from market",
         "updateTo": "Update to v{{version}}",
         "installed": "Installed",
-        "conflict": "Unavailable",
-        "conflictAria": "{{name}} has a plugin ID conflict",
-        "conflictDescription": "This plugin ID is already in use, so this plugin can't be installed.",
+        "replace": "Replace",
+        "replaceAria": "Replace {{name}} with this marketplace version",
+        "replaceDescription": "A plugin with the same ID is already installed. Continuing will replace it with this marketplace version and keep its data.",
         "unavailable": "The plugin market is temporarily unavailable. Installed plugins remain available.",
+        "customSourcesUnavailable": "These custom marketplaces are temporarily unavailable: {{names}}. Other marketplaces are unaffected.",
         "authenticationRequired": "Sign in to Cindy to view the plugin market.",
         "notConfigured": "The plugin market is not configured for this environment. Installed plugins remain available.",
         "upgradeNotice": {
@@ -3567,7 +3568,6 @@
         "alreadyInstalled": "This plugin is already installed",
         "commandConflict": "Its command conflicts with an installed plugin. Uninstall the other one or rename the command.",
         "idReserved": "This id uses the reserved official prefix cindy-; it is only available to plugins bundled with the app",
-        "sourceConflict": "This plugin was installed from a marketplace. Uninstall it before installing a local package.",
         "sourceMissing": "The selected file could not be found",
         "generic": "Operation failed. Please try again.",
         "updateIdMismatch": "The selected file is plugin \"{{id}}\", which does not match this plugin \"{{expected}}\""

@@ -211,7 +211,7 @@ export async function installCustomMarketPlugin(input: {
 
     // 确认返回后重新取得来源/ghost 锁，复核来源、当前安装基线与真实包 SHA。
     // 确认期间不持锁，取消或窗口销毁可立即结束并清理临时包。
-    return commit(review);
+    return await commit(review);
   } finally {
     await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
   }

@@ -5268,24 +5268,10 @@ export function registerGhostIpc(): void {
         });
         throwIpcError('INTERNAL', 'Unable to verify the installed Plugin source');
       }
-      // 旧版允许本地包原位覆盖市场安装，却不会清理市场账本。只有账本带摘要、
-      // 当前真实包也可读且两者明确不同时，才把它视为已发生的历史本地覆盖；
-      // 摘要相同/缺失/不可读仍拒绝，不能借迁移路径切换一个仍由市场拥有的包。
-      const installedManifestDigest = previousGhost
-        ? readInstalledGhostManifestDigest(inspected.manifest.id)
-        : null;
-      const detachStaleMarketRecord = Boolean(
-        marketRecord?.installed &&
-        marketRecord.manifestDigest !== undefined &&
-        installedManifestDigest !== null &&
-        installedManifestDigest !== marketRecord.manifestDigest,
-      );
-      if (marketRecord?.installed && !detachStaleMarketRecord) {
-        throwIpcError(
-          'GHOST_SOURCE_CONFLICT',
-          'Uninstall the market Plugin before installing a local package',
-        );
-      }
+      // 用户已在本地包确认流程中明确选择了这份真实包：同 id 可以原位替换，
+      // 市场来源不是永久所有权。替换成功后再解除旧市场更新路由，不清理
+      // Secret、KV、偏好或其它按 ghostId 保存的用户状态。
+      const detachMarketRecord = Boolean(marketRecord?.installed);
       runtime.stop(inspected.manifest.id);
       getGhostNodeRuntimeBroker().stop(inspected.manifest.id);
       getGhostAgentSlot().clearGhost(inspected.manifest.id);
@@ -5302,13 +5288,12 @@ export function registerGhostIpc(): void {
         if (previousGhost) spawnIfResident(previousGhost);
         throwInstallError(result.rejection);
       }
-      if (detachStaleMarketRecord) {
+      if (detachMarketRecord) {
         try {
-          // 本地包已经原子落位后再解除陈旧来源；失败不回滚已成功的包更新，
-          // 摘要失配仍会阻止任何市场把当前包重新认领。
+          // 包原子落位后再解除旧市场更新路由；失败不回滚已成功的包更新。
           marketLedger.markRemoved(inspected.manifest.id, null);
         } catch (error) {
-          log.warn('failed to detach stale Plugin market provenance after local update', {
+          log.warn('failed to detach Plugin market provenance after local update', {
             ghostId: inspected.manifest.id,
             error: error instanceof Error ? error.message : String(error),
           });
