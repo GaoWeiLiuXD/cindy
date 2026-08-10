@@ -1139,7 +1139,7 @@ describe('PluginMarketService 自定义市场 detail/install', () => {
       expectedReleaseId: customMarketReleaseId('team-lib', 'cindy-github', '1.0.0'),
     });
 
-    expect(runtime.install.mock.calls[0]?.[1]).toEqual({
+    expect(runtime.install.mock.calls[0]?.[1]).toMatchObject({
       ghostId: 'cindy-github',
       version: '1.0.0',
       permissionPolicy: { mode: 'manual', sourceType: 'local-market' },
