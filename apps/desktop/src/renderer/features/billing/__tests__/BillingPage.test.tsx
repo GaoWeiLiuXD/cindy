@@ -2487,6 +2487,28 @@ describe('BillingPage plan change', () => {
     expect(screen.getByText('billing.currentSubscription.purchaseBlocked')).toBeTruthy();
   });
 
+  it('shows the period-end copy in the purchase dialog when the live subscription is scheduled to cancel', async () => {
+    const billing = billingMocks();
+    billing.getCurrentSubscription = vi.fn(async () => ({
+      subscription: { ...activeSubscription(null, 'MONTH', 'ACTIVE', true), effectivePlan: null },
+    }));
+    install(billing);
+
+    render(<BillingPage />);
+
+    await selectSubscriptionManagementAction('billing.settings.subscriptionCard.action');
+    fireEvent.click((await screen.findAllByText('Plus plan'))[0].closest('button')!);
+    fireEvent.click(screen.getByText('stripe').closest('button')!);
+    expect(screen.getByText('billing.actions.pay').closest('button')).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(
+      screen.getByText(/billing\.currentSubscription\.purchaseBlockedUntilPeriodEnd/),
+    ).toBeTruthy();
+    expect(screen.queryByText('billing.currentSubscription.purchaseBlocked')).toBeNull();
+  });
+
   it('explains a rejected quote and returns to the candidate list', async () => {
     const billing = install(billingMocks());
     billing.quotePlanChange.mockRejectedValue(
