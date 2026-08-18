@@ -336,6 +336,33 @@ describe('Cindy Core media invocation state and security boundary', () => {
     });
   });
 
+  it('旧调用未传 providerId 时不在同名 Provider 中静默选择来源', async () => {
+    const model = {
+      id: 'openai/gpt-image-2',
+      name: 'GPT Image 2',
+      providerId: 'openai',
+      mode: 'image_generation',
+      modalities: { input: ['text', 'image'], output: ['image'] },
+      officialDocs: 'https://platform.openai.com/docs/guides/image-generation',
+    };
+    mocks.models.mockResolvedValue([{ ...model, providerId: 'xd' }, model]);
+
+    await expect(
+      callCindyMedia({
+        action: 'prepare',
+        modelId: model.id,
+        capability: 'image.generate',
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'MODEL_NOT_AVAILABLE',
+      retryable: false,
+      message: expect.stringContaining('provider_id'),
+    });
+    expect(mocks.guide).not.toHaveBeenCalled();
+    expect(mocks.providerModel).not.toHaveBeenCalled();
+  });
+
   it('终态历史不占用在途 invocation 上限', async () => {
     mocks.guide.mockResolvedValue(
       resolvedGuide(

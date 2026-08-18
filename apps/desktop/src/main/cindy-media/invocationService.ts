@@ -1127,9 +1127,16 @@ async function prepareInvocation(
   assertAuthScope(scope);
   const models = await listAvailableMediaModels(capability);
   assertAuthScope(scope);
-  const model = providerId
-    ? models.find((candidate) => candidate.providerId === providerId && candidate.id === modelId)
-    : models.find((candidate) => candidate.id === modelId);
+  const matchingModels = models.filter(
+    (candidate) => candidate.id === modelId && (!providerId || candidate.providerId === providerId),
+  );
+  if (!providerId && matchingModels.length > 1) {
+    return failure(
+      'MODEL_NOT_AVAILABLE',
+      '该模型同时来自多个 Provider，请从模型目录选择精确来源并在 prepare 时传入 provider_id',
+    );
+  }
+  const model = matchingModels[0];
   if (!model) {
     return failure('MODEL_NOT_AVAILABLE', '该模型或指定 Provider 当前不可见，或不是请求的媒体类型');
   }
