@@ -3396,8 +3396,17 @@ function getGhostConfiguredMediaModel(
  * generateImage / editImage / 视频提交边界按**当前** override 重算启用候选再验一次,
  * 不在册即拒,这次付费请求不发出(与 scheduler 派发前重裁决同语义)。
  */
-function assertMediaModelStillEnabled(kind: 'image' | 'video', model: string): void {
-  if (!getCatalogMediaConfig(kind).models.some((m) => m.id === model)) {
+function assertMediaModelStillEnabled(
+  kind: 'image' | 'video',
+  model: string,
+  providerId?: string,
+): void {
+  const available = providerId
+    ? getMediaPreferenceConfig(kind === 'image' ? 'image.generate' : 'video.generate').models.some(
+        (candidate) => candidate.providerId === providerId && candidate.modelId === model,
+      )
+    : getCatalogMediaConfig(kind).models.some((candidate) => candidate.id === model);
+  if (!available) {
     throw new Error(
       kind === 'image'
         ? '图像模型不可用(可能已停用或来源凭证未就绪),本次生成已取消'
@@ -3444,6 +3453,7 @@ async function readImageFileAsDataUri(absPath: string): Promise<string> {
 async function runGhostVideo(
   params: {
     alias: string;
+    providerId?: string;
     prompt: string;
     imageDataUris?: string[];
     /** 参考图用法(仅图生视频有);不传 = 执行器缺省的首尾帧。 */
@@ -3455,7 +3465,7 @@ async function runGhostVideo(
     throw new Error('视频能力不可用:主机未配置视频通道');
   }
   // 提交紧前重查(第二十一轮):参考图 data URI 准备是 await,窗口内被停用即拒。
-  assertMediaModelStillEnabled('video', params.alias);
+  assertMediaModelStillEnabled('video', params.alias, params.providerId);
   const r = await submitAndAwaitVideo(registry, params);
   return {
     buffer: r.buffer,
@@ -3477,8 +3487,17 @@ async function runGhostVideo(
  * 某视频型号的画面参数支持集(cindySlot 按型号二次校验用)。registry 缺席
  * 或 alias 查无 → null,cindySlot 据此跳过按型号校验(值仍会被执行器兜底拦下)。
  */
-function getGhostVideoCapabilities(model: string): CindyVideoCapabilities | null {
+function getGhostVideoCapabilities(
+  model: string,
+  providerId?: string,
+): CindyVideoCapabilities | null {
   try {
+    if (providerId) {
+      const available = getMediaPreferenceConfig('video.generate').models.some(
+        (candidate) => candidate.providerId === providerId && candidate.modelId === model,
+      );
+      if (!available) return null;
+    }
     const registry = getVideoProviderRegistry();
     if (!registry || !registry.hasAny()) return null;
     const caps = registry.resolveByAlias(model).provider.capabilities;
@@ -3496,9 +3515,14 @@ function getGhostVideoCapabilities(model: string): CindyVideoCapabilities | null
 }
 
 /** 图像 provider 的型号级编辑上限；slot 用它在文件 IO / 凭证读取前早拒。 */
-function getGhostImageCapabilities(model: string): CindyImageCapabilities | null {
+function getGhostImageCapabilities(
+  model: string,
+  providerId?: string,
+): CindyImageCapabilities | null {
   try {
-    return { maxEditImages: resolveImageChannelForModel(model, 'edit').maxEditImages };
+    return {
+      maxEditImages: resolveImageChannelForModel(model, 'edit', providerId).maxEditImages,
+    };
   } catch {
     return null;
   }
@@ -3587,7 +3611,8 @@ function getImageChannelRegistry(): ImageChannelRegistry {
       },
       brandLabel: 'OpenAI',
       missingKeyMessage: 'OpenAI 图像 API key 未配置,请到「设置 → 模型供应商 → OpenAI」填入后重试',
-      beforeDispatch: (model) => assertMediaModelStillEnabled('image', `openai/${model}`),
+      beforeDispatch: (model) =>
+        assertMediaModelStillEnabled('image', `openai/${model}`, 'openai'),
     });
     const stripOpenaiPrefix = (id: string) =>
       id.startsWith('openai/') ? id.slice('openai/'.length) : id;
@@ -3600,7 +3625,7 @@ function getImageChannelRegistry(): ImageChannelRegistry {
         await getCodexImageAuthBinding().onAuthFailure(failure);
       },
       fetchImplementation: ((url, init) => outboundFetch(url as string, init)) as typeof fetch,
-      beforeDispatch: (model) => assertMediaModelStillEnabled('image', model),
+      beforeDispatch: (model) => assertMediaModelStillEnabled('image', model, 'openai'),
     });
     registry.register('openai', {
       // 用户明确配置 Platform key 时优先走确定性的 public Images API；否则复用
@@ -3750,10 +3775,10 @@ export function getGhostCindySlot(): GhostCindySlot {
       isOwnerBoundaryPending: () => isGhostBoundaryPending(),
       // model 已在 modelSlot 按白名单校验;归属来源(providerId)按白名单条目
       // 定位,经 imageChannelRegistry 取对应执行通道(2026-07 图像多来源)。
-      generateImage: async ({ prompt, model, aspectRatio }) => {
+      generateImage: async ({ prompt, model, providerId, aspectRatio }) => {
         try {
-          assertMediaModelStillEnabled('image', model);
-          const channel = resolveImageChannelForModel(model);
+          assertMediaModelStillEnabled('image', model, providerId);
+          const channel = resolveImageChannelForModel(model, 'generate', providerId);
           return decodeImageResponse(
             await channel.generateImage({
               model,
@@ -3765,10 +3790,10 @@ export function getGhostCindySlot(): GhostCindySlot {
           humanizeImageChannelError(err);
         }
       },
-      editImage: async ({ prompt, model, imagePaths, aspectRatio }) => {
+      editImage: async ({ prompt, model, providerId, imagePaths, aspectRatio }) => {
         try {
-          assertMediaModelStillEnabled('image', model);
-          const channel = resolveImageChannelForModel(model, 'edit');
+          assertMediaModelStillEnabled('image', model, providerId);
+          const channel = resolveImageChannelForModel(model, 'edit', providerId);
           return decodeImageResponse(
             await channel.editImage({
               model,
@@ -3781,17 +3806,17 @@ export function getGhostCindySlot(): GhostCindySlot {
           humanizeImageChannelError(err);
         }
       },
-      generateVideo: async ({ prompt, model, ...videoParams }) => {
+      generateVideo: async ({ prompt, model, providerId, ...videoParams }) => {
         try {
-          assertMediaModelStillEnabled('video', model);
-          return await runGhostVideo({ alias: model, prompt, ...videoParams });
+          assertMediaModelStillEnabled('video', model, providerId);
+          return await runGhostVideo({ alias: model, providerId, prompt, ...videoParams });
         } catch (err) {
           humanizeImageChannelError(err);
         }
       },
-      editVideo: async ({ prompt, model, imagePaths, refMode, ...videoParams }) => {
+      editVideo: async ({ prompt, model, providerId, imagePaths, refMode, ...videoParams }) => {
         try {
-          assertMediaModelStillEnabled('video', model);
+          assertMediaModelStillEnabled('video', model, providerId);
           // 先算总量再读(闸按 refMode 分档:存量首尾帧不设闸,原样)。闸与
           // 读取绑在一个入口里,顺序是那边的结构保证、不是这里的约定;结果
           // 保序——顺序即语义:首/尾帧,或提示词里 [Image 1]… 的序号。
@@ -3802,6 +3827,7 @@ export function getGhostCindySlot(): GhostCindySlot {
           );
           return await runGhostVideo({
             alias: model,
+            providerId,
             prompt,
             imageDataUris,
             refMode,
@@ -3814,9 +3840,23 @@ export function getGhostCindySlot(): GhostCindySlot {
       // 画面参数按型号二次校验的数据源(registry capabilities)。
       imageCapabilities: getGhostImageCapabilities,
       videoCapabilities: getGhostVideoCapabilities,
+      getMediaOverride: (ghostId, capability) => {
+        const value = readGhostCindyOverrides(ghostId)[capability as CindyCapabilityKey] ?? null;
+        if (!value) return null;
+        const decoded = decodeMediaPreference(value);
+        if (!decoded) return null;
+        const selected = getMediaPreferenceConfig(capability as GhostMediaCapability).models.find(
+          (candidate) =>
+            candidate.providerId === decoded.providerId && candidate.modelId === decoded.modelId,
+        );
+        return {
+          ...decoded,
+          ...(selected ? { label: selected.label } : {}),
+        };
+      },
       getOverride: (ghostId, capability) => {
         const value = readGhostCindyOverrides(ghostId)[capability as CindyCapabilityKey] ?? null;
-        return value ? (decodeMediaPreference(value)?.modelId ?? value) : null;
+        return value && !decodeMediaPreference(value) ? value : null;
       },
       getImageConfig: getCatalogImageConfig,
       getVideoConfig: getCatalogVideoConfig,
