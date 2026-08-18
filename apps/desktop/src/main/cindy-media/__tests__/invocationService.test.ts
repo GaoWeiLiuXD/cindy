@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   ownerGeneration: 1,
   models: vi.fn(),
   executableModels: vi.fn(),
+  providerModel: vi.fn(),
+  providerInvoke: vi.fn(),
   guide: vi.fn(),
   outboundFetch: vi.fn(),
   ingestMedia: vi.fn(),
@@ -82,6 +84,10 @@ vi.mock('../../model-access/mediaModels.js', () => ({
       super(message);
     }
   },
+}));
+vi.mock('../providerMediaRuntime.js', () => ({
+  resolveProviderMediaModel: mocks.providerModel,
+  invokeProviderMedia: mocks.providerInvoke,
 }));
 vi.mock('../ingest.js', () => ({ ingestMedia: mocks.ingestMedia }));
 vi.mock('../blobStore.js', () => ({
@@ -216,13 +222,17 @@ describe('Cindy Core media invocation state and security boundary', () => {
     mocks.failTransitionTo = null;
     mocks.rows.clear();
     mocks.models.mockReset().mockResolvedValue([
-      { id: 'image-model', name: 'Image Model', mode: 'image_generation' },
+      { id: 'image-model', name: 'Image Model', providerId: 'xd', mode: 'image_generation' },
     ]);
     mocks.executableModels.mockReset().mockResolvedValue({
-      models: [{ id: 'image-model', name: 'Image Model', mode: 'image_generation' }],
+      models: [
+        { id: 'image-model', name: 'Image Model', providerId: 'xd', mode: 'image_generation' },
+      ],
       unavailable: [],
       candidateCount: 1,
     });
+    mocks.providerModel.mockReset();
+    mocks.providerInvoke.mockReset();
     mocks.guide.mockReset();
     mocks.outboundFetch.mockReset();
     mocks.ingestMedia.mockReset().mockResolvedValue({
@@ -272,6 +282,57 @@ describe('Cindy Core media invocation state and security boundary', () => {
     });
     expect(mocks.outboundFetch).toHaveBeenCalledTimes(1);
     expect(mocks.ingestMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('同名媒体模型按 providerId 精确准备并调用第三方来源', async () => {
+    const providerModel = {
+      id: 'openai/gpt-image-2',
+      name: 'GPT Image 2',
+      providerId: 'openai',
+      mode: 'image_generation',
+      modalities: { input: ['text', 'image'], output: ['image'] },
+      officialDocs: 'https://platform.openai.com/docs/guides/image-generation',
+    };
+    mocks.models.mockResolvedValue([
+      { ...providerModel, providerId: 'xd' },
+      providerModel,
+    ]);
+    mocks.providerModel.mockReturnValue(providerModel);
+    mocks.providerInvoke.mockResolvedValue({ buffer: PNG, mimeType: 'image/png' });
+
+    const prepared = await callCindyMedia({
+      action: 'prepare',
+      providerId: 'openai',
+      modelId: providerModel.id,
+      capability: 'image.generate',
+    });
+
+    expect(prepared).toMatchObject({
+      ok: true,
+      status: 'prepared',
+      provider_id: 'openai',
+      model_id: providerModel.id,
+    });
+    expect(mocks.guide).not.toHaveBeenCalled();
+
+    await expect(
+      callCindyMedia({
+        action: 'request',
+        invocationId: prepared.invocation_id as string,
+        body: { prompt: 'cat' },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      status: 'complete',
+      xdt_image_urls: [`cindy-media://blobs/${'a'.repeat(64)}.png`],
+    });
+    expect(mocks.providerInvoke).toHaveBeenCalledWith({
+      providerId: 'openai',
+      modelId: providerModel.id,
+      capability: 'image.generate',
+      prompt: 'cat',
+      imagePaths: [],
+    });
   });
 
   it('终态历史不占用在途 invocation 上限', async () => {
@@ -626,7 +687,9 @@ describe('Cindy Core media invocation state and security boundary', () => {
         owner: mocks.currentUserId,
         drizzle: { owner: mocks.currentUserId },
       };
-      return [{ id: 'image-model', name: 'Image Model', mode: 'image_generation' }];
+      return [
+        { id: 'image-model', name: 'Image Model', providerId: 'xd', mode: 'image_generation' },
+      ];
     });
 
     await expect(
@@ -844,7 +907,7 @@ describe('Cindy Core media invocation state and security boundary', () => {
       capability: 'video.generate',
     };
     mocks.models.mockResolvedValue([
-      { id: 'image-model', name: 'Video Model', mode: 'video_generation' },
+      { id: 'image-model', name: 'Video Model', providerId: 'xd', mode: 'video_generation' },
     ]);
     mocks.guide.mockResolvedValue(resolvedGuide(asyncOperation));
     mocks.outboundFetch
@@ -905,7 +968,7 @@ describe('Cindy Core media invocation state and security boundary', () => {
       capability: 'video.generate',
     };
     mocks.models.mockResolvedValue([
-      { id: 'image-model', name: 'Video Model', mode: 'video_generation' },
+      { id: 'image-model', name: 'Video Model', providerId: 'xd', mode: 'video_generation' },
     ]);
     mocks.guide.mockResolvedValue(resolvedGuide(asyncOperation));
     const successPayload = {
@@ -978,7 +1041,7 @@ describe('Cindy Core media invocation state and security boundary', () => {
       capability: 'video.generate',
     };
     mocks.models.mockResolvedValue([
-      { id: 'image-model', name: 'Video Model', mode: 'video_generation' },
+      { id: 'image-model', name: 'Video Model', providerId: 'xd', mode: 'video_generation' },
     ]);
     mocks.guide.mockResolvedValue(resolvedGuide(asyncOperation));
     mocks.outboundFetch
@@ -1037,7 +1100,7 @@ describe('Cindy Core media invocation state and security boundary', () => {
       capability: 'video.generate',
     };
     mocks.models.mockResolvedValue([
-      { id: 'image-model', name: 'Video Model', mode: 'video_generation' },
+      { id: 'image-model', name: 'Video Model', providerId: 'xd', mode: 'video_generation' },
     ]);
     mocks.guide.mockResolvedValue(resolvedGuide(asyncOperation));
     mocks.outboundFetch

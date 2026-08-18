@@ -589,17 +589,47 @@ describe('Ghost plugin detail sections', () => {
             overrides: {},
             image: {
               options: [
-                { id: 'image-default', label: 'Image Default' },
-                { id: 'image-option', label: 'Image Option' },
+                {
+                  id: 'image-default',
+                  label: 'Image Default',
+                  providerId: 'xd',
+                  providerName: 'Cindy AI',
+                },
+                {
+                  id: 'image-option',
+                  label: 'Image Option',
+                  providerId: 'xd',
+                  providerName: 'Cindy AI',
+                },
               ],
-              defaultModel: { id: 'image-default', label: 'Image Default' },
+              defaultModel: {
+                id: 'image-default',
+                label: 'Image Default',
+                providerId: 'xd',
+                providerName: 'Cindy AI',
+              },
             },
             imageEdit: {
               options: [
-                { id: 'image-edit', label: 'Image Edit' },
-                { id: 'image-edit-option', label: 'Image Edit Option' },
+                {
+                  id: 'image-edit',
+                  label: 'Image Edit',
+                  providerId: 'xd',
+                  providerName: 'Cindy AI',
+                },
+                {
+                  id: 'image-edit-option',
+                  label: 'Image Edit Option',
+                  providerId: 'xd',
+                  providerName: 'Cindy AI',
+                },
               ],
-              defaultModel: { id: 'image-edit', label: 'Image Edit' },
+              defaultModel: {
+                id: 'image-edit',
+                label: 'Image Edit',
+                providerId: 'xd',
+                providerName: 'Cindy AI',
+              },
             },
             video: {
               options: [{ id: 'video-default', label: 'Video Default' }],
@@ -625,18 +655,16 @@ describe('Ghost plugin detail sections', () => {
 
     expect(container.querySelector('.cindy-capability-prefs')).toBeTruthy();
     expect(container.querySelector('.cindy-capability-row')).toBeTruthy();
-    const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    expect(selects).toHaveLength(2);
-    expect(Array.from(selects[0]!.options, (option) => option.value)).toEqual([
-      '__default__',
-      'image-option',
-    ]);
-    expect(Array.from(selects[1]!.options, (option) => option.value)).toEqual([
-      '__default__',
-      'image-edit-option',
-    ]);
-    expect(selects[0]!.className).toContain('cindy-capability-select');
-    expect(selects[0]!.className).toContain('max-w-[60%]');
+    const pickers = screen.getAllByRole('combobox');
+    expect(pickers).toHaveLength(2);
+    fireEvent.click(pickers[0]!);
+    expect(within(screen.getByRole('listbox')).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByText('Image Option')).toBeTruthy();
+    fireEvent.click(pickers[0]!);
+    fireEvent.click(pickers[1]!);
+    expect(within(screen.getByRole('listbox')).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByText('Image Edit Option')).toBeTruthy();
+    expect(pickers[0]!.className).toContain('max-w-[60%]');
   });
 
   // 2026-08-05:快问快答钉档扩展为目录全量文本模型——富列表选择器(供应商
@@ -859,8 +887,20 @@ describe('Ghost plugin detail sections', () => {
           cindyPrefsSync: () => ({
             overrides: { 'video.generate': 'retired-video-model' },
             image: {
-              options: [{ id: 'image-default', label: 'Image Default' }],
-              defaultModel: { id: 'image-default', label: 'Image Default' },
+              options: [
+                {
+                  id: 'image-default',
+                  label: 'Image Default',
+                  providerId: 'xd',
+                  providerName: 'Cindy AI',
+                },
+              ],
+              defaultModel: {
+                id: 'image-default',
+                label: 'Image Default',
+                providerId: 'xd',
+                providerName: 'Cindy AI',
+              },
             },
             imageEdit: {
               options: [{ id: 'image-edit', label: 'Image Edit' }],
