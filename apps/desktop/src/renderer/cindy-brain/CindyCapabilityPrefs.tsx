@@ -18,6 +18,7 @@ const FOLLOW_DEFAULT_VALUE = '__default__';
 
 interface MediaModelOption {
   id: string;
+  modelId: string;
   label: string;
   providerId: string;
   providerName: string;
@@ -42,7 +43,11 @@ function MediaModelPicker({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const current = value ? options.find((option) => option.id === value) : undefined;
+  const current = value
+    ? options.find((option) => option.id === value) ??
+      options.find((option) => option.providerId === 'xd' && option.modelId === value) ??
+      options.find((option) => option.modelId === value)
+    : undefined;
   const staleValue = value && !current ? value : null;
   const selected = current ?? defaultModel;
   const selectable = options.filter((option) => option.id !== defaultModel.id);

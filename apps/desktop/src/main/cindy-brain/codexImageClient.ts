@@ -145,6 +145,7 @@ export function createCodexImageChannel(opts: CreateCodexImageChannelOptions): I
     prompt: string;
     imagePaths?: string[];
     aspectRatio?: '1:1' | '3:2' | '2:3';
+    signal?: AbortSignal;
   }): Promise<ImageChannelResult> {
     if (params.model !== `openai/${IMAGE_MODEL}`) {
       throw new Error(`Codex 图像通道不支持模型:${params.model}`);
@@ -206,6 +207,7 @@ export function createCodexImageChannel(opts: CreateCodexImageChannelOptions): I
           ...(auth.accountId ? { 'ChatGPT-Account-Id': auth.accountId } : {}),
         },
         body: JSON.stringify(body),
+        signal: params.signal,
       });
       log.info('media request response', {
         ...requestLog,
@@ -228,8 +230,9 @@ export function createCodexImageChannel(opts: CreateCodexImageChannelOptions): I
 
   return {
     ready: opts.hasOAuthLogin,
-    generateImage: ({ model, prompt, aspectRatio }) => generate({ model, prompt, aspectRatio }),
-    editImage: ({ model, prompt, imagePaths, aspectRatio }) =>
-      generate({ model, prompt, imagePaths, aspectRatio }),
+    generateImage: ({ model, prompt, aspectRatio, signal }) =>
+      generate({ model, prompt, aspectRatio, signal }),
+    editImage: ({ model, prompt, imagePaths, aspectRatio, signal }) =>
+      generate({ model, prompt, imagePaths, aspectRatio, signal }),
   };
 }

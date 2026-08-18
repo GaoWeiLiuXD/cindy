@@ -332,6 +332,7 @@ describe('Cindy Core media invocation state and security boundary', () => {
       capability: 'image.generate',
       prompt: 'cat',
       imagePaths: [],
+      signal: expect.any(AbortSignal),
     });
   });
 

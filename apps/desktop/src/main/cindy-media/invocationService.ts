@@ -992,6 +992,7 @@ async function submitProviderInvocation(
       modelId: providerModel.id,
       capability: invocation.capability,
       ...input,
+      signal: AbortSignal.timeout(invocation.guide.request.timeoutMs),
     });
     assertAuthScope(scope, invocation.owner);
     if (

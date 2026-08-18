@@ -3633,24 +3633,30 @@ function getImageChannelRegistry(): ImageChannelRegistry {
       ready: () => hasOpenaiPlatformKey() || codexImagesClient.ready(),
       generateImage: (params) =>
         hasOpenaiPlatformKey()
-          ? openaiImagesClient.generateImage({
-              model: stripOpenaiPrefix(params.model),
-              prompt: params.prompt,
-              ...(params.aspectRatio
-                ? { size: GHOST_ASPECT_TO_GATEWAY_SIZE[params.aspectRatio] }
-                : {}),
-            })
+          ? openaiImagesClient.generateImage(
+              {
+                model: stripOpenaiPrefix(params.model),
+                prompt: params.prompt,
+                ...(params.aspectRatio
+                  ? { size: GHOST_ASPECT_TO_GATEWAY_SIZE[params.aspectRatio] }
+                  : {}),
+              },
+              params.signal,
+            )
           : codexImagesClient.generateImage(params),
       editImage: (params) =>
         hasOpenaiPlatformKey()
-          ? openaiImagesClient.editImage({
-              model: stripOpenaiPrefix(params.model),
-              prompt: params.prompt,
-              imagePaths: params.imagePaths,
-              ...(params.aspectRatio
-                ? { size: GHOST_ASPECT_TO_GATEWAY_SIZE[params.aspectRatio] }
-                : {}),
-            })
+          ? openaiImagesClient.editImage(
+              {
+                model: stripOpenaiPrefix(params.model),
+                prompt: params.prompt,
+                imagePaths: params.imagePaths,
+                ...(params.aspectRatio
+                  ? { size: GHOST_ASPECT_TO_GATEWAY_SIZE[params.aspectRatio] }
+                  : {}),
+              },
+              params.signal,
+            )
           : codexImagesClient.editImage(params),
     });
     imageChannelRegistrySingleton = registry;
@@ -3749,11 +3755,13 @@ configureProviderMediaRuntime({
             prompt: request.prompt,
             imagePaths: request.imagePaths,
             ...(request.aspectRatio ? { aspectRatio: request.aspectRatio } : {}),
+            signal: request.signal,
           })
         : await channel.generateImage({
             model: request.modelId,
             prompt: request.prompt,
             ...(request.aspectRatio ? { aspectRatio: request.aspectRatio } : {}),
+            signal: request.signal,
           });
     return decodeImageResponse(response);
   },

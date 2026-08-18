@@ -18,6 +18,7 @@ export interface ProviderMediaRuntimeRequest {
   prompt: string;
   imagePaths: string[];
   aspectRatio?: GhostImageAspectRatio;
+  signal?: AbortSignal;
 }
 
 export interface ProviderMediaRuntimeResult {
