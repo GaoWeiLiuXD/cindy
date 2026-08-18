@@ -332,7 +332,7 @@ export function CindyCapabilityPrefs({
               >
                 {t(`settings.ghosts.detail.cindyPrefs.cap.${capability}`)}
               </span>
-              {unavailable ? (
+              {unavailable && current === undefined ? (
                 <span
                   className={cn(
                     'cindy-capability-empty min-w-0 truncate text-[var(--text-tertiary)]',
@@ -341,6 +341,17 @@ export function CindyCapabilityPrefs({
                 >
                   {t('settings.ghosts.detail.cindyPrefs.noModels')}
                 </span>
+              ) : unavailable ? (
+                <button
+                  type="button"
+                  className={cn(
+                    'shrink-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
+                    appearance === 'plugin' ? 'text-13 leading-5' : 'text-12',
+                  )}
+                  onClick={() => void handleChange(capability, FOLLOW_DEFAULT_VALUE)}
+                >
+                  {t('settings.defaults.restore')}
+                </button>
               ) : (
                 <MediaModelPicker
                   value={selectValue === FOLLOW_DEFAULT_VALUE ? undefined : selectValue}

@@ -52,6 +52,7 @@ vi.mock('react-i18next', () => ({
         'settings.ghosts.detail.collapseInfoValue': `Collapse ${String(options?.label ?? '')}`,
         'settings.ghosts.detail.panelNotDocked': 'Not docked',
         'settings.ghosts.detail.cindyPrefs.noModels': 'No models available',
+        'settings.defaults.restore': 'Restore default',
         'settings.ghosts.detail.oauthScopeStale':
           'This authorization does not include newly added permissions. Reconnect to enable them.',
       };
@@ -879,7 +880,8 @@ describe('Ghost plugin detail sections', () => {
     vi.unstubAllEnvs();
   });
 
-  it('replaces the select with tertiary copy for ability categories the catalog has no models for', () => {
+  it('keeps a reset entry for a stale media override when the catalog has no models', async () => {
+    const setCindyPref = vi.fn(async () => ({ overrides: {} }));
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       value: {
@@ -910,7 +912,7 @@ describe('Ghost plugin detail sections', () => {
             video: { options: [], defaultModel: null },
             videoEdit: { options: [], defaultModel: null },
           }),
-          setCindyPref: vi.fn(),
+          setCindyPref,
         },
       },
     });
@@ -928,10 +930,13 @@ describe('Ghost plugin detail sections', () => {
     expect(screen.getAllByRole('combobox')).toHaveLength(1);
 
     const empties = container.querySelectorAll('.cindy-capability-empty');
-    expect(empties).toHaveLength(2);
-    empties.forEach((node) => {
-      expect(node.textContent).toBe('No models available');
-      expect(node.className).toContain('text-[var(--text-tertiary)]');
+    expect(empties).toHaveLength(1);
+    expect(empties[0]!.textContent).toBe('No models available');
+    expect(empties[0]!.className).toContain('text-[var(--text-tertiary)]');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore default' }));
+    await waitFor(() => {
+      expect(setCindyPref).toHaveBeenCalledWith('builtin.example', 'video.generate', null);
     });
   });
 
