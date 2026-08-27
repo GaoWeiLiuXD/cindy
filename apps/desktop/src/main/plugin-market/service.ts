@@ -2310,7 +2310,10 @@ export class PluginMarketService {
               ),
             );
             if (!replaced) {
-              throw new Error('cindy-github market record changed during trust backfill');
+              throwIpcError(
+                'PRECONDITION_FAILED',
+                'cindy-github market record changed during trust backfill',
+              );
             }
           },
         });
