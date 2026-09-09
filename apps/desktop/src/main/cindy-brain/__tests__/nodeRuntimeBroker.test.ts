@@ -11,6 +11,7 @@ import {
   createUtilityNodeWorkerProcess,
   GhostNodeRuntimeBroker,
   type NodeWorkerStartupObservation,
+  type NodeWorkerStartupState,
   type NodeWorkerProcess,
 } from '../nodeRuntimeBroker';
 
@@ -98,6 +99,30 @@ class ThrowingDiagnosticKilledProcess extends DiagnosticFakeNodeProcess {
 class ThrowingDiagnosticStateProcess extends FakeNodeProcess {
   readStartupState(): never {
     throw new Error('diagnostic state unavailable');
+  }
+}
+
+class ThrowingDiagnosticPropertyProcess extends FakeNodeProcess {
+  readStartupState(): NodeWorkerStartupState {
+    return {
+      get messageCount() {
+        throw new Error('message count unavailable');
+      },
+      readySeen: true,
+      get adapterReady() {
+        throw new Error('adapter ready unavailable');
+      },
+    } as unknown as NodeWorkerStartupState;
+  }
+}
+
+class InvalidDiagnosticStateProcess extends FakeNodeProcess {
+  readStartupState(): NodeWorkerStartupState {
+    return {
+      messageCount: -1,
+      readySeen: 'yes',
+      adapterReady: 1,
+    } as unknown as NodeWorkerStartupState;
   }
 }
 
@@ -1067,6 +1092,62 @@ describe('nodeRuntimeBroker · 进程生命周期', () => {
       }),
     );
     expect(child.killed).toBe(true);
+  });
+
+  it('启动事实属性 getter 抛错时各字段独立降级 unknown，仍精确超时收口', async () => {
+    vi.useFakeTimers();
+    const ghost = fakeGhost();
+    const child = new ThrowingDiagnosticPropertyProcess(undefined, false);
+    const warn = vi.fn();
+    const broker = new GhostNodeRuntimeBroker({
+      getGhost: () => ghost,
+      spawnProcess: () => child as unknown as NodeWorkerProcess,
+      log: { info: vi.fn(), warn },
+    });
+
+    const pending = broker.handleRequest('node-ghost', rpcRequest());
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      errorCode: 'PROCESS_START_FAILED',
+      message: 'Node 工作进程启动超时',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      'ghost node start attempt failed',
+      expect.objectContaining({
+        messageCount: 'unknown',
+        readySeen: true,
+        adapterReady: 'unknown',
+      }),
+    );
+  });
+
+  it('非法启动事实字段只记录 unknown，不影响原有超时收口', async () => {
+    vi.useFakeTimers();
+    const ghost = fakeGhost();
+    const child = new InvalidDiagnosticStateProcess(undefined, false);
+    const warn = vi.fn();
+    const broker = new GhostNodeRuntimeBroker({
+      getGhost: () => ghost,
+      spawnProcess: () => child as unknown as NodeWorkerProcess,
+      log: { info: vi.fn(), warn },
+    });
+
+    const pending = broker.handleRequest('node-ghost', rpcRequest());
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      errorCode: 'PROCESS_START_FAILED',
+      message: 'Node 工作进程启动超时',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      'ghost node start attempt failed',
+      expect.objectContaining({
+        messageCount: 'unknown',
+        readySeen: 'unknown',
+        adapterReady: 'unknown',
+      }),
+    );
   });
 
   it('adapter killed getter 抛错时只记录 unknown，不影响超时收口', async () => {

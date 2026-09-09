@@ -205,13 +205,47 @@ function readDiagnosticPid(child: NodeWorkerProcess): number | undefined {
   }
 }
 
-function readDiagnosticStartupState(
-  child: NodeWorkerProcess,
-): NodeWorkerStartupState | undefined {
+type NodeWorkerStartupDiagnosticState = {
+  messageCount: number | 'unknown';
+  readySeen: boolean | 'unknown';
+  adapterReady: boolean | 'unknown';
+};
+
+function readDiagnosticStartupState(child: NodeWorkerProcess): NodeWorkerStartupDiagnosticState {
+  const unknown: NodeWorkerStartupDiagnosticState = {
+    messageCount: 'unknown',
+    readySeen: 'unknown',
+    adapterReady: 'unknown',
+  };
   try {
-    return child.readStartupState?.();
+    const state = child.readStartupState?.();
+    if (!state) return unknown;
+    let messageCount: number | 'unknown' = 'unknown';
+    let readySeen: boolean | 'unknown' = 'unknown';
+    let adapterReady: boolean | 'unknown' = 'unknown';
+    try {
+      const value = state.messageCount;
+      messageCount = Number.isSafeInteger(value) && value >= 0 ? value : 'unknown';
+    } catch {
+      // A custom adapter may expose throwing diagnostic fields.
+    }
+    try {
+      readySeen = typeof state.readySeen === 'boolean' ? state.readySeen : 'unknown';
+    } catch {
+      // A custom adapter may expose throwing diagnostic fields.
+    }
+    try {
+      adapterReady = typeof state.adapterReady === 'boolean' ? state.adapterReady : 'unknown';
+    } catch {
+      // A custom adapter may expose throwing diagnostic fields.
+    }
+    return {
+      messageCount,
+      readySeen,
+      adapterReady,
+    };
   } catch {
-    return undefined;
+    return unknown;
   }
 }
 
@@ -1695,16 +1729,9 @@ export class GhostNodeRuntimeBroker {
               attemptDiagnostic.readySeen = 'unknown';
               attemptDiagnostic.adapterReady = 'unknown';
               const state = readDiagnosticStartupState(entry.child);
-              if (state) {
-                attemptDiagnostic.messageCount =
-                  Number.isSafeInteger(state.messageCount) && state.messageCount >= 0
-                    ? state.messageCount
-                    : 'unknown';
-                attemptDiagnostic.readySeen =
-                  typeof state.readySeen === 'boolean' ? state.readySeen : 'unknown';
-                attemptDiagnostic.adapterReady =
-                  typeof state.adapterReady === 'boolean' ? state.adapterReady : 'unknown';
-              }
+              attemptDiagnostic.messageCount = state.messageCount;
+              attemptDiagnostic.readySeen = state.readySeen;
+              attemptDiagnostic.adapterReady = state.adapterReady;
               attemptDiagnostic.adapterKilledAtDeadline = readDiagnosticAdapterKilled(entry.child);
               reject(new WorkerStartError('Node 工作进程启动超时', false));
             }),
