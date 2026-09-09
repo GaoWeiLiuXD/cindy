@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   Maker,
+  Session,
   MAIN_OWNED_SEND_CONTEXT,
   TurnPermissionPolicyUnsupportedError,
 } from '@cindy/maker-core';
@@ -19,7 +20,6 @@ import type {
   InteractionDecision,
   InteractionRequest,
   MakerEvent,
-  Session,
   SessionSendResult,
   TurnPermissionPolicy,
 } from '@cindy/maker-core';
@@ -1032,6 +1032,50 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     await lateOnAccepted?.();
     expect(isHeadlessGhostSetupTurn('desktop-attached-session')).toBe(false);
     expect(mocks.persistUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('sends retirement recovery separately after the personal IM turn has completed', async () => {
+    const terminal = deferred<void>();
+    const ended = deferred<void>();
+    const closeFailure = deferred<void>();
+    let running = false;
+    const handle = {
+      id: 'pi', agentKind: 'pi', model: 'm',
+      send: vi.fn(async () => { running = true; }),
+      close: vi.fn(async () => { await closeFailure.promise; throw new Error('exit unconfirmed'); }),
+      isTurnRunning: () => running, setInteractionResolver() {},
+      async *events() {
+        await terminal.promise;
+        yield { type: 'text', data: { text: 'saved result', isFinal: true }, source: 'pi' } as AgentEvent;
+        running = false;
+        yield { type: 'done', data: { status: 'completed' }, source: 'pi' } as AgentEvent;
+        await ended.promise;
+      },
+    } as unknown as AgentSessionHandle;
+    const logger = { ...mocks.logger, trace() {}, fatal() {}, child() { return this; } };
+    const session = new Session({ id: 'feishu-session', agentKind: 'pi', workDir: '/repo',
+      handle, capabilities: {} as Capabilities, logger, turnStallMs: 0 });
+    mocks.getMaker.mockReturnValue(createMakerHarness(session));
+    const complete = vi.fn();
+    try {
+      await runDefaultTurn(complete);
+      expect(await session.closeAfterCurrentTurn({ failureEvent: () => ({ type: 'text', data: {
+        text: 'restart-cindy-to-refresh-packages', isFinal: true,
+      } }) })).toBe('deferred');
+      terminal.resolve();
+      await waitForAssertion(() => expect(complete).toHaveBeenCalledOnce());
+      mocks.feishuIm.sendText.mockClear();
+      closeFailure.resolve();
+      await waitForAssertion(() => expect(session.getStatus()).toBe('error'));
+      expect(mocks.feishuIm.sendText).toHaveBeenCalledExactlyOnceWith('ou_user',
+        'restart-cindy-to-refresh-packages', { threadTs: undefined });
+      expect(complete).toHaveBeenCalledOnce();
+      expect(handle.send).toHaveBeenCalledOnce();
+    } finally {
+      closeFailure.resolve();
+      vi.mocked(handle.close).mockImplementation(async () => { ended.resolve(); });
+      await session.close();
+    }
   });
 
   it('preserves queued IM input when an explicit switch takes over pending Pi retirement', async () => {

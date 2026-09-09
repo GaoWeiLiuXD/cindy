@@ -246,6 +246,10 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
   挂起的 abort 不得阻止已结算工作的待退役 runtime 关闭，迟到返回不得复活旧实例。
   延迟退役的实际关闭若失败，应在该实例的监听器清理前补发 `partial` 与
   `restart-cindy-to-refresh-packages` 恢复回执；不改判此前成功结果，不自动重放工作。
+  IM 已在 done 退订时，恢复回执须走独立渠道通知，不能把 post-terminal text fan-out
+  当作已交付。通知保留准确实例和包退役发起 generation，渠道发送与送达确认分开；
+  不借通知重开已完成 turn。官方 Telegram 复用协商后的 msg.op；旧 hook、Slack／X
+  的独立出站缺口及离线／拒收／超时限制见 Telegram 能力台账，不扩大现有 wire 契约。
 - 设置页明确要求停用／移除的即时失效路径仍可关闭运行时；Session 必须在清除监听器和
   当前 turn 归属前给未结算工作发明确失败。用户 Stop 则保持取消，不触发重放。
 - provider idle、进程退出、事件流结束都不是成功证明。Session 用已有 turn generation／

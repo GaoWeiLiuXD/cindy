@@ -1332,7 +1332,16 @@ export class Session {
     if (this.hasUnsettledTurn() || this.sendReservation !== null
       || this.hostTurnLeases.size > 0
       || this.retirementContinuationGeneration === this.turnGeneration) {
-      this.retirementFailureEvent ??= opts?.failureEvent;
+      if (!this.retirementFailureEvent && opts?.failureEvent) {
+        const createEvent = opts.failureEvent;
+        const generation = this.turnGeneration;
+        this.retirementFailureEvent = () => ({
+          ...createEvent(),
+          runtimeRecovery: true,
+          sessionInstanceId: this.instanceId,
+          sessionTurnGeneration: generation,
+        });
+      }
       return 'deferred';
     }
     await this.close();

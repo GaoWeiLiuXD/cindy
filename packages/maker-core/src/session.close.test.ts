@@ -81,7 +81,8 @@ describe('Session close lifecycle', () => {
     await vi.waitFor(() => expect(session.getStatus()).toBe('error'));
     expect(seen.map(event => event.type)).toEqual(['done', 'text']);
     expect(seen[0]?.data).toMatchObject({ status: 'completed', result: 'saved result' });
-    expect(seen[1]).toBe(recovery);
+    expect(seen[1]).toEqual({ ...recovery, runtimeRecovery: true,
+      sessionInstanceId: session.instanceId, sessionTurnGeneration: session.getTurnGeneration() });
     expect(handle.send).toHaveBeenCalledOnce();
     await session.close();
     expect(session.getStatus()).toBe('closed');

@@ -187,6 +187,8 @@ export interface AgentEvent {
   sessionTurnGeneration?: number;
   /** Session.instanceId of the incarnation that dequeued this event. Host-only. */
   sessionInstanceId?: string;
+  /** Host-only recovery notice, independent of the already completed product turn. */
+  runtimeRecovery?: true;
   /**
    * Provider-owned claim attached synchronously to a `done` boundary when that
    * boundary has an automatic continuation. Consumers pass it back to the
