@@ -134,8 +134,12 @@ export function buildWindowsPathKindProbeScript(
   const operationCount = Math.min(Math.max(batchCount, 1), Math.max(candidateCount, 1));
   const maxConcurrency = Math.min(operationCount, 4);
   const availableOperationBudgetMs = Math.max(budgetMs - 250, 1);
-  const operationTimeoutMs = Math.min(availableOperationBudgetMs, 1_250);
   const maxOperationCount = Math.min(operationCount, maxWindowsPathKindProbeBatchCount(timeoutMs));
+  // Divide the existing budget across the waves we will actually run. A fixed
+  // per-process cap discards spare time when only a few roots need probing and
+  // can kill a healthy, cold-starting PowerShell before it inspects any path.
+  const operationWaves = Math.ceil(maxOperationCount / maxConcurrency);
+  const operationTimeoutMs = Math.max(Math.floor(availableOperationBudgetMs / operationWaves), 1);
   const encodedProbeCommand = Buffer.from([
     '$paths = @(([string]$env:CINDY_WINDOWS_GIT_PATH_CANDIDATES | ConvertFrom-Json))',
     'foreach ($pathValue in $paths) {',

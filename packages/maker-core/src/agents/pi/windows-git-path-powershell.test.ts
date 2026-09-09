@@ -108,9 +108,16 @@ describe('Windows Git PATH PowerShell probes', () => {
     expect(() => buildWindowsDescendantCleanupScript(0)).toThrow(RangeError);
   });
 
+  it('shares the existing operation budget across actual concurrent waves', () => {
+    expect(buildWindowsPathKindProbeScript(4, 3_000, 2)).toContain('$operationTimeoutMs = 2500');
+    expect(buildWindowsPathKindProbeScript(4, 10_000, 2)).toContain('$operationTimeoutMs = 9500');
+    expect(buildWindowsPathKindProbeScript(16, 3_000, 8)).toContain('$operationTimeoutMs = 1250');
+    expect(buildWindowsPathKindProbeScript(4, 500, 2)).toContain('$operationTimeoutMs = 1');
+  });
+
   it.runIf(process.platform === 'win32')(
     'executes grouped path probes in Windows PowerShell',
-    ({ skip }) => {
+    () => {
       const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
       if (!systemRoot) throw new Error('Windows system root is unavailable');
       const tempRoot = mkdtempSync(path.join(tmpdir(), 'cindy-git-path-'));
@@ -125,28 +132,26 @@ describe('Windows Git PATH PowerShell probes', () => {
           { paths: [path.join(staleRoot, 'cmd'), path.join(staleRoot, 'cmd', 'git.exe')] },
           { paths: [validCmd, validGit] },
         ];
-        let output: string;
-        try {
-          output = execFileSync(
-            path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-            // Hosted Windows runners can spend several seconds starting the
-            // nested PowerShell probes before any candidate is inspected.
-            ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', buildWindowsPathKindProbeScript(4, 10_000, 2)],
-            {
-              encoding: 'utf8',
-              input: Buffer.from(JSON.stringify(groups), 'utf8'),
-              stdio: ['pipe', 'pipe', 'pipe'],
-              timeout: 15_000,
-              windowsHide: true,
-            },
-          );
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
-            skip();
-            return;
-          }
-          throw error;
-        }
+        const script = buildWindowsPathKindProbeScript(4, 10_000, 2);
+        const encodedCommand = script.match(/\$probeCommand = '([^']+)'/)?.[1];
+        expect(encodedCommand).toBeTruthy();
+        // Deterministic slow-worker injection: even without CI contention the
+        // former 1250ms cap would kill both probes before they inspect paths.
+        const slowCommand = Buffer.from('Start-Sleep -Milliseconds 2000\n'
+          + Buffer.from(encodedCommand!, 'base64').toString('utf16le'), 'utf16le').toString('base64');
+        const output = execFileSync(
+          path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+          // Hosted Windows runners can spend several seconds starting the
+          // nested PowerShell probes before any candidate is inspected.
+          ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script.replace(encodedCommand!, slowCommand)],
+          {
+            encoding: 'utf8',
+            input: Buffer.from(JSON.stringify(groups), 'utf8'),
+            stdio: ['pipe', 'pipe', 'pipe'],
+            timeout: 15_000,
+            windowsHide: true,
+          },
+        );
 
         expect(output).toContain(`D\t${Buffer.from(validCmd, 'utf16le').toString('base64')}`);
         expect(output).toContain(`F\t${Buffer.from(validGit, 'utf16le').toString('base64')}`);
