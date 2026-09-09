@@ -68,7 +68,7 @@ describe('Windows Git PATH PowerShell probes', () => {
     expect(script).toContain('Write-ProbeOutput $operation.Process');
     expect(script).toContain('$budgetMs = 2750');
     expect(script).toContain('if ($nextGroupIndex -lt $groups.Count -or $operations.Count -gt 0) {');
-    expect(script).toContain('WriteLine("__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__`tpath-process")');
+    expect(script).toContain('WriteLine("__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__`tpath-process-timeout")');
     expect(script).not.toContain('foreach ($candidate in $paths)');
     expect(script).not.toContain('[RunspaceFactory]');
     expect(script.indexOf('$clock = [Diagnostics.Stopwatch]::StartNew()'))
@@ -264,18 +264,19 @@ describe('Windows Git PATH PowerShell probes', () => {
     const warn = vi.fn();
     const output = [
       '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-kind',
-      '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-runspace',
+      '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-process',
+      '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-process-timeout',
       'F\tignored-record',
     ].join('\r\n');
 
-    expect(countWindowsPowerShellDiagnostics(output)).toBe(2);
+    expect(countWindowsPowerShellDiagnostics(output)).toBe(3);
     warnWindowsGitPathProbeDiagnostics({ warn }, 'path-kinds', output);
     warnWindowsGitPathProbeDiagnostics(undefined, 'path-kinds', output);
 
     expect(warn).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
       'windows git path probe completed with recoverable PowerShell errors',
-      { probe: 'path-kinds', failures: 2 },
+      { probe: 'path-kinds', failures: 3 },
     );
   });
 
