@@ -1294,6 +1294,11 @@ export class Session {
     return this.handle.onTurnContinuationChange?.(listener) ?? (() => undefined);
   }
 
+  /** True once teardown has started, including an unconfirmed failed close. */
+  hasStartedClosing(): boolean {
+    return this.terminationStarted;
+  }
+
   /**
    * Ordinary close. Without an explicit reason this is navigation: the account
    * and its database are unchanged, so an adapter's detached work survives.

@@ -232,6 +232,8 @@ Full access 读/搜/bash 与原生对齐的需求正本见 [`pi-full-access-nati
   `runtimeConvergence=deferred` 表示旧快照暂时服务在途工作，不表示新包已经加载。
   调用者的现有 Host lease 必须覆盖兄弟关闭结果汇总及准确收敛回执的 Session 分发；
   不能把回执入队当作已分发。交付等待有界，显式关闭仍可结束旧实例。
+  内部退役尚未真正开始关闭时，显式 Agent 切换／关闭可接管关闭原因；一旦开始关闭
+  （包括退出未确认而失败），原因固定，不得被迟到操作改写。IM 切换保护继续匹配准确实例与原因。
   Host 已放弃续跑时，即使 turn lease 记账失败，也应按原实例与 generation 释放退役等待；
   记账失败仍不得据此派发后续工作或重放副作用。只有 Host 实际登记续跑的 generation
   才能阻止空闲关闭；远端／无 observer 接管的 silent-stop 不得凭终态自行占有续跑门。
