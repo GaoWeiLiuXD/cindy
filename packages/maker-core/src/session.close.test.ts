@@ -183,6 +183,33 @@ describe('Session close lifecycle', () => {
     await expect(session.send('late continuation')).rejects.toThrow(/closed|closing/);
   });
 
+  it('retires a stopped silent-stop caller without waiting for its hung abort RPC', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    const abortGate = createDeferred();
+    vi.mocked(handle.abort).mockImplementation(() => abortGate.promise);
+    await session.send('work');
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    const stopping = session.abort();
+    try {
+      await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+      expect(handle.abort).toHaveBeenCalledOnce();
+      expect(handle.close).toHaveBeenCalledOnce();
+      expect(handle.send).toHaveBeenCalledOnce();
+      await expect(session.send('late continuation')).rejects.toThrow(/closed|closing/);
+      abortGate.resolve();
+      await stopping;
+      expect(session.getStatus()).toBe('closed');
+      expect(handle.close).toHaveBeenCalledOnce();
+    } finally {
+      abortGate.resolve();
+      await stopping;
+      await session.close();
+    }
+  });
+
   it('ignores a stale Host continuation settlement after a newer turn starts', async () => {
     const { session, handle, queue, seen, idle } = liveTurn();
     await session.send('work');

@@ -1100,7 +1100,11 @@ export class Session {
     this.scheduleAbortRecoveryCheck(MANUAL_ABORT_RECOVERY_GRACE_MS, 'manual-abort');
     this.setStatus('aborting');
     try {
-      await this.handle.abort();
+      const aborting = this.handle.abort();
+      // Stop revokes Host continuation immediately. The RPC may never settle;
+      // do not let its acknowledgement own an already-settled turn's retirement.
+      this.settleHostTurnContinuation(abortGeneration);
+      await aborting;
     } finally {
       this.releaseSendReservationIfObserved();
       if (this.status === 'aborting') {
