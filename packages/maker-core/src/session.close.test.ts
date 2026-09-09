@@ -26,13 +26,18 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('Session close lifecycle', () => {
-  function liveTurn(hostContinuation = true) {
+  function liveTurn(hostContinuation = true, terminalGate?: Promise<void>) {
     const queue = createAsyncQueue<AgentEvent>();
     let running = false;
     const handle = {
       id: 'pi-runtime', agentKind: 'pi', model: 'm',
       send: vi.fn(async () => { running = true; }),
-      events: () => queue,
+      events: () => terminalGate ? (async function* () {
+        for await (const event of queue) {
+          if (event.type === 'done') await terminalGate;
+          yield event;
+        }
+      })() : queue,
       isTurnRunning: () => running,
       close: vi.fn(async () => { running = false; queue.end(); }),
       abort: vi.fn(async () => { running = false; }),
@@ -122,6 +127,29 @@ describe('Session close lifecycle', () => {
     expect(seen).toEqual([expect.objectContaining({ type: 'done', turnAttemptToken: 9,
       data: { status: 'cancelled' } })]);
     expect(handle.send).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a new turn while a retiring provider is idle but its terminal is queued', async () => {
+    const terminalGate = createDeferred();
+    const { session, handle, queue, seen, idle } = liveTurn(true, terminalGate.promise);
+    await session.send('in-flight work');
+    const generation = session.getTurnGeneration();
+    expect(await session.closeAfterCurrentTurn()).toBe('deferred');
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'finished' } });
+    try {
+      await expect(session.send('new work')).rejects.toThrow(/closing/);
+      expect(session.getTurnGeneration()).toBe(generation);
+      expect(handle.send).toHaveBeenCalledOnce();
+      expect(handle.close).not.toHaveBeenCalled();
+      terminalGate.resolve();
+      await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+      expect(seen.at(-1)?.data).toMatchObject({ status: 'completed', result: 'finished' });
+      expect(handle.close).toHaveBeenCalledOnce();
+    } finally {
+      terminalGate.resolve();
+      await session.close();
+    }
   });
 
   it('keeps the executor available to the existing Host silent-stop continuation', async () => {

@@ -738,7 +738,7 @@ export class Session {
       : message;
     this.logger.debug('send', summarizeUserMessage(msg));
     this.ensureActive();
-    if (this.retirementRequested && !this.hasUnsettledTurn()
+    if (this.retirementRequested
       && this.retirementContinuationGeneration !== this.turnGeneration) {
       throw new Error(`Session ${this.id} is closing`);
     }

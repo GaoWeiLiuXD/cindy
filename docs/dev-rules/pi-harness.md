@@ -233,6 +233,8 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
   关闭正在消费结果的调用者。包变更仍推进原有 generation 并捕获准确 runtime 实例；
   空闲实例退役，忙碌调用者和同一快照里的兄弟实例保留当前执行，产品终态送达后再退役。
   `runtimeConvergence=deferred` 表示旧快照暂时服务在途工作，不表示新包已经加载。
+  provider 已空闲但 Session 尚未消费终态时，待退役实例仍拒绝新 turn；
+  仅当前 generation 已由 Host 明确 claim 的 silent-stop continuation 可继续发送。
   调用者的现有 Host lease 必须覆盖兄弟关闭结果汇总及准确收敛回执的 Session 分发；
   不能把回执入队当作已分发。交付等待有界，显式关闭仍可结束旧实例。
   内部退役尚未真正开始关闭时，显式 Agent 切换／关闭可接管关闭原因；一旦开始关闭
