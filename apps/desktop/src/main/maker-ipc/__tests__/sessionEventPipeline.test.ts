@@ -1,6 +1,7 @@
 import { Session, type AgentEvent, type AgentSessionHandle } from '@cindy/maker-core';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { handleSessionEvent, type SessionEventDependencies } from '../sessionEventPipeline.js';
+import { setMainLocale } from '../../i18n.js';
 import { installSessionTurnObserver } from '../sessionTurnObserver.js';
 import { createSessionBindingLifecycle } from '../sessionBindingLifecycle.js';
 import { SessionTurnActivityTracker } from '../sessionTurnActivityTracker.js';
@@ -238,7 +239,7 @@ function harness() {
     attemptBotCompactRuntimeRefresh: vi.fn(),
     botDelegationServiceHolder: { settleSession: vi.fn(async () => {}) },
     isFencedStaleSessionTerminal: vi.fn(() => false),
-    redactEventForRenderer: vi.fn((value: AgentEvent) => ({ ...value, data: { redacted: true } })),
+    redactEventForRenderer: vi.fn((value: AgentEvent): AgentEvent => ({ ...value, data: { redacted: true } })),
     interruptedTurnAutoResumeGuard: {
       noteAttemptEvent: vi.fn(),
       noteTurnStarted: vi.fn(),
@@ -367,6 +368,7 @@ beforeEach(() => {
   effects.fn('verdictForModelRoute').mockResolvedValue({ kind: 'pass' });
 });
 afterEach(() => {
+  setMainLocale('en');
   vi.clearAllTimers();
   vi.useRealTimers();
 });
@@ -381,17 +383,41 @@ function ordered(...names: string[]) {
 }
 
 describe('production Session event pipeline', () => {
-  it('persists and broadcasts a retirement recovery receipt after a successful product terminal', async () => {
+  it.each([
+    ['zh-CN', 'Pi 扩展未能完成刷新。请重启 Cindy 后再使用 Pi。'],
+    ['zh-TW', 'Pi 擴充功能未能完成重新整理。請重新啟動 Cindy 後再使用 Pi。'],
+    ['en', 'Pi extensions could not be refreshed. Restart Cindy before using Pi again.'],
+    ['ja', 'Pi 拡張機能を更新できませんでした。Pi を再び使用する前に Cindy を再起動してください。'],
+    ['ko', 'Pi 확장을 새로 고치지 못했습니다. Pi를 다시 사용하기 전에 Cindy를 다시 시작하세요.'],
+  ] as const)('persists and broadcasts localized post-terminal recovery in %s', async (locale, text) => {
+    setMainLocale(locale);
     const h = harness();
+    // Production redaction preserves text events; the general harness replaces all data.
+    h.deps.redactEventForRenderer.mockImplementation((value: AgentEvent) => value);
     h.emit(event('done', { status: 'completed', result: 'saved' }, { source: 'pi' }));
-    const data = { isFinal: true, text: 'partial: restart-cindy-to-refresh-packages' };
+    const data = { isFinal: true, text: '[Cindy Pi package runtime convergence receipt] {"recoveryAction":"restart-cindy-to-refresh-packages"}' };
+    const receipt = event('text', data, {
+      source: 'pi', runtimeRecovery: true,
+      sessionInstanceId: h.session.instanceId, sessionTurnGeneration: 0,
+    });
     effects.fn('onAssistantTextEvent').mockClear();
     effects.fn('broadcast').mockClear();
-    h.emit(event('text', data, { source: 'pi' }));
-    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', data, null);
-    expect(effects.fn('broadcast')).toHaveBeenCalled();
+    h.emit(receipt);
+    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', { ...data, text }, null);
+    expect(effects.fn('broadcast')).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      sessionId: 'task', event: { ...receipt, data: { ...data, text } },
+    }));
+    expect(receipt.data).toEqual(data);
     expect(h.activity.isSessionInTurn('task')).toBe(false);
     expect(h.handle.send).not.toHaveBeenCalled();
+    await h.dispose();
+  });
+
+  it('preserves ordinary Pi text without the Host recovery marker', async () => {
+    const h = harness();
+    const data = { isFinal: true, text: 'partial: restart-cindy-to-refresh-packages' };
+    h.emit(event('text', data, { source: 'pi' }));
+    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', data, null);
     await h.dispose();
   });
 
