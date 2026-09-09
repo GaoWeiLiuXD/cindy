@@ -1,9 +1,10 @@
 # Pi 长工具生命周期：#3916 受控取证
 
-本报告保留独立 transport 提交 `d8bd012f1` 的取证与验证范围。该提交现已纳入统一
-Pi 生命周期 P0 交付；组合验证以 PR 正文为准。P0 同时修复下文记录的
+本报告保留独立 transport 工作（初始提交 `d8bd012f1`、PR #4182 及后续审查）的
+取证与验证范围。#4182 已合入主干；统一 Pi 生命周期 P0 PR #4186 同步保留其
+退出确认加固，组合验证以 #4186 正文为准。P0 同时修复下文记录的
 `maker.shutdown.test.ts` 泛型 resolver 类型错误，不把它归因于 transport。
-下文的「本单」及独立验证结果均指该 transport 提交，不代表组合 P0 PR 的全部改动。
+下文的「本单」及独立验证结果指该 transport 工作，不代表组合 P0 PR 的全部改动。
 
 ## 结论与范围
 
@@ -112,3 +113,35 @@ lizi-mcps、maker-core related 与 orca-workflow 的无模型单测均通过。�
 释放本端输出管道可能使继续输出的后代遇到 EPIPE；**通知 Pi 退出不等于证明构建后代已
 安全停止或成功完成**。原用户根因的最小缺口仍是停住时 Pi/构建 PID 与退出码、最后
 RPC 帧和 Session 终态的同轮时间线；本单不能据此宣称 #3916 整体已解决。
+
+## PR 审查补充：关闭失败不能冒充退出
+
+审查指出显式关闭期间 `kill()` 同步触发 `error` 会通过通用关闭通知提前完成 waiter。
+受控测试确认：`error` 事件及抛异常两种路径原来都错误地 resolve；修复后保留资源登记，
+继续 SIGTERM → SIGKILL，未收到退出证据则 reject，后续仍可重试并由真实 exit 收口。
+通用通知中的 waiter 现在显式检查 exitInfo；终止中的 error 只记录错误，不伪造退出。
+另覆盖退出发生在 3 秒升级或 8 秒确认期限前 1ms 的情况：排空期间不再发信号，也不误报超时。
+
+另一条审查认为 exit-first/close-second 会立即 resolve 并丢失退出码。加强时序及
+code/signal 断言后，在审查所指提交 d8bd012f1 上两种顺序均通过：Promise executor 中
+`return` 只退出 executor，不会 resolve 外层 Promise；仍由 250ms 排空通知调用 finish。
+因此保留现有排空行为，不将该报告称作已复现缺陷。新增断言持续保护真实退出信息。
+
+## Windows CI fixture 修正
+
+旧提交 d8bd012f1 的 Windows shard 2 在后代存活断言处失败（kill ESRCH，127ms），
+不是等待终态超时。Node 22.23.2 的 [libuv Windows 实现](https://github.com/nodejs/node/blob/v22.23.2/deps/uv/src/win/process.c#L69)
+将非 detached 子进程加入父进程持有的 kill-on-close Job，因此原 fixture 在 Windows
+没有建立“父退出、后代继续持有管道”的前提。仅对测试后代设置 Windows detached，
+继续继承输出句柄；保留 PID 存活、明确失败、2 秒终态期限及 afterEach 清理断言。
+生产 Pi 的 spawn/进程树策略不变；Windows 修正效果以新提交的 CI 为准。
+
+Windows 后续运行 b1c442b4e 已通过后代存活等行为断言，但 afterEach 删除临时目录时
+遇到 EBUSY。清理现在区分“发出 kill”与“退出已确认”：等待该 fixture PID 的 ESRCH
+再删除目录，文件系统残留锁采用有界异步重试，避免阻塞事件循环；不吞掉清理失败。
+同轮 shard 1 的 Windows mutex 探测与飞书 Unicode 校验超时未改动相关源码，
+前一提交的同 shard 曾通过，尚无基线复现证据；由新 CI 复查，不认定已确定为偶发。
+
+组合 P0 同步 #4182 后，保留自己已有的后代 IPC 就绪握手及无新 prompt 断言，
+并采用主干更严格的 ESRCH 退出确认与有界异步目录清理；后代 detached 的测试配置
+不影响生产 Pi spawn 配置。关闭失败的恢复回执由 P0 的 Session 生命周期处理。
