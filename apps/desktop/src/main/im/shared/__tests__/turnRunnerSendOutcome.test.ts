@@ -24,6 +24,7 @@ import type {
   TurnPermissionPolicy,
 } from '@cindy/maker-core';
 import type { ChannelIM } from '@cindy/im';
+import { setMainLocale } from '../../../i18n';
 
 const mocks = vi.hoisted(() => ({
   logger: {
@@ -1035,6 +1036,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
   });
 
   it('sends retirement recovery separately after the personal IM turn has completed', async () => {
+    setMainLocale('zh-CN');
     const terminal = deferred<void>();
     const ended = deferred<void>();
     const closeFailure = deferred<void>();
@@ -1068,13 +1070,14 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       closeFailure.resolve();
       await waitForAssertion(() => expect(session.getStatus()).toBe('error'));
       expect(mocks.feishuIm.sendText).toHaveBeenCalledExactlyOnceWith('ou_user',
-        'restart-cindy-to-refresh-packages', { threadTs: undefined });
+        'Pi 扩展未能完成刷新。请重启 Cindy 后再使用 Pi。', { threadTs: undefined });
       expect(complete).toHaveBeenCalledOnce();
       expect(handle.send).toHaveBeenCalledOnce();
     } finally {
       closeFailure.resolve();
       vi.mocked(handle.close).mockImplementation(async () => { ended.resolve(); });
       await session.close();
+      setMainLocale('en');
     }
   });
 

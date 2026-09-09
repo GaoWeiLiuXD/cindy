@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Session, type AgentEvent, type AgentSessionHandle, type Capabilities } from '@cindy/maker-core';
 import { observeHookTurn } from '../turnObserver';
 import { bindRuntimeRecoveryNotice } from '../../im/shared/runtimeRecoveryNotice';
+import { setMainLocale } from '../../i18n';
 
 import {
   HOOK_FEATURE_MESSAGE_OPS,
@@ -244,7 +245,14 @@ function makeDispatcher(overrides?: {
 }
 
 describe('post-terminal runtime recovery delivery', () => {
-  it('delivers after the production observer unsubscribes, without replaying the successful turn', async () => {
+  it.each([
+    ['en', 'Pi extensions could not be refreshed. Restart Cindy before using Pi again.'],
+    ['zh-CN', 'Pi 扩展未能完成刷新。请重启 Cindy 后再使用 Pi。'],
+    ['zh-TW', 'Pi 擴充功能未能完成重新整理。請重新啟動 Cindy 後再使用 Pi。'],
+    ['ja', 'Pi 拡張機能を更新できませんでした。Pi を再び使用する前に Cindy を再起動してください。'],
+    ['ko', 'Pi 확장을 새로 고치지 못했습니다. Pi를 다시 사용하기 전에 Cindy를 다시 시작하세요.'],
+  ] as const)('delivers localized %s recovery after the observer unsubscribes, without replay', async (locale, expected) => {
+    setMainLocale(locale);
     let terminal!: () => void;
     const terminalReady = new Promise<void>(resolve => { terminal = resolve; });
     let end!: () => void;
@@ -298,7 +306,8 @@ describe('post-terminal runtime recovery delivery', () => {
       const notices = c.ofType('msg.op').filter(m => m.payload.action.kind === 'send');
       expect(notices).toHaveLength(1);
       expect(notices[0]?.payload).toMatchObject({ scope: { externalKey: telegramDispatch().externalKey },
-        action: { kind: 'send', text: 'restart-cindy-to-refresh-packages' } });
+        action: { kind: 'send', text: expected } });
+      expect(JSON.stringify(notices)).not.toContain('restart-cindy-to-refresh-packages');
       expect(notices[0]?.payload.requestId).toBeUndefined();
       expect(noticeResult).not.toHaveBeenCalled(); // Socket send is not channel delivery.
       d.onMessageOpResult({ opId: notices[0]!.payload.opId, ok: true, messageId: 'notice-1' });
@@ -312,6 +321,7 @@ describe('post-terminal runtime recovery delivery', () => {
       vi.mocked(handle.close).mockImplementation(async () => { end(); });
       await session.close().catch(() => session.close());
       d.dispose();
+      setMainLocale('en');
     }
   });
 
