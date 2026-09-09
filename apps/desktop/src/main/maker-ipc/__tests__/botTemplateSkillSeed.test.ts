@@ -18,7 +18,7 @@ afterEach(async () => {
 
 describe('seedBotTemplateSkills', () => {
   it.each([
-    ['cindy', 'prepare-office-deliverables', '办公成果制作'],
+    ['cindy', 'help-with-cindy', '使用 Cindy 完成工作'],
     ['dash', 'make-executive-decisions', '高管决策'],
     ['lizi', 'deliver-engineering-changes', '开发交付'],
   ] as const)(
@@ -27,14 +27,14 @@ describe('seedBotTemplateSkills', () => {
       const result = await seedBotTemplateSkills(userDataDir, `bot-${templateId}`, templateId);
 
       expect(result.completedNow).toBe(true);
-      expect(result.skills).toHaveLength(3);
+      expect(result.skills).toHaveLength(templateId === 'cindy' ? 1 : 3);
       expect(result.skills[0]?.created).toBe(true);
       expect(await readBotSkill(userDataDir, `bot-${templateId}`, slug)).toMatchObject({
         name,
         description: expect.any(String),
         body: expect.stringContaining(`# ${name}`),
       });
-      expect(result.skills.some(({ record }) => record.body.includes('文档工具'))).toBe(true);
+      expect(result.skills.some(({ record }) => record.body.includes(templateId === 'cindy' ? '连接' : '文档工具'))).toBe(true);
     },
   );
 
@@ -71,10 +71,10 @@ describe('seedBotTemplateSkills', () => {
 
     const result = await seedBotTemplateSkills(userDataDir, 'bot-cindy', 'cindy');
 
-    expect(result.skills).toHaveLength(3);
+    expect(result.skills).toHaveLength(1);
     expect(await readBotSkill(userDataDir, 'bot-cindy', 'everyday-work-coordination')).toBeNull();
     expect(
-      await readBotSkill(userDataDir, 'bot-cindy', 'prepare-office-deliverables'),
+      await readBotSkill(userDataDir, 'bot-cindy', 'help-with-cindy'),
     ).not.toBeNull();
   });
 });

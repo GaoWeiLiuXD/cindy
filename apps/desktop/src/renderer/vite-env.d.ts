@@ -12,6 +12,7 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+type BotToolsetContext = import('../shared/botRemoteCapabilities').BotToolsetContext;
 type AgentProxyPrefPayload = import('../shared/agentProxyConfig').SshHostAgentProxyPref;
 type AgentProxyTunnelStatePayload = import('../shared/agentProxyConfig').AgentProxyTunnelState;
 type ModelAccessStatusPayload = import('../shared/modelAccess').ModelAccessStatus;
@@ -989,6 +990,8 @@ interface CrossAgentStepEvent {
 }
 
 interface PluginListItem {
+  /** Present only when queried for a Bot runtime context. */
+  available?: boolean;
   id: string;
   name: string;
   description: string;
@@ -4555,6 +4558,8 @@ interface ElectronAPI {
       }>;
       list: (body?: { lastReadAtByBotId?: Record<string, number> }) => Promise<unknown[]>;
       get: (botId: string) => Promise<unknown>;
+      generateDraft: (body: { prompt: string; token?: string; name?: string; description?: string }) => Promise<import('../shared/botCreation').BotCreationDraft>;
+      generateAvatar: (token: string) => Promise<{ avatarImageBase64: string }>;
       chooseAvatar: (body: { botId: string }) => Promise<{
         canceled: boolean;
         profile?: unknown;
@@ -5177,9 +5182,7 @@ interface ElectronAPI {
     onProvidersChanged: (cb: () => void) => () => void;
 
     // 自定义 MCP 服务器配置 CRUD（可选 bearer token 另走通用 safeStorage IPC，不经这里）。
-    listCustomMcpServers: () => Promise<{
-      servers: import('../shared/customMcp').CustomMcpConfig[];
-    }>;
+    listCustomMcpServers: (context?: import('../shared/customMcp').CustomMcpListContext) => Promise<import('../shared/customMcp').CustomMcpListResult>;
     createCustomMcpServer: (
       config: import('../shared/customMcp').CustomMcpConfig,
     ) => Promise<{ ok: true }>;
@@ -6534,7 +6537,7 @@ interface ElectronAPI {
     };
 
     plugins: {
-      list: (workingDir?: string) => Promise<PluginListItem[]>;
+      list: (workingDir?: string, includeHidden?: boolean, botContext?: Omit<BotToolsetContext, 'workingDir'>) => Promise<PluginListItem[]>;
       getState: (
         id: string,
         workingDir?: string,

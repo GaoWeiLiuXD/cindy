@@ -16,6 +16,7 @@ import { getBotLastReadAtMap, pruneBotReadState, seedMissingBotReadState } from 
 import type { BotGender } from '../../../shared/botGender';
 import { BOT_FAILURE_REASONS, type BotFailureReason } from '../../../shared/botFailureReason';
 import type { BotTemplatePresetId } from '../../../shared/botTemplatePreset';
+import type { BotCapabilityBaseline } from '../../../shared/botCapabilitySelection';
 import { NEW_BOT_DEFAULT_PERMISSIONS, normalizeBotPermissions } from './botCapabilityDefaults';
 import {
   BOT_MODEL_CHAIN_MAX,
@@ -150,6 +151,7 @@ export interface BotSessionProjection {
 }
 
 export interface BotProfile {
+  templateId?: BotTemplatePresetId;
   invitation?: BotInvitationProgress;
   id: string;
   name: string;
@@ -453,6 +455,7 @@ function defaultCapabilities(
 }
 
 export interface CreateBotProfileInput {
+  creationDraftToken?: string;
   prepareInvitation?: boolean;
   /** Unsaved image bytes, validated and ingested by main on creation only. */
   avatarImageBase64?: string;
@@ -571,6 +574,7 @@ function normalizeDbProfile(value: unknown): BotProfile | null {
     userContextSource: typeof item.userContextSource === 'string' ? item.userContextSource : '',
     // 落库回读的性别。老档案没有 → 留空 → 界面按名字称呼(与升级前一致)。
     ...(item.gender === 'female' || item.gender === 'male' ? { gender: item.gender } : {}),
+    templateId: ['cindy', 'dash', 'lizi'].includes(String(item.templateId)) ? item.templateId as BotTemplatePresetId : undefined,
     avatar: typeof item.avatar === 'string' ? item.avatar : '🤖',
     avatarColor: typeof item.avatarColor === 'string' ? item.avatarColor : 'violet',
     enabled: item.enabled !== false,
@@ -852,6 +856,7 @@ export function addBotProfile(input: CreateBotProfileInput): BotProfile {
   };
   const bot: BotProfile = {
     id: `bot_${now}_${Math.random().toString(36).slice(2, 8)}`,
+    templateId: input.templateId,
     name: input.name.trim() || 'New Bot',
     description: input.description.trim(),
     identitySource: input.identitySource?.trim() || undefined,
@@ -920,14 +925,16 @@ export async function addBotProfileAndWait(input: CreateBotProfileInput): Promis
         // 阵容卡上明明写着「让她加入」,进去就变成「林律是谁」(2026-08-21 实机)。
         ...(bot.gender ? { gender: bot.gender } : {}),
         ...(input.templateId ? { templateId: input.templateId } : {}),
+        ...(input.creationDraftToken ? { creationDraftToken: input.creationDraftToken } : {}),
         ...(input.prepareInvitation ? { prepareInvitation: true } : {}),
         ...(input.welcomeMessage ? { welcomeMessage: input.welcomeMessage } : {}),
       }),
     );
     assertCurrentOwner(owner);
     if (!created) throw new Error('Bot profile create returned an invalid profile');
-    profiles = profiles.map((item) => (item.id === bot.id ? created : item));
+    profiles = [...profiles.filter((item) => item.id !== bot.id && item.id !== created.id), created];
     emit();
+    return created;
   } catch (error) {
     assertCurrentOwner(owner);
     // The renderer projection is optimistic, but a failed main/SQLite create
@@ -936,7 +943,6 @@ export async function addBotProfileAndWait(input: CreateBotProfileInput): Promis
     emit();
     throw error;
   }
-  return profiles.find((item) => item.id === bot.id) ?? bot;
 }
 
 export type BotProfileUpdatePatch = Partial<
@@ -950,17 +956,20 @@ export type BotProfileUpdatePatch = Partial<
     | 'avatarColor'
     | 'enabled'
     | 'skills'
-    | 'capabilities'
     | 'canonicalSessionId'
     | 'sessions'
   >
-> & { avatarUploadToken?: string };
+> & {
+  avatarUploadToken?: string;
+  capabilities?: Partial<BotCapabilities>;
+  capabilityBaseline?: BotCapabilityBaseline;
+};
 
 export function updateBotProfile(id: string, patch: BotProfileUpdatePatch): Promise<BotProfile> {
   ensureProfileOwner();
   const before = profiles.find((bot) => bot.id === id);
   if (!before) return Promise.reject(new Error('Bot not found'));
-  const { avatarUploadToken, ...profilePatch } = patch;
+  const { avatarUploadToken, capabilityBaseline, ...profilePatch } = patch;
   // 这一行的写入代际。回填与回滚都要求「我仍然是这一行最新的那次写」——
   // 落后的响应一律丢弃,不许覆盖更新的状态(见下面两处 isLatestWrite)。
   const generation = (profileWriteGenerations.get(id) ?? 0) + 1;
@@ -968,15 +977,20 @@ export function updateBotProfile(id: string, patch: BotProfileUpdatePatch): Prom
   const owner = getDataOwnerGeneration();
   const isLatestWrite = () => isDataOwnerGenerationCurrent(owner)
     && profileWriteGenerations.get(id) === generation;
-  profiles = profiles.map((bot) => (bot.id === id ? { ...bot, ...profilePatch } : bot));
+  const applyPatch = (bot: BotProfile): BotProfile => ({
+    ...bot, ...profilePatch,
+    capabilities: { ...bot.capabilities, ...profilePatch.capabilities },
+  });
+  profiles = profiles.map((bot) => (bot.id === id ? applyPatch(bot) : bot));
   emit();
-  const optimistic = profiles.find((bot) => bot.id === id) ?? { ...before, ...profilePatch };
+  const optimistic = profiles.find((bot) => bot.id === id) ?? applyPatch(before);
   const api = botsApi();
   if (!api) return Promise.resolve(optimistic);
   return api
     .update({
       id,
       ...profilePatch,
+      ...(capabilityBaseline ? { capabilityBaseline } : {}),
       ...(avatarUploadToken ? { avatarUploadToken } : {}),
       ...(profilePatch.avatar !== undefined || avatarUploadToken
         ? { expectedAvatar: before.avatar }
@@ -1058,6 +1072,7 @@ function duplicateBotName(sourceName: string): string {
 export async function duplicateBotProfile(id: string): Promise<BotProfile> {
   const source = profiles.find((bot) => bot.id === id);
   if (!source) throw new Error('Bot not found');
+  if (source.templateId === 'cindy') return source;
   return addBotProfileAndWait({
     name: duplicateBotName(source.name),
     description: source.description,

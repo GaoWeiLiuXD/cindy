@@ -10,42 +10,99 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: translate }) }));
 const mocks = vi.hoisted(() => ({
   BotModelSelectionRequiredError: class extends Error {},
   addBotProfileAndWait: vi.fn(),
+  generateDraft: vi.fn(),
   navigate: vi.fn(),
   onboarding: false,
   availableVendors: new Set(['cc', 'codex', 'pi']),
   profiles: [] as Array<{ id: string; name: string; invitation: { stage: string } }>,
 }));
-vi.mock('@/hooks/useProviderOnboarding', () => ({ useProviderOnboarding: () => ({ visible: mocks.onboarding }) }));
-vi.mock('@/hooks/useAvailableAgents', () => ({ useAvailableAgents: () => ({ availableVendors: mocks.availableVendors, loaded: true }) }));
-vi.mock('@/components/onboarding/ConnectProviderCard', () => ({ ConnectProviderCard: () => <div>Shared provider setup</div> }));
+vi.mock('@/hooks/useProviderOnboarding', () => ({
+  useProviderOnboarding: () => ({ visible: mocks.onboarding }),
+}));
+vi.mock('@/hooks/useAvailableAgents', () => ({
+  useAvailableAgents: () => ({ availableVendors: mocks.availableVendors, loaded: true }),
+}));
+vi.mock('@/components/onboarding/ConnectProviderCard', () => ({
+  ConnectProviderCard: () => <div>Shared provider setup</div>,
+}));
 vi.mock('../botStore', () => ({
   BotModelSelectionRequiredError: mocks.BotModelSelectionRequiredError,
   addBotProfileAndWait: mocks.addBotProfileAndWait,
   useBotProfiles: () => mocks.profiles,
   refreshBotProfiles: vi.fn(),
   retryBotInvitation: vi.fn(),
-  getEffectiveBotModelSettings: () => ({ model: 'custom-model', providerId: 'custom', effort: 'high', fastMode: false }),
+  getEffectiveBotModelSettings: () => ({
+    model: 'custom-model',
+    providerId: 'custom',
+    effort: 'high',
+    fastMode: false,
+  }),
 }));
 vi.mock('@/components/new-chat/ModelSelector', () => ({
-  ModelSelector: ({ unifiedAgents, onUnifiedSelect, disabled, vendorKey, onNavigateToProviders }: {
+  ModelSelector: ({
+    unifiedAgents,
+    onUnifiedSelect,
+    disabled,
+    vendorKey,
+    onNavigateToProviders,
+  }: {
     onNavigateToProviders?: () => void;
     disabled: boolean;
     vendorKey: string;
     unifiedAgents: string[];
     onUnifiedSelect: (selection: unknown) => void;
   }) => (
-    <>{onNavigateToProviders && <button type="button" onClick={onNavigateToProviders}>connect-source</button>}<span data-testid="selected-engine">{vendorKey}</span>{(['pi', 'codex'] as const).filter((engine) => unifiedAgents.includes(engine)).map((engine) => (
-      <button key={engine} disabled={disabled} type="button" onClick={() => onUnifiedSelect({ engine, providerId: 'custom', modelId: 'custom-model', effort: 'high', fast: false })}>
-        {engine === 'pi' ? 'choose-custom-model' : 'choose-custom-codex-model'}
-      </button>
-    ))}</>
+    <>
+      {onNavigateToProviders && (
+        <button type="button" onClick={onNavigateToProviders}>
+          connect-source
+        </button>
+      )}
+      <span data-testid="selected-engine">{vendorKey}</span>
+      {(['pi', 'codex'] as const)
+        .filter((engine) => unifiedAgents.includes(engine))
+        .map((engine) => (
+          <button
+            key={engine}
+            disabled={disabled}
+            type="button"
+            onClick={() =>
+              onUnifiedSelect({
+                engine,
+                providerId: 'custom',
+                modelId: 'custom-model',
+                effort: 'high',
+                fast: false,
+              })
+            }
+          >
+            {engine === 'pi' ? 'choose-custom-model' : 'choose-custom-codex-model'}
+          </button>
+        ))}
+    </>
   ),
 }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
 
+vi.mock('../BotPortraitPicker', () => ({
+  BotPortraitPicker: () => <div>Portrait picker</div>,
+  galleryPortrait: async () => 'data:image/png;base64,cG9ydHJhaXQ=',
+}));
+
 import { BotRosterView } from '../BotRosterView';
 
 beforeEach(() => {
+  mocks.generateDraft.mockReset();
+  mocks.generateDraft.mockResolvedValue({
+    token: 'draft-1',
+    name: 'Mika',
+    description: 'Practice English together.',
+    skills: [],
+  });
+  Object.defineProperty(window, 'electronAPI', {
+    configurable: true,
+    value: { localDb: { bots: { generateDraft: mocks.generateDraft } } },
+  });
   mocks.addBotProfileAndWait.mockReset();
   mocks.addBotProfileAndWait.mockResolvedValue({ id: 'bot-new', name: 'Ops buddy' });
   mocks.navigate.mockReset();
@@ -60,20 +117,24 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
   it('recovers an empty default chain through model selection before creating', async () => {
     mocks.addBotProfileAndWait.mockRejectedValueOnce(new mocks.BotModelSelectionRequiredError());
     render(<BotRosterView />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     await screen.findByText('choose-custom-model');
-    expect((screen.getByRole('button', { name: 'bots.roster.create' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'bots.guided.addCindy' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(mocks.navigate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('choose-custom-model'));
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     await waitFor(() => expect(mocks.addBotProfileAndWait).toHaveBeenCalledTimes(2));
-    expect(mocks.addBotProfileAndWait.mock.calls[1][0].capabilities.modelChainOverride[0]).toMatchObject({ model: 'custom-model', providerId: 'custom' });
+    expect(
+      mocks.addBotProfileAndWait.mock.calls[1][0].capabilities.modelChainOverride[0],
+    ).toMatchObject({ model: 'custom-model', providerId: 'custom' });
   });
 
   it('can connect a source from creation recovery when normal onboarding is hidden', async () => {
     mocks.addBotProfileAndWait.mockRejectedValueOnce(new mocks.BotModelSelectionRequiredError());
     render(<BotRosterView />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     fireEvent.click(await screen.findByText('connect-source'));
     expect(mocks.navigate).toHaveBeenCalledWith('/settings?tab=providers');
     expect(mocks.addBotProfileAndWait).toHaveBeenCalledOnce();
@@ -82,17 +143,26 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
   it('locks the recovery picker while creation is pending and unlocks after failure', async () => {
     mocks.addBotProfileAndWait.mockRejectedValueOnce(new mocks.BotModelSelectionRequiredError());
     render(<BotRosterView />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     fireEvent.click(await screen.findByText('choose-custom-model'));
     let reject!: (reason: Error) => void;
-    mocks.addBotProfileAndWait.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    mocks.addBotProfileAndWait.mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     const picker = screen.getByText('choose-custom-codex-model') as HTMLButtonElement;
     expect(picker.disabled).toBe(true);
     fireEvent.click(picker);
     expect(screen.getByTestId('selected-engine').textContent).toBe('pi');
-    expect(mocks.addBotProfileAndWait.mock.lastCall?.[0].capabilities.modelChainOverride[0].harness).toBe('pi');
-    await act(async () => { reject(new Error('offline')); });
+    expect(
+      mocks.addBotProfileAndWait.mock.lastCall?.[0].capabilities.modelChainOverride[0].harness,
+    ).toBe('pi');
+    await act(async () => {
+      reject(new Error('offline'));
+    });
     expect(picker.disabled).toBe(false);
     fireEvent.click(picker);
     expect(screen.getByTestId('selected-engine').textContent).toBe('codex');
@@ -102,32 +172,33 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
     mocks.availableVendors = new Set(['codex']);
     mocks.addBotProfileAndWait.mockRejectedValueOnce(new mocks.BotModelSelectionRequiredError());
     render(<BotRosterView />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     await screen.findByText('choose-custom-codex-model');
     expect(screen.queryByText('choose-custom-model')).toBeNull();
     fireEvent.click(screen.getByText('choose-custom-codex-model'));
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     await waitFor(() => expect(mocks.addBotProfileAndWait).toHaveBeenCalledTimes(2));
-    expect(mocks.addBotProfileAndWait.mock.calls[1][0].capabilities.modelChainOverride[0])
-      .toMatchObject({ harness: 'codex', model: 'custom-model', providerId: 'custom' });
+    expect(
+      mocks.addBotProfileAndWait.mock.calls[1][0].capabilities.modelChainOverride[0],
+    ).toMatchObject({ harness: 'codex', model: 'custom-model', providerId: 'custom' });
   });
 
   it('uses the shared connection guide before creating an unconfigured teammate', () => {
     mocks.onboarding = true;
     const view = render(<BotRosterView />);
     expect(screen.getByText('Shared provider setup')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'bots.roster.create' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'bots.guided.addCindy' })).toBeNull();
     expect(mocks.addBotProfileAndWait).not.toHaveBeenCalled();
     mocks.onboarding = false;
     view.rerender(<BotRosterView />);
-    expect(screen.getByRole('button', { name: 'bots.roster.create' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'bots.guided.addCindy' })).toBeTruthy();
   });
 
   it('waits in the invitation dialog and meets only after preparation completes', async () => {
     const preparing = { id: 'new', name: '阿橙', invitation: { stage: 'skills' } };
     mocks.addBotProfileAndWait.mockResolvedValue(preparing);
     const view = render(<BotRosterView />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     await waitFor(() =>
       expect(screen.getByText('bots.invitation.skills:{"name":"阿橙"}')).toBeTruthy(),
     );
@@ -146,156 +217,80 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
     });
     const onClose = vi.fn();
     render(<BotRosterView onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.addCindy' }));
     fireEvent.click(await screen.findByRole('button', { name: 'bots.invitation.leave' }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mocks.addBotProfileAndWait).toHaveBeenCalledTimes(1);
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
-  it('shows three professional presets plus custom and the shared basic profile fields', () => {
+  it('leads with a description and exposes only Cindy as a preset', () => {
     render(<BotRosterView />);
-
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('cindy');
-    for (const id of ['cindy', 'dash', 'lizi', 'custom']) {
-      expect(screen.getByText(`bots.createWizard.templates.${id}.title`)).toBeTruthy();
-    }
-    expect(screen.getAllByRole('option')).toHaveLength(4);
-    expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByLabelText('bots.nameLabel')).toBeTruthy();
-    expect(screen.getByLabelText('bots.profile.summary')).toBeTruthy();
-    expect(screen.queryByText('bots.profile.avatar')).toBeNull();
-    expect(screen.queryByText('bots.background.title')).toBeNull();
-    expect(screen.queryByText('bots.persona.title')).toBeNull();
+    expect(screen.getByLabelText('bots.guided.question')).toBeTruthy();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(screen.queryByLabelText('bots.nameLabel')).toBeNull();
+    expect(screen.getByRole('button', { name: 'bots.guided.addCindy' })).toBeTruthy();
   });
 
-  it('starts custom from a blank profile and waits for a name', () => {
+  it('opens the original Cindy by stable template identity even after a rename', () => {
+    mocks.profiles = [
+      { id: 'old-cindy', name: 'Renamed', templateId: 'cindy', createdAt: 1, status: 'active' },
+    ] as never;
     render(<BotRosterView />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
-
-    expect((screen.getByLabelText('bots.nameLabel') as HTMLInputElement).value).toBe('');
-    expect((screen.getByLabelText('bots.profile.summary') as HTMLInputElement).value).toBe('');
-    expect(
-      (screen.getByRole('button', { name: 'bots.roster.create' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-  });
-
-  it('uses a template as a draft in the same fields', () => {
-    render(<BotRosterView />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dash' } });
-
-    expect((screen.getByLabelText('bots.nameLabel') as HTMLInputElement).value).toBe(
-      'bots.createWizard.templates.dash.defaultName',
-    );
-    expect((screen.getByLabelText('bots.profile.summary') as HTMLInputElement).value).toBe(
-      'bots.createWizard.templates.dash.defaultDescription',
-    );
-  });
-
-  it('lets the user change name and description while the template supplies the initial avatar', async () => {
-    render(<BotRosterView />);
-    fireEvent.change(screen.getByLabelText('bots.nameLabel'), { target: { value: 'Ops buddy' } });
-    fireEvent.change(screen.getByLabelText('bots.profile.summary'), {
-      target: { value: 'Release partner' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
-
-    await waitFor(() => expect(mocks.addBotProfileAndWait).toHaveBeenCalledTimes(1));
-    expect(mocks.addBotProfileAndWait.mock.calls[0]?.[0]).toMatchObject({
-      name: 'Ops buddy',
-      description: 'Release partner',
-      prepareInvitation: true,
-      avatar: 'cindy://avatar/preset/cindy',
-      avatarColor: 'blue',
-      identitySource: expect.stringContaining('Cindy 助理'),
-      userContextSource: '',
-      skills: [],
-      capabilities: { toolsetMode: 'allowlist', toolsets: ['docs'] },
-    });
-  });
-
-  it('creates a custom teammate with a neutral professional identity', async () => {
-    render(<BotRosterView />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
-    fireEvent.change(screen.getByLabelText('bots.nameLabel'), { target: { value: '项目伙伴' } });
-    fireEvent.change(screen.getByLabelText('bots.profile.summary'), {
-      target: { value: '负责项目资料整理' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
-
-    await waitFor(() => expect(mocks.addBotProfileAndWait).toHaveBeenCalledTimes(1));
-    expect(mocks.addBotProfileAndWait.mock.calls[0]?.[0]).toMatchObject({
-      name: '项目伙伴',
-      description: '负责项目资料整理',
-      avatar: '✦',
-      avatarColor: 'amber',
-      identitySource: expect.stringContaining('由用户自定义职责'),
-    });
-    expect(mocks.addBotProfileAndWait.mock.calls[0]?.[0]).not.toHaveProperty('templateId');
-  });
-
-  it('requests main-owned preparation instead of sending a generic greeting', async () => {
-    render(<BotRosterView />);
-    fireEvent.change(screen.getByLabelText('bots.nameLabel'), { target: { value: 'Ops buddy' } });
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
-
-    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/bots/bot-new'));
-    expect(mocks.addBotProfileAndWait.mock.calls[0]?.[0]).toMatchObject({
-      prepareInvitation: true,
-    });
-  });
-
-  it('keeps the unified form usable after a real create error', async () => {
-    mocks.addBotProfileAndWait.mockRejectedValue(new Error('offline'));
-    render(<BotRosterView />);
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
-
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('offline'));
-    expect(screen.getByLabelText('bots.nameLabel')).toBeTruthy();
-  });
-  it('previews a custom image without creating a profile, preserves the draft across roles, and submits the image bytes', async () => {
-    const { container } = render(<BotRosterView />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
-    fireEvent.change(screen.getByLabelText('bots.nameLabel'), { target: { value: 'Mika' } });
-    const image = new File(
-      [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10])],
-      'avatar.png',
-      { type: 'image/png' },
-    );
-    fireEvent.change(document.querySelector('input[type=file]')!, { target: { files: [image] } });
-    await waitFor(() => expect(document.querySelector('img[src^="data:image/png"]')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.openCindy' }));
+    expect(mocks.navigate).toHaveBeenCalledWith('/bots/old-cindy');
     expect(mocks.addBotProfileAndWait).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dash' } });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'custom' } });
-    expect((screen.getByLabelText('bots.nameLabel') as HTMLInputElement).value).toBe('Mika');
-    expect(document.querySelector('img[src^="data:image/png"]')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'bots.roster.create' }));
+  });
+
+  it('generates once, edits the displayed fields in place and submits the same draft', async () => {
+    render(<BotRosterView />);
+    fireEvent.change(screen.getByLabelText('bots.guided.question'), {
+      target: { value: 'An English partner' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.generate' }));
+    await screen.findByText('Mika');
+    expect(mocks.addBotProfileAndWait).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.editName' }));
+    expect(screen.queryByText('Mika')).toBeNull();
+    fireEvent.change(screen.getByLabelText('bots.nameLabel'), { target: { value: 'June' } });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.editIntroduction' }));
+    fireEvent.change(screen.getByLabelText('bots.guided.introduction'), {
+      target: { value: 'A patient partner' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.invite' }));
     await waitFor(() =>
       expect(mocks.addBotProfileAndWait).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: 'Mika',
-          avatarImageBase64: 'iVBORw0KGgo=',
+          name: 'June',
+          description: 'A patient partner',
+          creationDraftToken: 'draft-1',
+          avatarImageBase64: 'cG9ydHJhaXQ=',
         }),
       ),
     );
+    expect(mocks.addBotProfileAndWait.mock.lastCall?.[0]).not.toHaveProperty('welcomeMessage');
   });
 
-  it('leaves the draft alone when the picker is canceled and rejects unsupported or oversized files', async () => {
-    const { container } = render(<BotRosterView />);
-    const input = document.querySelector('input[type=file]')!;
-    fireEvent.change(input, { target: { files: [] } });
-    expect(screen.queryByRole('alert')).toBeNull();
-    for (const file of [
-      new File(['<svg/>'], 'avatar.svg', { type: 'image/svg+xml' }),
-      new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' }),
-    ]) {
-      fireEvent.change(input, { target: { files: [file] } });
-      expect(screen.getByRole('alert').textContent).toBe('bots.profile.avatarSelectionFailed');
-    }
-    expect(mocks.addBotProfileAndWait).not.toHaveBeenCalled();
-    expect(
-      (screen.getByRole('button', { name: 'bots.roster.create' }) as HTMLButtonElement).disabled,
-    ).toBe(false);
+  it('retains the profile and edited fields when a refinement fails', async () => {
+    render(<BotRosterView />);
+    fireEvent.change(screen.getByLabelText('bots.guided.question'), {
+      target: { value: 'An English partner' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.generate' }));
+    await screen.findByText('Mika');
+    mocks.generateDraft.mockRejectedValueOnce(new Error('offline'));
+    fireEvent.change(screen.getByLabelText('bots.guided.refine'), {
+      target: { value: 'More playful' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.refine' }));
+    await screen.findByRole('alert');
+    expect(screen.getByText('Mika')).toBeTruthy();
+    expect(mocks.generateDraft.mock.lastCall?.[0]).toMatchObject({
+      token: 'draft-1',
+      name: 'Mika',
+      prompt: 'More playful',
+    });
   });
 
   it('closes the creation dialog without creating a teammate', () => {

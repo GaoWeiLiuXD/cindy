@@ -7309,6 +7309,56 @@
       "thisDevice": "This computer",
       "offlineDescription": "{{name}} is offline. Reconnect {{device}} to continue.",
       "preparing": "Waiting for this teammate to get ready…"
+    },
+    "capabilities": {
+      "title": "Capabilities",
+      "search": "Search capabilities",
+      "loading": "Loading…",
+      "skill": "Skills",
+      "mcp": "MCP",
+      "toolset": "Built-in tools",
+      "unavailable": "Unavailable",
+      "empty": "No matching capabilities"
+    },
+    "guided": {
+      "title": "Create a teammate",
+      "reviewTitle": "Your new teammate",
+      "question": "Who would you like by your side?",
+      "placeholder": "For example, help me practice English through everyday conversation and thoughtful corrections.",
+      "generate": "Create teammate",
+      "generating": "Shaping your teammate…",
+      "generationFailed": "Could not generate your teammate. Your idea is still here; please try again.",
+      "cindyDescription": "I can help you use Cindy, connect your tools, and get things done together.",
+      "cindySummary": "Manage Cindy, connect tools, and get things done.",
+      "openCindy": "Open Cindy",
+      "addCindy": "Add Cindy",
+      "done": "Done",
+      "editName": "Edit name",
+      "duplicateName": "That name is taken. Choose a name you can easily tell apart.",
+      "introduction": "About me",
+      "editIntroduction": "Edit introduction",
+      "refine": "Adjust teammate",
+      "refinePlaceholder": "What would you change? For example, less formal and a little more playful.",
+      "back": "Back",
+      "invite": "Invite teammate",
+      "portrait": "Portrait {{number}}",
+      "upload": "Upload image",
+      "generateAvatar": "Generate portrait",
+      "useAvatar": "Use this portrait",
+      "examples": {
+        "english": {
+          "label": "Practice English",
+          "prompt": "Practice English with me through everyday conversation. Be patient and correct unnatural expressions thoughtfully."
+        },
+        "ideas": {
+          "label": "Explore ideas",
+          "prompt": "An imaginative creative partner with opinions, helping me develop writing and product ideas into practical plans."
+        },
+        "life": {
+          "label": "Talk about life",
+          "prompt": "A warm, funny companion who listens to the little things in my life without rushing to give advice."
+        }
+      }
     }
   },
   "common": {

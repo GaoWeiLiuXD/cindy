@@ -10,7 +10,7 @@ import { botProfiles, botProfileVersions } from '../localDb/schema.js';
 import { createLogger } from '../logger.js';
 import { getMaker } from '../maker-host/index.js';
 import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
-import { createMessage } from '../localDb/ipc/messages.js';
+import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { prepareBotInvitationAvatar, finishBotInvitationAvatar } from './botInvitationAvatar.js';
 import { botInvitationProgress, type BotInvitationProgress } from '../../shared/botInvitation.js';
 import {
@@ -43,6 +43,17 @@ interface Invitation extends BotInvitationProgress {
   draft?: BotInvitationDraft;
   avatarInvocationId?: string;
   avatarPrompt?: string;
+}
+
+type WelcomeDispatch = (input: {
+  targetSessionId: string;
+  message: string;
+  persistedContent: string;
+  clientId: string;
+}) => Promise<{ ok: boolean }>;
+let welcomeDispatch: WelcomeDispatch | undefined;
+export function setBotInvitationWelcomeDispatch(dispatch: WelcomeDispatch): void {
+  welcomeDispatch = dispatch;
 }
 
 const log = createLogger('botInvitation');
@@ -106,7 +117,8 @@ export function queueBotInvitation(
       (first.invitation.stage === 'failed' && !retry)
     )
       return;
-    const portraitOnly = first.invitation.stage === 'ready' ||
+    const portraitOnly =
+      first.invitation.stage === 'ready' ||
       (first.invitation.stage === 'avatar' && Boolean(first.profile.canonicalSessionId));
     const invitationId = first.invitation.id;
     const save = async (
@@ -258,12 +270,16 @@ export function queueBotInvitation(
         expectedProfileVersion: current.profile.currentVersion,
       });
       assertOwner();
-      await createMessage(canonical.canonicalSessionId, {
+      if (!welcomeDispatch) throw new Error('INVITATION_RUNTIME_UNAVAILABLE');
+      const message =
+        'The user has just invited you. Start with a brief, natural first message in your own voice, using your current identity and memory. If you have met before, acknowledge that naturally. Do not quote a prepared introduction, list your setup, or start unrelated work.';
+      const accepted = await welcomeDispatch({
+        targetSessionId: canonical.canonicalSessionId,
         clientId: `bot-welcome:${botId}`,
-        role: 'assistant',
-        content: draft?.greeting || first.profile.description || first.profile.displayName,
-        agentKind: null,
+        message,
+        persistedContent: `${UI_ACTION_TRIGGER_PREFIX}${message}`,
       });
+      if (!accepted.ok) throw new Error('INVITATION_WELCOME_NOT_ACCEPTED');
       assertOwner();
       // Draft skills are now real SKILL.md files; do not duplicate their bodies forever.
       await save({ stage: 'ready', draft: undefined });

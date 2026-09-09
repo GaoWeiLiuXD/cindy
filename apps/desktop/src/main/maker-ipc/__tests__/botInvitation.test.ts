@@ -29,7 +29,7 @@ vi.mock('../botInvitationAvatar.js', () => ({
   finishBotInvitationAvatar: h.finishAvatar,
 }));
 import { tx as runWorkerTx } from '../../localDb/worker/opHandlers/tx.js';
-import { queueBotInvitation as enqueueBotInvitation } from '../botInvitation.js';
+import { queueBotInvitation as enqueueBotInvitation, setBotInvitationWelcomeDispatch } from '../botInvitation.js';
 import { readBotSkill, seedBotSkillIfMissing } from '../botSkillStore.js';
 import { readBotProfileFolder } from '../botProfileFolder.js';
 import { parseBotInvitationDraft, botInvitationPrompt } from '../botInvitationDraft.js';
@@ -107,7 +107,8 @@ beforeEach(async () => {
     tx: async (name: string, args: unknown) => runWorkerTx(sqlite, { name, args }),
   };
   h.generate.mockResolvedValue({ ok: true, text: JSON.stringify(draft) });
-  h.welcome.mockResolvedValue({});
+  h.welcome.mockResolvedValue({ ok: true });
+  setBotInvitationWelcomeDispatch(h.welcome);
   h.prepareAvatar.mockResolvedValue(null);
 });
 afterEach(async () => {
@@ -131,9 +132,9 @@ describe('companion invitation with SQLite and real skill files', () => {
       draft.conversationStyle,
     );
     expect(h.welcome).toHaveBeenCalledWith(
-      'chat-1',
-      expect.objectContaining({ content: draft.greeting, clientId: 'bot-welcome:bot-1' }),
+      expect.objectContaining({ targetSessionId: 'chat-1', clientId: 'bot-welcome:bot-1', message: expect.stringContaining('current identity and memory') }),
     );
+    expect(h.welcome.mock.calls[0][0].persistedContent).not.toContain(draft.greeting);
     expect(state().draft).toBeUndefined();
     queueBotInvitation('bot-1');
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -171,7 +172,7 @@ describe('companion invitation with SQLite and real skill files', () => {
       expect(h.generate).not.toHaveBeenCalled();
       const folder = await readBotProfileFolder(h.root, 'bot-1');
       expect(folder.identitySource).toContain('性格与聊天习惯');
-      expect((await fs.readdir(path.join(h.root, 'bots', 'bot-1', 'skills'))).length).toBe(3);
+      expect((await fs.readdir(path.join(h.root, 'bots', 'bot-1', 'skills'))).length).toBe(templateId === 'cindy' ? 1 : 3);
     },
   );
 
@@ -259,6 +260,10 @@ describe('companion invitation with SQLite and real skill files', () => {
 });
 
 describe('generated character validation', () => {
+  it.each([{ skills: [] }, { skills: [draft.skills[0]] }])('accepts only the methods the character needs', ({ skills }) => {
+    const { greeting, ...withoutGreeting } = draft;
+    expect(parseBotInvitationDraft(JSON.stringify({ ...withoutGreeting, skills })).skills).toEqual(skills);
+  });
   it('keeps the sketch as quoted input and accepts a complete role-specific draft', () => {
     expect(botInvitationPrompt('阿橙', '一个热爱写网文的小说家', 'zh-CN')).toContain(
       JSON.stringify({ name: '阿橙', introduction: '一个热爱写网文的小说家' }),
@@ -268,7 +273,6 @@ describe('generated character validation', () => {
   it.each([
     { ...draft, skills: [{ ...draft.skills[0], slug: '../../other' }, draft.skills[1]] },
     { ...draft, skills: [draft.skills[0], draft.skills[0]] },
-    { ...draft, skills: [] },
     { ...draft, conversationStyle: '' },
   ])('rejects incomplete or unsafe drafts before installing anything', (value) => {
     expect(() => parseBotInvitationDraft(JSON.stringify(value))).toThrow();

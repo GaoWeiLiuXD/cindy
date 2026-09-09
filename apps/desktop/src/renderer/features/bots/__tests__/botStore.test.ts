@@ -241,6 +241,14 @@ describe('bot profile store', () => {
     }
   });
 
+  it('returns the original Cindy instead of cloning a renamed preset', async () => {
+    const cindy = addBotProfile({ name: 'Renamed assistant', description: '', templateId: 'cindy' });
+    createdIds.push(cindy.id);
+    const count = getBotProfiles().length;
+    expect(await duplicateBotProfile(cindy.id)).toBe(cindy);
+    expect(getBotProfiles()).toHaveLength(count);
+  });
+
   it('duplicates identity, capabilities, Skills, and appearance without copying chat ownership', async () => {
     const source = addBotProfile({
       name: 'Researcher',
@@ -303,9 +311,9 @@ describe('bot profile store', () => {
     }
   });
 
-  it('replaces the optimistic Bot with the authoritative profile returned by main', async () => {
-    const create = vi.fn(async (input: { id: string }) => ({
-      id: input.id,
+  it('replaces the optimistic Bot with the authoritative profile and stable ID returned by main', async () => {
+    const create = vi.fn(async (_input: { id: string }) => ({
+      id: 'existing-cindy',
       name: 'Hermes identity bot',
       description: 'Authoritative profile',
       identitySource: '# SOUL\nYou are the real Bot identity.',
@@ -347,6 +355,8 @@ describe('bot profile store', () => {
         templateId: 'lizi',
       });
       createdIds.push(bot.id);
+      expect(bot.id).toBe('existing-cindy');
+      expect(getBotProfiles().some(item => item.id === create.mock.calls[0]![0].id)).toBe(false);
       expect(bot).toMatchObject({
         name: 'Hermes identity bot',
         identitySource: '# SOUL\nYou are the real Bot identity.',
@@ -485,6 +495,24 @@ describe('保存失败只回滚自己那一行', () => {
         next(error);
       };
   }
+
+  it('forwards the editing baseline to Main without adding it to optimistic profile state', async () => {
+    const bot = addBotProfile({ name: 'Settings merge', description: '' });
+    createdIds.push(bot.id);
+    stubDeferredUpdates();
+    const update = vi.fn(async () => ({ ...bot, skills: ['external', 'local'], currentVersion: 3 }));
+    const api = (globalThis as unknown as { window: { electronAPI: { localDb: { bots: { update: unknown } } } } }).window.electronAPI.localDb.bots;
+    api.update = update;
+    const pending = updateBotProfile(bot.id, {
+      skills: ['local'], capabilityBaseline: { skills: [] },
+    });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      id: bot.id, skills: ['local'], capabilityBaseline: { skills: [] },
+    }));
+    expect(getBotProfiles().find((item) => item.id === bot.id)).not.toHaveProperty('capabilityBaseline');
+    await expect(pending).resolves.toMatchObject({ skills: ['external', 'local'] });
+    expect(getBotProfiles().find((item) => item.id === bot.id)).toMatchObject({ skills: ['external', 'local'] });
+  });
 
   it('另一个伙伴在同期保存的修改不被撤销', async () => {
     const failing = addBotProfile({ name: 'Failing', description: '' });
