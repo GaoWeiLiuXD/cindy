@@ -26,7 +26,7 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('Session close lifecycle', () => {
-  function liveTurn() {
+  function liveTurn(hostContinuation = true) {
     const queue = createAsyncQueue<AgentEvent>();
     let running = false;
     const handle = {
@@ -41,9 +41,47 @@ describe('Session close lifecycle', () => {
     const session = new Session({ id: 'pi-task', agentKind: 'pi', workDir: '/repo',
       handle, capabilities: {} as never, logger: createLogger(), turnStallMs: 0 });
     const seen: AgentEvent[] = [];
+    if (hostContinuation) session.setTurnLifecycleObserver({
+      beforeProviderStart() {}, onUndispatched() {},
+      onTerminal({ turnGeneration, event, isCurrentGeneration }) {
+        if (isCurrentGeneration && event.type === 'done' && (event.data as { silentStop?: boolean }).silentStop) {
+          session.claimHostTurnContinuation(turnGeneration);
+        }
+      },
+    });
     session.onEvent((event) => seen.push(event));
     return { session, handle, queue, seen, idle: () => { running = false; } };
   }
+
+  it('recycles unclaimed silent-stop terminals instead of inventing a Host owner', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn(false);
+    await session.send('work');
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(await session.closeIfIdle()).toBe(true);
+    expect(handle.close).toHaveBeenCalledOnce();
+    expect(handle.send).toHaveBeenCalledOnce();
+  });
+
+  it('publishes deferred retirement failure before listeners are cleared, retaining successful work', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    const close = vi.mocked(handle.close);
+    close.mockRejectedValueOnce(new Error('process exit unconfirmed'));
+    const recovery: AgentEvent = { type: 'text', source: 'pi', data: { text: 'partial: restart-cindy-to-refresh-packages' } };
+    await session.send('work');
+    await session.closeAfterCurrentTurn({ failureEvent: () => recovery });
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'saved result' } });
+    await vi.waitFor(() => expect(session.getStatus()).toBe('error'));
+    expect(seen.map(event => event.type)).toEqual(['done', 'text']);
+    expect(seen[0]?.data).toMatchObject({ status: 'completed', result: 'saved result' });
+    expect(seen[1]).toBe(recovery);
+    expect(handle.send).toHaveBeenCalledOnce();
+    await session.close();
+    expect(session.getStatus()).toBe('closed');
+    expect(close).toHaveBeenCalledTimes(2);
+  });
 
   it('keeps a failed tool caller alive until its reply and product terminal are consumed', async () => {
     const { session, handle, queue, seen, idle } = liveTurn();

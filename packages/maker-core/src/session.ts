@@ -1318,19 +1318,30 @@ export class Session {
   }
 
   /** Retire this runtime at its product terminal boundary, without replaying work. */
-  async closeAfterCurrentTurn(): Promise<'closed' | 'deferred'> {
+  async closeAfterCurrentTurn(opts?: { failureEvent?: () => AgentEvent }): Promise<'closed' | 'deferred'> {
     this.retirementRequested = true;
     if (this.hasUnsettledTurn() || this.sendReservation !== null
       || this.hostTurnLeases.size > 0
-      || this.retirementContinuationGeneration === this.turnGeneration) return 'deferred';
+      || this.retirementContinuationGeneration === this.turnGeneration) {
+      this.retirementFailureEvent ??= opts?.failureEvent;
+      return 'deferred';
+    }
     await this.close();
     return 'closed';
   }
 
   private retirementRequested = false;
   private retirementContinuationGeneration: number | null = null;
+  private retirementFailureEvent: (() => AgentEvent) | undefined;
 
-  /** The existing Host guard has declined/exhausted continuation for this turn. */
+  /** The Host has actually scheduled bounded continuation for this terminal. */
+  claimHostTurnContinuation(generation: number): void {
+    if (this.terminationStarted || generation !== this.turnGeneration
+      || this.terminalEventObservedGeneration !== generation) return;
+    this.retirementContinuationGeneration = generation;
+  }
+
+  /** The Host declined/exhausted continuation or released its observer ownership. */
   settleHostTurnContinuation(generation: number): void {
     if (generation !== this.turnGeneration || this.retirementContinuationGeneration !== generation) return;
     this.retirementContinuationGeneration = null;
@@ -1377,6 +1388,17 @@ export class Session {
       this.cancelSendReservation(this.sendReservation);
       await this.handle.close(teardown);
       closeSucceeded = true;
+    } catch (error) {
+      const failureEvent = this.retirementFailureEvent;
+      this.retirementFailureEvent = undefined;
+      if (failureEvent) {
+        // The provider queue is already fenced. Dispatch the Host's recovery
+        // receipt before clearing listeners, without changing a successful turn.
+        try { this.fanOutEvent(failureEvent()); } catch (notificationError) {
+          this.logger.warn('runtime retirement recovery receipt failed', { error: String(notificationError) });
+        }
+      }
+      throw error;
     } finally {
       this.sendReservation = null;
       this.unacceptedSendGeneration = null;
@@ -1998,6 +2020,7 @@ export class Session {
   }
 
   setTurnLifecycleObserver(observer: SessionTurnLifecycleObserver | null): void {
+    if (this.turnLifecycleObserver !== observer) this.settleHostTurnContinuation(this.turnGeneration);
     this.turnLifecycleObserver = observer;
   }
 
@@ -2523,7 +2546,7 @@ export class Session {
       this.rememberReservationWindowPriorTerminal(event, listenerEvent);
     }
     if (isCurrentGeneration && isTerminal && !isBackgroundEvent && !lateErrorAfterDoneSnapshot && !reservationWindowLeftover) {
-      this.retirementContinuationGeneration = this.isSilentStopDoneEvent(event) ? this.turnGeneration : null;
+      if (!this.isSilentStopDoneEvent(event)) this.retirementContinuationGeneration = null;
       this.clearTurnControl(resolvedGeneration);
     }
     const isLeftoverProductTerminal =
@@ -2583,9 +2606,9 @@ export class Session {
       this.currentTurnAttemptToken = null;
       // 终态之后不再计 stall 额度。
       this.clearTurnStallWatchdog();
-      // A silent-stop done hands continuation to the existing bounded Host
-      // guard. Do not destroy the executor before that guard can continue it.
-      if (!this.isSilentStopDoneEvent(event)) this.finishRetirementIfSettled();
+      // Only an actual Host claim keeps the executor available for bounded
+      // silent-stop continuation; an unowned terminal can retire normally.
+      this.finishRetirementIfSettled();
     } else if (isCurrentGeneration) {
       this.armTurnStallWatchdog();
     }

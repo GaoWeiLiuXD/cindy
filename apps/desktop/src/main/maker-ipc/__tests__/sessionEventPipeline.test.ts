@@ -381,6 +381,20 @@ function ordered(...names: string[]) {
 }
 
 describe('production Session event pipeline', () => {
+  it('persists and broadcasts a retirement recovery receipt after a successful product terminal', async () => {
+    const h = harness();
+    h.emit(event('done', { status: 'completed', result: 'saved' }, { source: 'pi' }));
+    const data = { isFinal: true, text: 'partial: restart-cindy-to-refresh-packages' };
+    effects.fn('onAssistantTextEvent').mockClear();
+    effects.fn('broadcast').mockClear();
+    h.emit(event('text', data, { source: 'pi' }));
+    expect(effects.fn('onAssistantTextEvent')).toHaveBeenCalledWith('task', data, null);
+    expect(effects.fn('broadcast')).toHaveBeenCalled();
+    expect(h.activity.isSessionInTurn('task')).toBe(false);
+    expect(h.handle.send).not.toHaveBeenCalled();
+    await h.dispose();
+  });
+
   it('keeps continuation segments running, then seals the final product boundary', async () => {
     const h = harness();
     vi.setSystemTime(1000);
@@ -789,6 +803,36 @@ describe('provider turn observer on real Session.send', () => {
     );
     await h.dispose();
   });
+  it.each(['local', 'remote', 'unowned'] as const)('holds idle closure only for a scheduled Host continuation: %s', async (owner) => {
+    const terminal = deferred(), closed = deferred(), deps = observerDeps();
+    const log = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+    const handle = {
+      id: 'provider', agentKind: 'pi', model: 'test-model',
+      send: vi.fn(async () => {}), close: vi.fn(async () => { closed.resolve(); }),
+      isTurnRunning: () => false, setInteractionResolver() {},
+      async *events() {
+        await terminal.promise;
+        yield { type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } } as AgentEvent;
+        await closed.promise;
+      },
+    } as unknown as AgentSessionHandle;
+    const session = new Session({ id: 'task', agentKind: 'pi', workDir: '/unused', handle,
+      capabilities: {} as never, logger: log, turnStallMs: 0 });
+    if (owner === 'remote') Object.defineProperty(session, 'remoteHostId', { value: 'ssh-host' });
+    const dispose = owner === 'unowned' ? () => {} : installSessionTurnObserver(deps, session);
+    const seen: AgentEvent[] = [];
+    session.onEvent(event => seen.push(event));
+    await session.send('work');
+    terminal.resolve();
+    await vi.waitFor(() => expect(seen.some(event => event.type === 'done')).toBe(true));
+    expect(deps.silentStopTurnLeaseGate.schedule).toHaveBeenCalledTimes(owner === 'local' ? 1 : 0);
+    expect(await session.closeIfIdle()).toBe(owner !== 'local');
+    dispose();
+    if (owner === 'local') expect(await session.closeIfIdle()).toBe(true);
+    expect(handle.close).toHaveBeenCalledOnce();
+    expect(handle.send).toHaveBeenCalledOnce();
+  });
+
   it('leaves remote provider admission and leases to the remote host', async () => {
     const h = harness(),
       deps = observerDeps();

@@ -656,7 +656,14 @@ async function notifyPiManagedPackageMutationSettled(
     return;
   }
   try {
-    await callback(callerSessionId, publishOutcome);
+    await callback(callerSessionId, publishOutcome, () => ({
+      type: 'text', source: 'pi', data: {
+        text: piManagedPackageRuntimeConvergenceReceipt({
+          runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages',
+        }),
+        isFinal: true,
+      },
+    }));
   } catch {
     // Native success remains authoritative. Expose only a stable recovery
     // outcome; raw host/session errors stay out of logs and receipts.

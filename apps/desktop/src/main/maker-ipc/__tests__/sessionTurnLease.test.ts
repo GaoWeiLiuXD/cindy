@@ -338,6 +338,10 @@ describe('shared-process session turn lease', () => {
     const runtime = new Session({ id: 'source-1', agentKind: 'pi', workDir: '/repo', handle,
       capabilities: {} as never, logger, turnStallMs: 0 });
     const seen: AgentEvent[] = [];
+    runtime.setTurnLifecycleObserver({
+      beforeProviderStart() {}, onUndispatched() {},
+      onTerminal({ turnGeneration }) { runtime.claimHostTurnContinuation(turnGeneration); },
+    });
     runtime.onEvent(event => seen.push(event));
     await runtime.send('work');
     const generation = runtime.getTurnGeneration();

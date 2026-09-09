@@ -708,7 +708,12 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
       if (outcome === 'native-failure') throw new PiManagedPackageMutationFailedError(true, 'native-command-failed');
       return { changed: true, affectedPackage: { source: 'self', enabled: true } };
     });
-    deps.onPiManagedPackageMutationSettled = vi.fn(async (_id, publish) => {
+    deps.onPiManagedPackageMutationSettled = vi.fn(async (_id, publish, createFailureEvent) => {
+      const failure = createFailureEvent();
+      expect(failure).not.toBe(createFailureEvent());
+      expect(failure).toMatchObject({ type: 'text', source: 'pi', data: {
+        isFinal: true, text: expect.stringContaining('restart-cindy-to-refresh-packages'),
+      } });
       const result = await session.closeAfterCurrentTurn();
       convergenceReceipt = publish({ runtimeConvergence: result === 'deferred' ? 'deferred' : 'complete' });
     });

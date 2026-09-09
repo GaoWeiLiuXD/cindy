@@ -73,12 +73,12 @@ describe('Pi package runtime invalidation', () => {
       listActiveSessions: () => [caller.instance, idle.instance],
       getSessionMeta: vi.fn(async (id: string) => ({ id, agentKind: 'pi' as const, workDir: '/repo',
         model: 'm', title: id, createdAt: 1, updatedAt: 1 })),
-      closeSessionIfCurrent: async (instance) => {
+      closeSessionIfCurrent: async (instance, _reason, opts) => {
         if (instance === idle.instance) {
           await closing.promise;
           if (fails) throw new Error('idle process exit unconfirmed');
         }
-        return instance.closeAfterCurrentTurn();
+        return instance.closeAfterCurrentTurn(opts);
       },
     };
     await caller.instance.send('update');
@@ -136,7 +136,7 @@ describe('Pi package runtime invalidation', () => {
       getSessionMeta: vi.fn(async (id: string) => ({ id, agentKind: 'pi' as const, workDir: '/repo',
         model: 'm', title: id, createdAt: 1, updatedAt: 1 })),
       closeSessionIfCurrent: async (instance, _reason, opts) => opts?.afterCurrentTurn
-        ? instance.closeAfterCurrentTurn() : (await instance.close(), 'closed'),
+        ? instance.closeAfterCurrentTurn(opts) : (await instance.close(), 'closed'),
     };
     await caller.instance.send('update and continue');
     await sibling.instance.send('build');
@@ -155,6 +155,37 @@ describe('Pi package runtime invalidation', () => {
     expect(sibling.seen.at(-1)?.data).toMatchObject({ result: 'build finished' });
     expect(caller.handle.send).toHaveBeenCalledOnce();
     expect(sibling.handle.send).toHaveBeenCalledOnce();
+  });
+
+  it('delivers a deferred sibling failure after the caller has closed, without replay', async () => {
+    const caller = live('caller');
+    const sibling = live('sibling');
+    sibling.close.mockRejectedValueOnce(new Error('exit unconfirmed'));
+    const maker: InvalidationMaker = {
+      advanceLocalPiPackageRuntimeGeneration: vi.fn(),
+      listActiveSessions: () => [caller.instance, sibling.instance],
+      getSessionMeta: vi.fn(async (id: string) => ({ id, agentKind: 'pi' as const, workDir: '/repo',
+        model: 'm', title: id, createdAt: 1, updatedAt: 1 })),
+      closeSessionIfCurrent: async (instance, _reason, opts) => instance.closeAfterCurrentTurn(opts),
+    };
+    await caller.instance.send('update');
+    await sibling.instance.send('build');
+    const snapshot = await captureLocalPiPackageRuntimeInvalidationSnapshot(maker);
+    expect(await settleLocalPiPackageRuntimeSnapshot(maker, snapshot, undefined, undefined,
+      () => ({ type: 'text', source: 'pi', data: { isFinal: true, text: 'partial: restart-cindy-to-refresh-packages' } }))).toEqual({ runtimeConvergence: 'deferred' });
+    caller.finish('update completed');
+    await vi.waitFor(() => expect(caller.instance.getStatus()).toBe('closed'));
+    sibling.finish('build saved');
+    await vi.waitFor(() => expect(sibling.instance.getStatus()).toBe('error'));
+    expect(sibling.seen.map(event => event.type)).toEqual(['text', 'done', 'text']);
+    expect(sibling.seen[1].data).toMatchObject({ status: 'completed', result: 'build saved' });
+    expect(sibling.seen[2].data).toMatchObject({ text: expect.stringContaining('restart-cindy-to-refresh-packages') });
+    expect(sibling.seen[2].data).toMatchObject({ isFinal: true, text: expect.stringContaining('partial') });
+    expect(caller.seen.map(event => event.type)).toEqual(['text', 'done']);
+    expect(caller.handle.send).toHaveBeenCalledOnce();
+    expect(sibling.handle.send).toHaveBeenCalledOnce();
+    await sibling.instance.close();
+    expect(sibling.close).toHaveBeenCalledTimes(2);
   });
 
   it('replaces local ordinary Pi runtimes only', async () => {

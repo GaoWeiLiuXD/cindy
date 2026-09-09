@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -95,9 +96,11 @@ describe('Pi long tool lifecycle through real stdio RPC', () => {
     // Only terminate the descendant created and reported by this fixture.
     if (descendantPid) {
       try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already exited */ }
+      // kill() requests termination; Windows may still hold the fixture cwd.
+      await vi.waitFor(() => expect(() => process.kill(descendantPid!, 0)).toThrow(), { timeout: 5_000 });
     }
     await session?.close();
-    if (root) rmSync(root, { recursive: true, force: true });
+    if (root) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     session = undefined;
     descendantPid = undefined;
     fixture.transport = null;

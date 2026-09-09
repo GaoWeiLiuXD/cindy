@@ -661,10 +661,13 @@ export interface AgentDeps {
    * Native package success remains authoritative; deferred is not a failure.
    * publishOutcome returns the exact queued event so the Host can retain its
    * caller lease until Session dispatches that receipt (not a persistence ACK).
+   * The event factory supplies a fresh complete receipt for eventual retirement
+   * failure, without writing into the possibly closed caller queue.
    */
   onPiManagedPackageMutationSettled?: (
     callerSessionId: string | undefined,
     publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
+    createRetirementFailureEvent: () => AgentEvent,
   ) => Promise<void>;
 
   /**

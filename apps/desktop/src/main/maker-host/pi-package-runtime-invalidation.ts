@@ -69,7 +69,7 @@ export async function captureLocalPiPackageRuntimeInvalidationSnapshot(
 export async function invalidateLocalPiPackageRuntimeSnapshot(
   maker: InvalidationMaker,
   snapshot: PiPackageRuntimeInvalidationSnapshot,
-  opts?: { afterCurrentTurn?: boolean },
+  opts?: { afterCurrentTurn?: boolean; failureEvent?: () => AgentEvent },
 ): Promise<PiPackageRuntimeInvalidationResult> {
   const eligible = snapshot.entries.filter((entry) => entry.eligible);
   const requestedSessionIds = eligible.map(({ session }) => session.id);
@@ -102,11 +102,14 @@ export async function settleLocalPiPackageRuntimeSnapshot(
   snapshot: PiPackageRuntimeInvalidationSnapshot,
   callerSessionId?: string,
   publishOutcome?: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
+  createRetirementFailureEvent?: () => AgentEvent,
 ): Promise<PiManagedPackageRuntimeConvergence> {
   const caller = snapshot.entries.find(({ session }) => session.id === callerSessionId)?.session;
   const release = publishOutcome ? caller?.acquireTurnLease() : undefined;
   try {
-    const result = await invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot, { afterCurrentTurn: true });
+    const result = await invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot, {
+      afterCurrentTurn: true, failureEvent: createRetirementFailureEvent,
+    });
     const outcome: PiManagedPackageRuntimeConvergence = result.failedSessionIds.length > 0
       || (callerSessionId && !snapshot.entries.some(({ session, eligible }) => eligible && session.id === callerSessionId))
       ? { runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages' }

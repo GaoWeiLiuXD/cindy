@@ -2045,7 +2045,7 @@ export function getMaker(): Maker {
           pendingPiPackageRuntimeSnapshots.push(snapshot);
         }
       },
-      onPiManagedPackageMutationSettled: async (callerSessionId, publishOutcome) => {
+      onPiManagedPackageMutationSettled: async (callerSessionId, publishOutcome, createRetirementFailureEvent) => {
         const partial = () => publishOutcome({
           runtimeConvergence: 'partial',
           recoveryAction: 'restart-cindy-to-refresh-packages',
@@ -2058,7 +2058,7 @@ export function getMaker(): Maker {
         }
         // The receipt has been sent, not necessarily consumed by Pi. Keep the
         // caller and busy siblings alive until their owned turn settles.
-        await settleLocalPiPackageRuntimeSnapshot(maker, snapshot, callerSessionId, publishOutcome);
+        await settleLocalPiPackageRuntimeSnapshot(maker, snapshot, callerSessionId, publishOutcome, createRetirementFailureEvent);
       },
       getGhostRosterPrompt,
       // 仅为命中视觉桥目标的 Pi 模型注册 Layer C 工具。

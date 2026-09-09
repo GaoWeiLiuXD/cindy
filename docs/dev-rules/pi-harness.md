@@ -233,7 +233,10 @@ Full access 读/搜/bash 与原生对齐的需求正本见 [`pi-full-access-nati
   调用者的现有 Host lease 必须覆盖兄弟关闭结果汇总及准确收敛回执的 Session 分发；
   不能把回执入队当作已分发。交付等待有界，显式关闭仍可结束旧实例。
   Host 已放弃续跑时，即使 turn lease 记账失败，也应按原实例与 generation 释放退役等待；
-  记账失败仍不得据此派发后续工作或重放副作用。
+  记账失败仍不得据此派发后续工作或重放副作用。只有 Host 实际登记续跑的 generation
+  才能阻止空闲关闭；远端／无 observer 接管的 silent-stop 不得凭终态自行占有续跑门。
+  延迟退役的实际关闭若失败，应在该实例的监听器清理前补发 `partial` 与
+  `restart-cindy-to-refresh-packages` 恢复回执；不改判此前成功结果，不自动重放工作。
 - 设置页明确要求停用／移除的即时失效路径仍可关闭运行时；Session 必须在清除监听器和
   当前 turn 归属前给未结算工作发明确失败。用户 Stop 则保持取消，不触发重放。
 - provider idle、进程退出、事件流结束都不是成功证明。Session 用已有 turn generation／
