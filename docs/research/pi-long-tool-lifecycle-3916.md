@@ -2,8 +2,9 @@
 
 本报告保留独立 transport 工作（初始提交 `d8bd012f1`、PR #4182 及后续审查）的
 取证与验证范围。#4182 已合入主干；统一 Pi 生命周期 P0 PR #4186 同步保留其
-退出确认加固，组合验证以 #4186 正文为准。P0 同时修复下文记录的
-`maker.shutdown.test.ts` 泛型 resolver 类型错误，不把它归因于 transport。
+退出确认加固，组合验证以 #4186 正文为准。P0 早期提交修复过下文记录的
+`maker.shutdown.test.ts` 泛型 resolver 类型错误；同步 #4178 后采用主干的
+`Promise<void>` 夹具，当前该文件相对主干无差异，不把基线类型错误归因于 transport。
 下文的「本单」及独立验证结果指该 transport 工作，不代表组合 P0 PR 的全部改动。
 
 ## 结论与范围
@@ -97,8 +98,9 @@ lizi-mcps、maker-core related 与 orca-workflow 的无模型单测均通过。�
 独立 transport 取证时，额外 `tsc --noEmit` 发现 `maker.shutdown.test.ts:91` 的
 `TS2322`：泛型 resolve 的可选参数签名与 Promise resolver 不匹配。以 CompilerHost
 从当时 Git HEAD 读取所有已改文件、排除新增 fixture 后，原基线复现同一个错误；
-独立提交 `d8bd012f1` 未修改该文件。组合 P0 PR #4186 已修改该文件的 resolver 签名，
-并通过 `pnpm --filter @cindy/maker-core run build`（`tsc --noEmit`）。该包没有
+独立提交 `d8bd012f1` 未修改该文件。组合 P0 PR #4186 早期修复过 resolver 签名，
+后续同步 #4178 时采用主干的 `Promise<void>` 夹具，当前该文件不再属于 PR diff。早期修复
+通过 `pnpm --filter @cindy/maker-core run build`（`tsc --noEmit`）。该包没有
 `typecheck` script，规定的 `run --if-present typecheck` 跳过；类型通过的证据来自
 上述实际执行的 build，不来自跳过的命令。
 
