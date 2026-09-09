@@ -642,12 +642,14 @@ const DEFAULT_PI_EXTENSION_UI_STRINGS: PiExtensionUiStrings = {
 async function notifyPiManagedPackageMutationSettled(
   deps: AgentDeps,
   callerSessionId: string | undefined,
-  publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => void,
+  publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
 ): Promise<void> {
-  const partial = (): void => publishOutcome({
-    runtimeConvergence: 'partial',
-    recoveryAction: 'restart-cindy-to-refresh-packages',
-  });
+  const partial = (): void => {
+    publishOutcome({
+      runtimeConvergence: 'partial',
+      recoveryAction: 'restart-cindy-to-refresh-packages',
+    });
+  };
   const callback = deps.onPiManagedPackageMutationSettled;
   if (!callback) {
     partial();
@@ -4711,11 +4713,13 @@ export class PiAgent extends BaseAgent {
                 if (activeExtensionCommandNotifications) {
                   activeExtensionCommandNotifications.push(text);
                 }
-                queue.push({
+                const notification: AgentEvent = {
                   type: 'text',
                   data: { text, isFinal: false },
                   source: 'pi',
-                });
+                };
+                queue.push(notification);
+                return notification;
               },
               notifyUnsupportedExtensionUi: (method, reason) => {
                 const key = `${method}:${reason}`;
@@ -5058,11 +5062,13 @@ export class PiAgent extends BaseAgent {
           this.deps,
           opts.sessionId,
           (convergence) => {
-            queue.push({
+            const receipt: AgentEvent = {
               type: 'text',
               data: { text: piManagedPackageRuntimeConvergenceReceipt(convergence), isFinal: false },
               source: 'pi',
-            });
+            };
+            queue.push(receipt);
+            return receipt;
           },
         );
       }
@@ -7055,7 +7061,7 @@ export class PiAgent extends BaseAgent {
         action: 'launch' | 'terminate' | 'status',
         runId: string,
       ) => Promise<boolean>;
-      emitExtensionNotification: (message: string, event?: PiRpcEvent) => void;
+      emitExtensionNotification: (message: string, event?: PiRpcEvent) => AgentEvent;
       notifyUnsupportedExtensionUi: (method: string, reason: 'unsupported-ui' | 'timed-dialog') => void;
       /**
        * 把一张挂起的权限卡登记进会话级表,返回注销函数。档位切换 / 关闭会话时由

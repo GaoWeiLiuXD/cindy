@@ -230,6 +230,10 @@ Full access 读/搜/bash 与原生对齐的需求正本见 [`pi-full-access-nati
   关闭正在消费结果的调用者。包变更仍推进原有 generation 并捕获准确 runtime 实例；
   空闲实例退役，忙碌调用者和同一快照里的兄弟实例保留当前执行，产品终态送达后再退役。
   `runtimeConvergence=deferred` 表示旧快照暂时服务在途工作，不表示新包已经加载。
+  调用者的现有 Host lease 必须覆盖兄弟关闭结果汇总及准确收敛回执的 Session 分发；
+  不能把回执入队当作已分发。交付等待有界，显式关闭仍可结束旧实例。
+  Host 已放弃续跑时，即使 turn lease 记账失败，也应按原实例与 generation 释放退役等待；
+  记账失败仍不得据此派发后续工作或重放副作用。
 - 设置页明确要求停用／移除的即时失效路径仍可关闭运行时；Session 必须在清除监听器和
   当前 turn 归属前给未结算工作发明确失败。用户 Stop 则保持取消，不触发重放。
 - provider idle、进程退出、事件流结束都不是成功证明。Session 用已有 turn generation／

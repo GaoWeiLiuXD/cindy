@@ -659,10 +659,12 @@ export interface AgentDeps {
    * Desktop retires idle instances and defers busy captured instances until
    * their product turn settles. A sent receipt is not proof Pi consumed it.
    * Native package success remains authoritative; deferred is not a failure.
+   * publishOutcome returns the exact queued event so the Host can retain its
+   * caller lease until Session dispatches that receipt (not a persistence ACK).
    */
   onPiManagedPackageMutationSettled?: (
     callerSessionId: string | undefined,
-    publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => void,
+    publishOutcome: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
   ) => Promise<void>;
 
   /**

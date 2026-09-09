@@ -39,10 +39,14 @@ vi.mock('../transport.js', async (importOriginal) => {
             return process.stdout.end();
           }
           if (cmd.type === 'fixture_exit_with_descendant') {
-            const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
-              stdio: ['ignore', process.stdout, process.stderr], env: process.env
+            const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000); process.send("ready")'], {
+              // Windows needs detached to establish this fixture's orphan
+              // precondition. Keep inheriting both RPC pipes deliberately.
+              detached: true, windowsHide: true,
+              stdio: ['ignore', process.stdout, process.stderr, 'ipc'], env: process.env
             });
-            child.once('spawn', () => {
+            child.once('message', () => {
+              child.disconnect();
               output({ type: 'fixture_descendant', pid: child.pid });
               // Drain the fixture metadata before exiting, leaving both pipes
               // open in the descendant exactly as a shell/build child can.

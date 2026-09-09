@@ -1,4 +1,4 @@
-import type { Maker, Session, PiManagedPackageRuntimeConvergence } from '@cindy/maker-core';
+import type { AgentEvent, Maker, Session, PiManagedPackageRuntimeConvergence } from '@cindy/maker-core';
 
 import type { PiPackagesChangeOrigin } from './pi-package-store.js';
 
@@ -101,13 +101,50 @@ export async function settleLocalPiPackageRuntimeSnapshot(
   maker: InvalidationMaker,
   snapshot: PiPackageRuntimeInvalidationSnapshot,
   callerSessionId?: string,
+  publishOutcome?: (outcome: PiManagedPackageRuntimeConvergence) => AgentEvent,
 ): Promise<PiManagedPackageRuntimeConvergence> {
-  const result = await invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot, { afterCurrentTurn: true });
-  if (result.failedSessionIds.length > 0
-    || (callerSessionId && !snapshot.entries.some(({ session, eligible }) => eligible && session.id === callerSessionId))) return {
-    runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages',
-  };
-  return { runtimeConvergence: result.deferredSessionIds?.length ? 'deferred' : 'complete' };
+  const caller = snapshot.entries.find(({ session }) => session.id === callerSessionId)?.session;
+  const release = publishOutcome ? caller?.acquireTurnLease() : undefined;
+  try {
+    const result = await invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot, { afterCurrentTurn: true });
+    const outcome: PiManagedPackageRuntimeConvergence = result.failedSessionIds.length > 0
+      || (callerSessionId && !snapshot.entries.some(({ session, eligible }) => eligible && session.id === callerSessionId))
+      ? { runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages' }
+      : { runtimeConvergence: result.deferredSessionIds?.length ? 'deferred' : 'complete' };
+    if (publishOutcome && caller && caller.getStatus() !== 'closed') {
+      // Queue insertion is not delivery. Keep the exact caller's existing lease
+      // until Session fans out this receipt, even if its done arrived first.
+      await new Promise<void>((resolve, reject) => {
+        let receipt: AgentEvent | undefined;
+        const seen = new Set<AgentEvent>();
+        const unsubscribeEvent = caller.onEvent((event) => {
+          if (event === receipt) finish();
+          else if (!receipt) seen.add(event);
+        });
+        const unsubscribeStatus = caller.onStatusChange((status) => {
+          if (status === 'closed') finish(); // Explicit close must still win.
+        });
+        const timer = setTimeout(() => finish(new Error('Pi package convergence receipt delivery timed out')), 10_000);
+        function finish(error?: Error) {
+          clearTimeout(timer);
+          unsubscribeEvent();
+          unsubscribeStatus();
+          if (error) reject(error); else resolve();
+        }
+        try {
+          receipt = publishOutcome(outcome);
+          if (seen.has(receipt) || caller.getStatus() === 'closed') finish();
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    } else {
+      publishOutcome?.(outcome);
+    }
+    return outcome;
+  } finally {
+    release?.();
+  }
 }
 
 export async function invalidateLocalPiPackageRuntimes(

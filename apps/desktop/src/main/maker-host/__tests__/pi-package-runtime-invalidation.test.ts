@@ -29,40 +29,103 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function live(id: string, closeGate: Promise<void> = Promise.resolve()) {
+  const pending: AgentEvent[] = [];
+  let wake: (() => void) | undefined;
+  let running = false;
+  let ended = false;
+  const emit = (event: AgentEvent) => { pending.push(event); wake?.(); };
+  const close = vi.fn(async () => { await closeGate; ended = true; wake?.(); });
+  const handle = {
+    id, agentKind: 'pi', model: 'm', close,
+    send: vi.fn(async () => { running = true; }),
+    isTurnRunning: () => running,
+    setInteractionResolver() {},
+    async *events() {
+      while (!ended || pending.length) {
+        if (!pending.length) await new Promise<void>((resolve) => { wake = resolve; });
+        const event = pending.shift();
+        if (event) yield event;
+      }
+    },
+  } as unknown as AgentSessionHandle;
+  const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+  const instance = new Session({ id, agentKind: 'pi', workDir: '/repo', handle,
+    capabilities: {} as never, logger, turnStallMs: 0 });
+  const seen: AgentEvent[] = [];
+  instance.onEvent((event) => seen.push(event));
+  const finish = (result: string) => {
+    running = false;
+    emit({ type: 'text', source: 'pi', data: { text: result } });
+    emit({ type: 'done', source: 'pi', data: { status: 'completed', result } });
+  };
+  return { instance, handle, close, emit, seen, finish };
+}
+
 describe('Pi package runtime invalidation', () => {
-  it('keeps both busy caller and sibling alive, delivers their results, and retires each independently', async () => {
-    function live(id: string) {
-      const pending: AgentEvent[] = [];
-      let wake: (() => void) | undefined;
-      let running = false;
-      let ended = false;
-      const emit = (event: AgentEvent) => { pending.push(event); wake?.(); };
-      const close = vi.fn(async () => { ended = true; wake?.(); });
-      const handle = {
-        id, agentKind: 'pi', model: 'm', close,
-        send: vi.fn(async () => { running = true; }),
-        isTurnRunning: () => running,
-        setInteractionResolver() {},
-        async *events() {
-          while (!ended || pending.length) {
-            if (!pending.length) await new Promise<void>((resolve) => { wake = resolve; });
-            const event = pending.shift();
-            if (event) yield event;
-          }
-        },
-      } as unknown as AgentSessionHandle;
-      const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
-      const instance = new Session({ id, agentKind: 'pi', workDir: '/repo', handle,
-        capabilities: {} as never, logger, turnStallMs: 0 });
-      const seen: AgentEvent[] = [];
-      instance.onEvent((event) => seen.push(event));
-      const finish = (result: string) => {
-        running = false;
-        emit({ type: 'text', source: 'pi', data: { text: result } });
-        emit({ type: 'done', source: 'pi', data: { status: 'completed', result } });
-      };
-      return { instance, handle, close, emit, seen, finish };
+  it.each(['success', 'failure', 'close', 'timeout'] as const)('retains a finished caller through convergence delivery: %s', async (mode) => {
+    const fails = mode !== 'success';
+    const caller = live('caller');
+    const idle = live('idle');
+    const closing = deferred<void>();
+    const maker: InvalidationMaker = {
+      advanceLocalPiPackageRuntimeGeneration: vi.fn(),
+      listActiveSessions: () => [caller.instance, idle.instance],
+      getSessionMeta: vi.fn(async (id: string) => ({ id, agentKind: 'pi' as const, workDir: '/repo',
+        model: 'm', title: id, createdAt: 1, updatedAt: 1 })),
+      closeSessionIfCurrent: async (instance) => {
+        if (instance === idle.instance) {
+          await closing.promise;
+          if (fails) throw new Error('idle process exit unconfirmed');
+        }
+        return instance.closeAfterCurrentTurn();
+      },
+    };
+    await caller.instance.send('update');
+    const snapshot = await captureLocalPiPackageRuntimeInvalidationSnapshot(maker);
+    let receipt: AgentEvent | undefined;
+    const publish = vi.fn((outcome) => {
+      receipt = { type: 'text', source: 'pi', data: { text: JSON.stringify(outcome) } };
+      return receipt;
+    });
+    const settled = settleLocalPiPackageRuntimeSnapshot(maker, snapshot, 'caller', publish);
+    caller.finish('done before sibling close');
+    await vi.waitFor(() => expect(caller.seen.some(event => event.type === 'done')).toBe(true));
+    expect(caller.close).not.toHaveBeenCalled();
+    if (mode === 'timeout') vi.useFakeTimers();
+    closing.resolve();
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+    expect(caller.close).not.toHaveBeenCalled(); // Publishing alone is not delivery.
+    if (mode === 'timeout') {
+      try {
+        const rejected = expect(settled).rejects.toThrow('receipt delivery timed out');
+        await vi.advanceTimersByTimeAsync(10_000);
+        await rejected;
+        expect(caller.close).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+        await idle.instance.close();
+      }
+      return;
     }
+    if (mode === 'close') {
+      await caller.instance.close(); // Explicit user close wins over the delivery lease.
+      await expect(settled).resolves.toMatchObject({ runtimeConvergence: 'partial' });
+      expect(caller.handle.send).toHaveBeenCalledOnce();
+      await idle.instance.close();
+      return;
+    }
+    caller.emit(receipt!);
+    await expect(settled).resolves.toEqual(fails
+      ? { runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages' }
+      : { runtimeConvergence: 'deferred' });
+    await vi.waitFor(() => expect(caller.instance.getStatus()).toBe('closed'));
+    expect(caller.seen).toContain(receipt);
+    expect(caller.handle.send).toHaveBeenCalledOnce();
+    await idle.instance.close();
+  });
+
+  it('keeps both busy caller and sibling alive, delivers their results, and retires each independently', async () => {
     const caller = live('caller');
     const sibling = live('sibling');
     const idle = live('idle');

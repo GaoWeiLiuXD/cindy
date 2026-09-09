@@ -703,13 +703,14 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
   it.each(['success', 'native-failure'] as const)('consumes the %s package tool result and replies before Session retirement', async (outcome) => {
     const deps = buildDeps();
     let session!: Session;
+    let convergenceReceipt: import('../../../types/events.js').AgentEvent | undefined;
     deps.mutatePiManagedPackage = vi.fn(async () => {
       if (outcome === 'native-failure') throw new PiManagedPackageMutationFailedError(true, 'native-command-failed');
       return { changed: true, affectedPackage: { source: 'self', enabled: true } };
     });
     deps.onPiManagedPackageMutationSettled = vi.fn(async (_id, publish) => {
       const result = await session.closeAfterCurrentTurn();
-      publish({ runtimeConvergence: result === 'deferred' ? 'deferred' : 'complete' });
+      convergenceReceipt = publish({ runtimeConvergence: result === 'deferred' ? 'deferred' : 'complete' });
     });
     const agent = new PiAgent(deps);
     const handle = await agent.startSession({ sessionId: 'mutation-caller', workingDir: cwd, model: 'm' });
@@ -725,6 +726,7 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
       const response = await waitForResponse('mutation-result');
       expect(JSON.parse(String(response.value)).ok).toBe(outcome === 'success');
       await vi.waitFor(() => expect(deps.onPiManagedPackageMutationSettled).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(seen).toContain(convergenceReceipt));
       expect(captured.closed).toBe(false);
       expect(session.getStatus()).toBe('active');
       captured.onEvent?.({ type: 'tool_execution_end', toolCallId: 'mutation-result',
