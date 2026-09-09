@@ -738,6 +738,10 @@ export class Session {
       : message;
     this.logger.debug('send', summarizeUserMessage(msg));
     this.ensureActive();
+    if (this.retirementRequested && !this.hasUnsettledTurn()
+      && this.retirementContinuationGeneration !== this.turnGeneration) {
+      throw new Error(`Session ${this.id} is closing`);
+    }
     if (this.terminalErrorDrainGeneration !== null) {
       throw this.createSessionRunningError();
     }
@@ -1015,6 +1019,7 @@ export class Session {
       reservation.settle(
         turnDispatched ? 'accepted' : dispatchUnconfirmed ? 'unconfirmed' : 'undispatched',
       );
+      this.finishRetirementIfSettled();
     }
   }
 
@@ -1079,6 +1084,7 @@ export class Session {
   async abort(): Promise<void> {
     if (this.status === 'closed') return;
     if (this.status === 'error') return;
+    const abortGeneration = this.turnGeneration;
     this.cancelSendReservation(this.sendReservation);
     // 中断已在进行:不再计 stall 额度(下一个 turn 的 send 会重新起表)。
     this.clearTurnStallWatchdog();
@@ -1100,6 +1106,7 @@ export class Session {
       if (this.status === 'aborting') {
         this.setStatus('active');
       }
+      this.settleHostTurnContinuation(abortGeneration);
     }
   }
 
@@ -1297,8 +1304,52 @@ export class Session {
     if (this.status === 'closed') return Promise.resolve();
 
     this.terminationStarted = true;
-    this.closePromise = this.performClose(opts ?? { reason: 'navigation' });
-    return this.closePromise;
+    // Reserve before synchronous terminal listeners run, but begin transport
+    // shutdown now: a pending send must see its cancellation in this tick.
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const closing = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    this.closePromise = closing;
+    void this.performClose(opts ?? { reason: 'navigation' }).then(resolve, reject);
+    return closing;
+  }
+
+  /** Retire this runtime at its product terminal boundary, without replaying work. */
+  async closeAfterCurrentTurn(): Promise<'closed' | 'deferred'> {
+    this.retirementRequested = true;
+    if (this.hasUnsettledTurn() || this.sendReservation !== null
+      || this.hostTurnLeases.size > 0
+      || this.retirementContinuationGeneration === this.turnGeneration) return 'deferred';
+    await this.close();
+    return 'closed';
+  }
+
+  private retirementRequested = false;
+  private retirementContinuationGeneration: number | null = null;
+
+  /** The existing Host guard has declined/exhausted continuation for this turn. */
+  settleHostTurnContinuation(generation: number): void {
+    if (generation !== this.turnGeneration || this.retirementContinuationGeneration !== generation) return;
+    this.retirementContinuationGeneration = null;
+    this.finishRetirementIfSettled();
+  }
+
+  /** Provider idle/exit is not evidence that the product terminal was delivered. */
+  private hasUnsettledTurn(): boolean {
+    return this.turnControlState?.generation === this.turnGeneration
+      && this.terminalEventObservedGeneration !== this.turnGeneration;
+  }
+
+  private finishRetirementIfSettled(): void {
+    if (this.terminationStarted || !this.retirementRequested || this.hasUnsettledTurn()
+      || this.sendReservation !== null || this.hostTurnLeases.size > 0
+      || this.retirementContinuationGeneration === this.turnGeneration) return;
+    void this.close().catch((error) => {
+      this.logger.warn('runtime retirement close failed', { error: String(error) });
+    });
   }
 
   /**
@@ -1307,17 +1358,20 @@ export class Session {
    * and keeps the session open, or observes closePromise and is rejected.
    */
   closeIfIdle(): Promise<boolean> {
-    if (this.status !== 'active' || this.closePromise || this.isTurnRunning()) {
+    if (this.status !== 'active' || this.closePromise || this.isTurnRunning() || this.hasUnsettledTurn()
+      || this.retirementContinuationGeneration === this.turnGeneration) {
       return Promise.resolve(false);
     }
-    this.terminationStarted = true;
-    this.closePromise = this.performClose({ reason: 'navigation' });
-    return this.closePromise.then(() => true);
+    return this.close().then(() => true);
   }
 
   private async performClose(teardown: AgentSessionTeardownOptions): Promise<void> {
     let closeSucceeded = false;
     try {
+      // close() fences late provider events before entering here. Settle the
+      // owned product turn ourselves before listeners and its claim are lost.
+      // Never retry: tools may already have performed external side effects.
+      this.settleUnfinishedTurn('Session closed before the current turn delivered a terminal event');
       this.clearTurnStallWatchdog();
       this.clearTerminalErrorDrain();
       this.cancelSendReservation(this.sendReservation);
@@ -1340,6 +1394,17 @@ export class Session {
         this.closePromise = null;
         this.setStatus('error');
       }
+    }
+  }
+
+  private settleUnfinishedTurn(message: string): void {
+    if (!this.hasUnsettledTurn()) return;
+    if (this.abortRecoveryScheduledFor === this.turnGeneration) {
+      this.fanOutEvent({ type: 'done', data: { status: 'cancelled' }, source: this.agentKind });
+    } else {
+      this.fanOutEvent({ type: 'error', data: {
+        message, isTerminal: true, reason: 'session_event_loop_crashed',
+      }, source: this.agentKind });
     }
   }
 
@@ -1533,6 +1598,7 @@ export class Session {
       released = true;
       this.hostTurnLeases.delete(gate);
       resolveGate();
+      this.finishRetirementIfSettled();
     };
   }
 
@@ -1941,7 +2007,7 @@ export class Session {
     if (this.status === 'closed') {
       throw new Error(`Session ${this.id} is closed`);
     }
-    if (this.closePromise) {
+    if (this.closePromise || this.terminationStarted) {
       throw new Error(`Session ${this.id} is closing`);
     }
     if (this.status === 'error') {
@@ -2457,6 +2523,7 @@ export class Session {
       this.rememberReservationWindowPriorTerminal(event, listenerEvent);
     }
     if (isCurrentGeneration && isTerminal && !isBackgroundEvent && !lateErrorAfterDoneSnapshot && !reservationWindowLeftover) {
+      this.retirementContinuationGeneration = this.isSilentStopDoneEvent(event) ? this.turnGeneration : null;
       this.clearTurnControl(resolvedGeneration);
     }
     const isLeftoverProductTerminal =
@@ -2516,6 +2583,9 @@ export class Session {
       this.currentTurnAttemptToken = null;
       // 终态之后不再计 stall 额度。
       this.clearTurnStallWatchdog();
+      // A silent-stop done hands continuation to the existing bounded Host
+      // guard. Do not destroy the executor before that guard can continue it.
+      if (!this.isSilentStopDoneEvent(event)) this.finishRetirementIfSettled();
     } else if (isCurrentGeneration) {
       this.armTurnStallWatchdog();
     }
@@ -2570,7 +2640,7 @@ export class Session {
     if (this.turnStallMs <= 0) return;
     if (this.status !== 'active') return;
     if (this.closePromise) return;
-    if (!this.isTurnRunning()) return;
+    if (!this.isTurnRunning() && !this.hasUnsettledTurn()) return;
     if (this.pendingInteractions > 0) return;
     if (this.hasRunningBackgroundTasks()) return;
     this.turnStallRemainingMs = this.turnStallMs;
@@ -2641,7 +2711,7 @@ export class Session {
   private onTurnStallTimeout(): void {
     // 触发前复核:定时器排上队之后可能已经收到事件 / turn 已结束 / 冒出交互等待。
     if (this.status !== 'active' || this.closePromise) return;
-    if (!this.isTurnRunning()) return;
+    if (!this.isTurnRunning() && !this.hasUnsettledTurn()) return;
     if (this.pendingInteractions > 0) return;
     if (this.hasRunningBackgroundTasks()) return;
     const now = Date.now();
@@ -2754,7 +2824,7 @@ export class Session {
       });
       return;
     }
-    if (!this.isTurnRunning()) return; // abort 生效了,会话仍可用,什么都不做
+    if (!this.isTurnRunning() && !this.hasUnsettledTurn()) return;
     this.logger.error(
       'turn still running after abort — closing session so the next send can rebuild it',
       { trigger: ctx.trigger, graceMs: ctx.graceMs },
@@ -2813,7 +2883,7 @@ export class Session {
       this.logger.error('event loop crashed', { error: String(e) });
       if (this.closePromise || this.status === 'closed') return;
       // 先占住 closing gate，避免 terminal error listener 在死掉的 iterator 上重新 send。
-      this.closePromise = this.performClose({ reason: 'navigation' });
+      const closing = this.close();
       if (this.terminalEventObservedGeneration !== this.turnGeneration) {
         this.fanOutEvent({
           type: 'error',
@@ -2826,7 +2896,7 @@ export class Session {
         });
       }
       try {
-        await this.closePromise;
+        await closing;
       } catch (closeError) {
         this.logger.warn('event-loop crash handle close failed', { error: String(closeError) });
       }
@@ -2848,23 +2918,11 @@ export class Session {
     // 仅当当前 status 还是 'active' 时切 — 'closed' / 'error' 已经表达终态, 不覆盖。
     if (this.terminationStarted || this.status === 'closed' || this.status === 'error') return;
     const unfinishedTurn =
-      this.status === 'active' &&
-      this.isTurnRunning() &&
-      this.terminalEventObservedGeneration !== this.turnGeneration;
+      this.hasUnsettledTurn();
     this.logger.debug('event loop ended (handle dead), auto-closing session', { unfinishedTurn });
     this.terminationStarted = true;
     this.closePromise = Promise.resolve();
-    if (unfinishedTurn) {
-      this.fanOutEvent({
-        type: 'error',
-        data: {
-          message: 'Session event loop stopped unexpectedly without a terminal event',
-          isTerminal: true,
-          reason: 'session_event_loop_crashed',
-        },
-        source: this.agentKind,
-      });
-    }
+    this.settleUnfinishedTurn('Session event loop stopped unexpectedly without a terminal event');
     this.clearTurnStallWatchdog();
     this.cancelSendReservation(this.sendReservation);
     this.sendReservation = null;

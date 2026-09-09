@@ -1,4 +1,4 @@
-import type { Maker, Session } from '@cindy/maker-core';
+import { Session, type Maker, type AgentEvent, type AgentSessionHandle } from '@cindy/maker-core';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -6,6 +6,7 @@ import {
   invalidateLocalPiPackageRuntimeSnapshot,
   invalidateLocalPiPackageRuntimes,
   invalidateLocalPiPackageRuntimesForObservedChange,
+  settleLocalPiPackageRuntimeSnapshot,
 } from '../pi-package-runtime-invalidation.js';
 
 type InvalidationMaker = Pick<
@@ -29,6 +30,70 @@ function deferred<T>() {
 }
 
 describe('Pi package runtime invalidation', () => {
+  it('keeps both busy caller and sibling alive, delivers their results, and retires each independently', async () => {
+    function live(id: string) {
+      const pending: AgentEvent[] = [];
+      let wake: (() => void) | undefined;
+      let running = false;
+      let ended = false;
+      const emit = (event: AgentEvent) => { pending.push(event); wake?.(); };
+      const close = vi.fn(async () => { ended = true; wake?.(); });
+      const handle = {
+        id, agentKind: 'pi', model: 'm', close,
+        send: vi.fn(async () => { running = true; }),
+        isTurnRunning: () => running,
+        setInteractionResolver() {},
+        async *events() {
+          while (!ended || pending.length) {
+            if (!pending.length) await new Promise<void>((resolve) => { wake = resolve; });
+            const event = pending.shift();
+            if (event) yield event;
+          }
+        },
+      } as unknown as AgentSessionHandle;
+      const logger = { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this; } };
+      const instance = new Session({ id, agentKind: 'pi', workDir: '/repo', handle,
+        capabilities: {} as never, logger, turnStallMs: 0 });
+      const seen: AgentEvent[] = [];
+      instance.onEvent((event) => seen.push(event));
+      const finish = (result: string) => {
+        running = false;
+        emit({ type: 'text', source: 'pi', data: { text: result } });
+        emit({ type: 'done', source: 'pi', data: { status: 'completed', result } });
+      };
+      return { instance, handle, close, emit, seen, finish };
+    }
+    const caller = live('caller');
+    const sibling = live('sibling');
+    const idle = live('idle');
+    const instances = [caller, sibling, idle].map((entry) => entry.instance);
+    const maker: InvalidationMaker = {
+      advanceLocalPiPackageRuntimeGeneration: vi.fn(),
+      listActiveSessions: () => instances,
+      getSessionMeta: vi.fn(async (id: string) => ({ id, agentKind: 'pi' as const, workDir: '/repo',
+        model: 'm', title: id, createdAt: 1, updatedAt: 1 })),
+      closeSessionIfCurrent: async (instance, _reason, opts) => opts?.afterCurrentTurn
+        ? instance.closeAfterCurrentTurn() : (await instance.close(), 'closed'),
+    };
+    await caller.instance.send('update and continue');
+    await sibling.instance.send('build');
+    const snapshot = await captureLocalPiPackageRuntimeInvalidationSnapshot(maker);
+    caller.emit({ type: 'tool_result', source: 'pi', data: { toolUseId: 'update', isError: true } });
+    expect(await settleLocalPiPackageRuntimeSnapshot(maker, snapshot)).toEqual({ runtimeConvergence: 'deferred' });
+    expect(idle.close).toHaveBeenCalledOnce();
+    expect(caller.close).not.toHaveBeenCalled();
+    expect(sibling.close).not.toHaveBeenCalled();
+    caller.finish('update failed; here is the result');
+    await vi.waitFor(() => expect(caller.instance.getStatus()).toBe('closed'));
+    expect(caller.seen.map((event) => event.type)).toEqual(['tool_result', 'text', 'done']);
+    expect(sibling.close).not.toHaveBeenCalled();
+    sibling.finish('build finished');
+    await vi.waitFor(() => expect(sibling.instance.getStatus()).toBe('closed'));
+    expect(sibling.seen.at(-1)?.data).toMatchObject({ result: 'build finished' });
+    expect(caller.handle.send).toHaveBeenCalledOnce();
+    expect(sibling.handle.send).toHaveBeenCalledOnce();
+  });
+
   it('replaces local ordinary Pi runtimes only', async () => {
     const sessions = [
       session('local-pi', 'pi'),

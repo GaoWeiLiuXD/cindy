@@ -288,7 +288,7 @@ export function rollbackPiHostAbortRequest(
   if (ctx.hostAbortRequestTokens.size === 0) ctx.hostAbortRequestGeneration = null;
 }
 
-function isCurrentTurnHostAbortRequested(ctx: PiTranslateContext): boolean {
+export function isCurrentTurnHostAbortRequested(ctx: PiTranslateContext): boolean {
   return ctx.hostAbortRequestGeneration === ctx.turnGeneration
     && ctx.hostAbortRequestTokens.size > 0;
 }
@@ -543,6 +543,11 @@ function assistantTextOf(message: PiAssistantMessage): string {
   return parts.join('\n\n');
 }
 
+/** Pi's explicit request failure, distinct from a bare or Host-requested abort. */
+function isPiAbortedRequest(error: string): boolean {
+  return /^Request was aborted[.!]?$/i.test(error.trim());
+}
+
 function piAssistantErrorOf(rawError: string): PiPendingAssistantError {
   const signals = extractNonSecretErrorSignals(rawError);
   const redactedError = redactSensitiveText(rawError);
@@ -553,7 +558,7 @@ function piAssistantErrorOf(rawError: string): PiPendingAssistantError {
     ...(signals.usageLimit ? { usageLimit: true } : {}),
     ...(isContextOverflowErrorMessage(redactedError)
       ? { reason: CONTEXT_OVERFLOW_REASON }
-      : isStreamInterruptedErrorMessage(redactedError)
+      : isStreamInterruptedErrorMessage(redactedError) || isPiAbortedRequest(redactedError)
         ? { reason: UPSTREAM_STREAM_INTERRUPTED_REASON }
         : {}),
   };
@@ -566,6 +571,7 @@ function isPiTransientAssistantFailure(message: PiAssistantMessage): boolean {
   return errorMessage.length > 0 && (
     isNetworkishErrorMessage(errorMessage)
     || isStreamInterruptedErrorMessage(errorMessage)
+    || isPiAbortedRequest(errorMessage)
   );
 }
 

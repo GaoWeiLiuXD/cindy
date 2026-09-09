@@ -1,4 +1,4 @@
-import type { Maker, Session } from '@cindy/maker-core';
+import type { Maker, Session, PiManagedPackageRuntimeConvergence } from '@cindy/maker-core';
 
 import type { PiPackagesChangeOrigin } from './pi-package-store.js';
 
@@ -14,6 +14,7 @@ import type { PiPackagesChangeOrigin } from './pi-package-store.js';
 export interface PiPackageRuntimeInvalidationResult {
   requestedSessionIds: string[];
   failedSessionIds: string[];
+  deferredSessionIds?: string[];
 }
 
 type InvalidationMaker = Pick<
@@ -68,14 +69,22 @@ export async function captureLocalPiPackageRuntimeInvalidationSnapshot(
 export async function invalidateLocalPiPackageRuntimeSnapshot(
   maker: InvalidationMaker,
   snapshot: PiPackageRuntimeInvalidationSnapshot,
+  opts?: { afterCurrentTurn?: boolean },
 ): Promise<PiPackageRuntimeInvalidationResult> {
   const eligible = snapshot.entries.filter((entry) => entry.eligible);
   const requestedSessionIds = eligible.map(({ session }) => session.id);
   const outcomes = await Promise.allSettled(
-    eligible.map(({ session }) => maker.closeSessionIfCurrent(session, 'requested')),
+    eligible.map(({ session }) => opts?.afterCurrentTurn
+      ? maker.closeSessionIfCurrent(session, 'runtime-refresh', opts)
+      : maker.closeSessionIfCurrent(session, 'requested')),
   );
   return {
     requestedSessionIds,
+    ...(opts?.afterCurrentTurn ? {
+      deferredSessionIds: outcomes.flatMap((outcome, index) =>
+        outcome.status === 'fulfilled' && outcome.value === 'deferred'
+          ? [requestedSessionIds[index]!] : []),
+    } : {}),
     failedSessionIds: [
       ...snapshot.entries.flatMap(({ session, metadataFailed }) => (
         metadataFailed ? [session.id] : []
@@ -85,6 +94,20 @@ export async function invalidateLocalPiPackageRuntimeSnapshot(
       )),
     ],
   };
+}
+
+/** A tool receipt is not a consumed result: retain every in-flight caller/sibling. */
+export async function settleLocalPiPackageRuntimeSnapshot(
+  maker: InvalidationMaker,
+  snapshot: PiPackageRuntimeInvalidationSnapshot,
+  callerSessionId?: string,
+): Promise<PiManagedPackageRuntimeConvergence> {
+  const result = await invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot, { afterCurrentTurn: true });
+  if (result.failedSessionIds.length > 0
+    || (callerSessionId && !snapshot.entries.some(({ session, eligible }) => eligible && session.id === callerSessionId))) return {
+    runtimeConvergence: 'partial', recoveryAction: 'restart-cindy-to-refresh-packages',
+  };
+  return { runtimeConvergence: result.deferredSessionIds?.length ? 'deferred' : 'complete' };
 }
 
 export async function invalidateLocalPiPackageRuntimes(

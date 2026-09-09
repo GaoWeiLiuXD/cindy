@@ -224,6 +224,22 @@ Full access 读/搜/bash 与原生对齐的需求正本见 [`pi-full-access-nati
    dispose 未确认 runner 退出必须失败；Host 观察到的退出要能通过控制协议通知前台等待，不能只靠 status.json。
    Windows 上 SIGTERM 不得带 taskkill /F；前台若已读到终态必须先返回，不得被 Host 退出通知盖成失败。
 
+### 4.1 包变更与执行终态
+
+- 工具或原生包命令的回执写入队列、`extension_ui_response` 发出，只表示发送，不能据此
+  关闭正在消费结果的调用者。包变更仍推进原有 generation 并捕获准确 runtime 实例；
+  空闲实例退役，忙碌调用者和同一快照里的兄弟实例保留当前执行，产品终态送达后再退役。
+  `runtimeConvergence=deferred` 表示旧快照暂时服务在途工作，不表示新包已经加载。
+- 设置页明确要求停用／移除的即时失效路径仍可关闭运行时；Session 必须在清除监听器和
+  当前 turn 归属前给未结算工作发明确失败。用户 Stop 则保持取消，不触发重放。
+- provider idle、进程退出、事件流结束都不是成功证明。Session 用已有 turn generation／
+  control 判断未结算工作，保留缺终态时的有界 watchdog；已送达的成功终态不能被后续退出
+  改判成失败，provider continuation claim 也不能被当作最终结束。
+- Pi 的 `Request was aborted` 只在无当前 generation 的 Host Stop 时归入请求断流失败；
+  无错误正文的 bare abort 仍保持取消。复用既有错误收口及重试预算，不重放包命令或工具。
+- SDK 成功与正文入库／交付分开取证。只见 JSONL 成功但 SQLite 缺正文时，不能自动重跑
+  已成功的工作；应沿 RPC → translator → Session → persistence 查丢失边界。
+
 ## 5. 已交付(2026-07 里程碑)
 
 - redacted thinking 不再显示为空卡片;PI 会话图标(π);Auto-review 核心 + pi adapter + auto 档;

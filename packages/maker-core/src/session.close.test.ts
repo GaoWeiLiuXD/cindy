@@ -26,6 +26,164 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('Session close lifecycle', () => {
+  function liveTurn() {
+    const queue = createAsyncQueue<AgentEvent>();
+    let running = false;
+    const handle = {
+      id: 'pi-runtime', agentKind: 'pi', model: 'm',
+      send: vi.fn(async () => { running = true; }),
+      events: () => queue,
+      isTurnRunning: () => running,
+      close: vi.fn(async () => { running = false; queue.end(); }),
+      abort: vi.fn(async () => { running = false; }),
+      setInteractionResolver() {},
+    } as unknown as AgentSessionHandle;
+    const session = new Session({ id: 'pi-task', agentKind: 'pi', workDir: '/repo',
+      handle, capabilities: {} as never, logger: createLogger(), turnStallMs: 0 });
+    const seen: AgentEvent[] = [];
+    session.onEvent((event) => seen.push(event));
+    return { session, handle, queue, seen, idle: () => { running = false; } };
+  }
+
+  it('keeps a failed tool caller alive until its reply and product terminal are consumed', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('update and report', { turnAttemptToken: 7 });
+    queue.push({ type: 'tool_result', data: { toolUseId: 'update', isError: true }, source: 'pi' });
+    expect(await session.closeAfterCurrentTurn()).toBe('deferred');
+    expect(handle.close).not.toHaveBeenCalled();
+    idle(); // Pi can become idle before Session consumes its queued tail.
+    expect(await session.closeIfIdle()).toBe(false);
+    queue.push({ type: 'text', data: { text: 'The command failed; the task can continue.' }, source: 'pi' });
+    queue.push({ type: 'done', data: { status: 'completed' }, source: 'pi' });
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(seen.map((e) => e.type)).toEqual(['tool_result', 'text', 'done']);
+    expect(seen.at(-1)?.turnAttemptToken).toBe(7);
+    expect(handle.send).toHaveBeenCalledOnce();
+    expect(handle.close).toHaveBeenCalledOnce();
+  });
+
+  it.each(['requested-close', 'process-exit'] as const)('settles an owned idle-without-terminal turn on %s', async (cause) => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('perform a side effect', { turnAttemptToken: 8 });
+    idle();
+    if (cause === 'requested-close') await session.close();
+    else queue.end();
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ type: 'error', turnAttemptToken: 8,
+      data: { isTerminal: true, reason: 'session_event_loop_crashed' } });
+    expect(handle.send).toHaveBeenCalledOnce();
+  });
+
+  it('preserves Stop as cancellation when retirement races a missing terminal', async () => {
+    const { session, handle, seen } = liveTurn();
+    await session.send('work', { turnAttemptToken: 9 });
+    await session.closeAfterCurrentTurn();
+    await session.abort();
+    await session.close();
+    expect(seen).toEqual([expect.objectContaining({ type: 'done', turnAttemptToken: 9,
+      data: { status: 'cancelled' } })]);
+    expect(handle.send).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the executor available to the existing Host silent-stop continuation', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('work');
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(await session.closeAfterCurrentTurn()).toBe('deferred');
+    expect(await session.closeIfIdle()).toBe(false);
+    expect(handle.close).not.toHaveBeenCalled();
+    await session.send('continue'); // Host owns the existing bounded budget.
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'delivered' } });
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(handle.send).toHaveBeenCalledTimes(2);
+    expect(seen.at(-1)?.data).toMatchObject({ result: 'delivered' });
+  });
+
+  it('does not retire at a provider boundary with an outstanding continuation claim', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    handle.beginTurnContinuationWait = (id) => id === 4 ? 'awaiting' : null;
+    await session.send('work', { turnAttemptToken: 11 });
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', turnContinuationId: 4, data: {} });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(handle.close).not.toHaveBeenCalled();
+    expect(await session.closeAfterCurrentTurn()).toBe('deferred');
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'finished' } });
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(seen.at(-1)?.turnAttemptToken).toBe(11);
+  });
+
+  it('retires when the Host declines continuation, without replaying the completed tools', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('work');
+    const generation = session.getTurnGeneration();
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    session.settleHostTurnContinuation(generation);
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(handle.send).toHaveBeenCalledOnce();
+  });
+
+  it('retires on Stop while Host continuation is pending without starting another turn', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('work');
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await session.abort();
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(handle.send).toHaveBeenCalledOnce();
+    await expect(session.send('late continuation')).rejects.toThrow(/closed|closing/);
+  });
+
+  it('ignores a stale Host continuation settlement after a newer turn starts', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('work');
+    const generation = session.getTurnGeneration();
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await session.send('continue');
+    session.settleHostTurnContinuation(generation);
+    expect(handle.close).not.toHaveBeenCalled();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'done' } });
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+  });
+
+  it('reserves teardown before notifying a reentrant close listener', async () => {
+    const { session, handle } = liveTurn();
+    await session.send('work');
+    let reentrant: Promise<void> | undefined;
+    session.onEvent(() => { reentrant = session.close(); });
+    const closing = session.close();
+    expect(reentrant).toBe(closing);
+    await closing;
+    expect(handle.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not replace an already delivered success or expose late teardown events', async () => {
+    const { session, queue, seen, idle } = liveTurn();
+    await session.send('work');
+    idle();
+    queue.push({ type: 'done', data: { status: 'completed', result: 'delivered' }, source: 'pi' });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await session.close();
+    queue.push({ type: 'error', data: { isTerminal: true, message: 'late' }, source: 'pi' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ type: 'done', data: { result: 'delivered' } });
+  });
+
   it('closes an ambiguous transport before surfacing an unconfirmed dispatch', async () => {
     const eventLoop = createDeferred();
     const abortController = new AbortController();

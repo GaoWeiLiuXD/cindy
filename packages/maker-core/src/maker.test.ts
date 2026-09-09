@@ -1187,6 +1187,33 @@ describe('Maker session creation singleflight', () => {
 });
 
 describe('Maker session close events', () => {
+  it('defers retirement of only the captured runtime and ignores its stale identity after rebuild', async () => {
+    const queue = createAsyncQueue<AgentEvent>();
+    let running = false;
+    const handle = createHandle({ id: 'old-thread', agentKind: 'pi' });
+    handle.send = vi.fn(async () => { running = true; });
+    handle.isTurnRunning = () => running;
+    handle.events = () => queue;
+    const replacement = createHandle({ id: 'new-thread', agentKind: 'pi' });
+    replacement.close = vi.fn(replacement.close);
+    const start = vi.fn().mockResolvedValueOnce(handle).mockResolvedValue(replacement);
+    const maker = new Maker({ agents: { pi: createAgent(start, 'pi') }, storage: createStorage(), logger: createLogger() });
+    const opts = { id: 'retiring', agentKind: 'pi' as const, workingDir: '/repo', model: 'm' };
+    const old = await maker.createSession(opts);
+    await old.send('work');
+    expect(await maker.closeSessionIfCurrent(old, 'requested', { afterCurrentTurn: true })).toBe('deferred');
+    expect(maker.getSession(old.id)).toBe(old);
+    running = false;
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'done' } });
+    await vi.waitFor(() => expect(maker.getSession(old.id)).toBeUndefined());
+    const next = await maker.createSession(opts);
+    await maker.closeSessionIfCurrent(old, 'requested', { afterCurrentTurn: true });
+    expect(maker.getSession(next.id)).toBe(next);
+    expect(replacement.close).not.toHaveBeenCalled();
+    await next.close();
+    queue.end();
+  });
+
   it('preserves the explicit close reason and exact Session identity', async () => {
     const maker = new Maker({
       agents: {
