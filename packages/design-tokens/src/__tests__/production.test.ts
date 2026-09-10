@@ -88,8 +88,8 @@ describe("DS-8 production source", () => {
       ];
       writeFileSync(sourcePath, JSON.stringify(source));
       const changed = await buildProductionFiles(dir);
-      const colors = changed.find((f) =>
-        f.path.endsWith("themes/colors.ts"),
+      const colors = changed.find(
+        (f) => f.path === join(dir, "apps/desktop/src/renderer/themes/colors.ts"),
       )!.body;
       expect(colors).toContain('"light": "#1a334d"');
       expect(colors).toContain('"light": "var(--surface)"');
@@ -188,7 +188,7 @@ describe("DS-8 production source", () => {
     ).toBe(false);
   });
 
-  it("rejects illegal types, missing modes, reversed aliases, missing references, color overflow and disconnected CSS aliases", () => {
+  it("rejects illegal types, missing modes, reversed aliases, missing references, color overflow, disconnected CSS aliases and CSS aliases on runtime pixel bindings", () => {
     const source = loadSource();
     expect(() => validateProduction(source, bindings)).not.toThrow();
     const mutate = (
@@ -240,6 +240,20 @@ describe("DS-8 production source", () => {
     mutate((t) => {
       t["reference.foundations.text-13"].$value = { value: 1, unit: "rem" };
     }, /Runtime pixel binding/);
+    // A legal-looking CSS alias on a runtime pixel binding would make
+    // formatToken() emit `var(--…)`, whose parseFloat silently becomes NaN in
+    // token-mappings.ts (numeric/text/lineHeight) and appearance-tokens.ts
+    // (defaults). The generator must reject it instead.
+    mutate((t) => {
+      t["semantic.foundations.text-13"].$extensions = {
+        "com.cindy.desktop": { cssAlias: "font-size-13", wrapper: "var" },
+      };
+    }, /Runtime pixel binding cannot use a CSS alias/);
+    mutate((t) => {
+      t["semantic.foundations.app-ui-font-size"].$extensions = {
+        "com.cindy.desktop": { cssAlias: "app-ui-font-size", wrapper: "var" },
+      };
+    }, /Runtime pixel binding cannot use a CSS alias/);
     const badTheme = structuredClone(bindings);
     (badTheme.themes["default-dark.ts"] as { type: string }).type = "night";
     expect(() => validateProduction(source, badTheme)).toThrow(

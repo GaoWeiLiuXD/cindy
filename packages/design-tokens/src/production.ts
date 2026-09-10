@@ -223,9 +223,13 @@ export function validateProduction(
   }
   // These mappings enter the existing runtime scale calculation as numbers.
   // Other CSS dimensions may use rem, but dropping that unit here would turn
-  // (for example) 1rem into 1px after applyFontSettings runs.
+  // (for example) 1rem into 1px after applyFontSettings runs. Symbolic aliases
+  // must be rejected as well: formatToken() would emit `var(--…)`, and the
+  // parseFloat in generate.ts would silently bake NaN into the mappings.
   for (const family of ["numeric", "text", "lineHeight", "defaults"] as const) {
     for (const id of Object.values(bindings.foundations[family])) {
+      if (tokens[id].$extensions?.[EXTENSION]?.cssAlias)
+        throw new Error(`Runtime pixel binding cannot use a CSS alias: ${id}`);
       const value = referenceToken(id, tokens);
       if (
         value.$type !== "dimension" ||

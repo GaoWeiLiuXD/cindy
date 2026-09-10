@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { relative } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -47,7 +47,10 @@ describe('DS-3 · 分类登记', () => {
 
   it('生产生成结果与磁盘字节一致；fixture 仅用于独立分类预期', async () => {
     const files = await buildProductionFiles(repoRoot);
-    expect(files.some(file => file.path.endsWith('themes/colors.ts'))).toBe(true);
+    // Windows 上 buildProductionFiles 返回的分隔符是 `\`，期望路径必须用
+    // join 构造（跨平台路径宪法），不能写死 `/` 后缀。
+    const colorsPath = join(repoRoot, 'apps/desktop/src/renderer/themes/colors.ts');
+    expect(files.some(file => file.path === colorsPath)).toBe(true);
     for (const file of files) expect(readFileSync(file.path, 'utf8')).toBe(file.body);
   }, 30_000); // Real Terrazzo build; allow CPU contention with the workspace suite.
 
