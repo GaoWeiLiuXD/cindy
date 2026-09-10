@@ -12,9 +12,15 @@ vi.mock('@/hooks/useAgentCapabilities', () => ({
   evictDeviceCapabilities: vi.fn(),
   prefetchDeviceCapabilities: vi.fn(async () => {}),
 }));
-vi.mock('@/state/modelVisibilityPrefs', () => ({ migrateModelVisibilityDefaults: vi.fn() }));
+const visibility = vi.hoisted(() => ({ enabled: true, version: 0 }));
+vi.mock('@/state/modelVisibilityPrefs', () => ({
+  migrateModelVisibilityDefaults: vi.fn(),
+  isModelEnabled: () => visibility.enabled,
+  getModelVisibilityVersion: () => visibility.version,
+}));
 vi.mock('@/state/newMakerDraft', () => ({
   getDraft: () => ({ lastByVendor: { pi: {}, cc: {}, codex: {} } }),
+  getDraftForPreferenceSync: () => ({ vendor: 'cc', lastByVendor: { cc: { model: '' } }, fastModeByModel: {} }),
   getPersistedVendorModel: () => '',
 }));
 vi.mock('@/lib/modelDefinitions', () => ({
@@ -115,6 +121,15 @@ beforeEach(() => { vi.resetModules(); window.localStorage.clear(); });
 afterEach(() => cleanup());
 
 describe('live derived Bot defaults', () => {
+  beforeEach(() => { visibility.enabled = true; visibility.version = 0; });
+  it('expires a hydrated default after model toggles change without a catalog change', async () => {
+    const api = await setup();
+    visibility.enabled = false;
+    visibility.version += 1;
+    expect(api.store.getEffectiveBotModelChain()).toEqual([]);
+    expect(api.setModelChainSettings).not.toHaveBeenCalled();
+  });
+
   it('updates the mounted global editor after a connection change and saves effort on the new route', async () => {
     const api = await setup();
     expect(shownChain()).toEqual([gateway]);

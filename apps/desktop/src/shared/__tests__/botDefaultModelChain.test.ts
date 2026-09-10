@@ -28,6 +28,18 @@ function resolve(providers: ProviderView[], agents = availableAgents) {
 }
 
 describe('Bot reuses the client default model policy', () => {
+  it('skips factory Sol and every disabled harness when only Codex Luna is enabled', () => {
+    const providers = [provider('openai', 'codex', ['gpt-5.6-sol', 'gpt-5.6-luna'], true)];
+    const args = { providers, providersLoading: false, availableAgents, availableAgentsLoaded: true,
+      isModelEnabled: (agent: AgentKind, _provider: string, model: { id: string }) => agent === 'codex' && model.id === 'gpt-5.6-luna' };
+    expect(defaultBotModelChain(args).map(route => route.model)).toEqual(['gpt-5.6-luna']);
+    expect(resolveNewMakerDefaultTuple(args)?.model).toBe('gpt-5.6-luna');
+    expect(defaultBotModelChain({ ...args, isModelEnabled: () => false })).toEqual([]);
+    expect(defaultBotModelChain({ ...args, preferredRoute: {
+      harness: 'codex', providerId: 'openai', model: 'gpt-5.6-sol', effort: 'low', fastMode: false,
+    } }).map(route => route.model)).toEqual(['gpt-5.6-luna']);
+  });
+
   it('selects Codex and the same default as a normal new task without Gateway', () => {
     const providers = [provider('openai', 'codex', ['gpt-5.6-sol'], true)];
     const first = resolveNewMakerDefaultTuple({ providers, providersLoading: false,

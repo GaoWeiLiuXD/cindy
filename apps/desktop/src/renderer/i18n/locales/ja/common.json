@@ -7142,6 +7142,7 @@
     }
   },
   "bots": {
+    "creationName": "名前",
     "sidebar": {
       "newTaskWith": "{{name}}と新しいタスクを始める"
     },

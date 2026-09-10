@@ -1,3 +1,4 @@
+import { setModelVisibilityMirror } from '../../../maker-host/model-visibility-mirror';
 import Database from 'better-sqlite3';
 import type { ProviderView } from '@cindy/model-providers';
 import { createHash } from 'node:crypto';
@@ -78,6 +79,7 @@ const h = await vi.hoisted(async () => {
 });
 
 vi.mock('node:fs/promises', () => ({ default: { rm: h.remove } }));
+vi.mock('../../../maker-ipc/botDefaultProvisioning.js', () => ({ provisionDefaultBot: vi.fn(), markDefaultBotOffered: vi.fn() }));
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => h.userDataDir),
@@ -433,6 +435,7 @@ const capabilityDeps = {
 const { list: findBotCapabilities, select: selectBotCapability } = createBotCapabilityService(capabilityDeps);
 
 beforeEach(async () => {
+  setModelVisibilityMirror({}, { fallback: true });
   h.toolsetsAvailable = false;
   h.validateCapabilityAdditions.mockReset().mockResolvedValue(undefined);
   h.customMcpConfigs = [{ id: 'shared-docs', name: 'Shared Docs', transport: 'http', url: 'https://example.invalid/private', headers: { Authorization: 'FAKE_SECRET' } }];
@@ -472,6 +475,7 @@ beforeEach(async () => {
   await invoke('local-db:bots:create', {
     id: 'bot-1',
     name: 'Release Bot',
+    avatar: '🤖',
     capabilities: {
       harness: 'pi',
       model: 'grok-4.5',
@@ -610,18 +614,15 @@ describe('Bot canonical Session lifecycle', () => {
     expect(capabilities.mcpServers).toEqual([]);
   });
 
-  it('persists the first greeting and canonical task in the main-owned create path', async () => {
+  it('accepts a legacy welcome request without forging an assistant message', async () => {
     const created = await invoke('local-db:bots:create', {
       id: 'bot-welcome',
       name: 'Welcome Bot',
       welcomeMessage: '你好，我已经准备好了。',
     });
-    const sessionId = created.canonicalSessionId as string;
-    expect(sessionId).toBeTruthy();
-    expect(
-      h.sqlite!.prepare('SELECT role, content FROM messages WHERE session_id = ? AND client_id = ?')
-        .get(sessionId, 'bot-welcome:bot-welcome'),
-    ).toEqual({ role: 'assistant', content: '你好，我已经准备好了。' });
+    expect(created.invitation).toBeDefined();
+    expect(h.sqlite!.prepare('SELECT content FROM messages WHERE client_id = ?')
+      .get('bot-welcome:bot-welcome')).toBeUndefined();
   });
 
   it('does not project a created profile across an owner switch during the database write', async () => {
@@ -4341,4 +4342,28 @@ afterAll(() => {
   resetCustomMcpRegistry();
   h.sqlite?.close();
   rmSync(h.userDataDir, { recursive: true, force: true });
+});
+
+
+describe('Bot self control uses the same profile authority as settings', () => {
+  it('reads only its own state and patches requested fields without replacing independent configuration', async () => {
+    const canonical = await invoke('local-db:bots:create-canonical-session', { botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1 });
+    const sessionId = canonical.session.id;
+    const service = createBotCapabilityService(capabilityDeps);
+    const initial = await service.inspect({ callerSessionId: sessionId });
+    expect(initial.ok).toBe(true);
+    if (!initial.ok) throw new Error('Expected current Bot');
+    const before = await invoke('local-db:bots:get', 'bot-1');
+    expect(await service.updateProfile({ callerSessionId: sessionId,
+      expectedVersion: initial.state.profile.version, name: 'Renamed' })).toMatchObject({ ok: true, effective: 'next-turn' });
+    const after = await invoke('local-db:bots:get', 'bot-1');
+    expect(after.name).toBe('Renamed');
+    expect(after.capabilities).toEqual(before.capabilities);
+    expect(after.identitySource).toBe(before.identitySource);
+    expect(after.canonicalSessionId).toBe(before.canonicalSessionId);
+    expect(await service.updateProfile({ callerSessionId: sessionId,
+      expectedVersion: initial.state.profile.version, name: 'Stale' })).toMatchObject({ ok: false });
+    expect(await service.inspect({ callerSessionId: 'not-a-bot' })).toMatchObject({ ok: false });
+    expect((await invoke('local-db:bots:get', 'bot-1')).name).toBe('Renamed');
+  });
 });

@@ -17,6 +17,13 @@ function harness() {
 }
 
 describe('permanent Bot model selection', () => {
+  it('stops a send instead of retaining the old runtime model when no enabled default remains', async () => {
+    const h = harness();
+    h.state.chain = [];
+    await expect(h.reconcile('canonical')).rejects.toThrow('[PRECONDITION_FAILED]');
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(await h.reconcile.preview('canonical')).toBeNull();
+  });
   it('reads paused profiles only for previews and does not consume their pending model edits', async () => {
     const h = harness();
     let paused = true;

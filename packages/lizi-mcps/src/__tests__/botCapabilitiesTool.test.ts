@@ -82,3 +82,22 @@ describe('Bot capability tools', () => {
     expect(remote[1]?.description).toBe('join or leave');
   });
 });
+
+describe('Bot self control', () => {
+  it('binds profile updates to the current caller, validates patches, and preserves version conflicts', async () => {
+    const registry = new XdtHelperToolRegistry();
+    const updateProfile = vi.fn(async () => ({ ok: false as const, errorCode: 'BOT_PROFILE_UPDATE_FAILED', message: 'changed' }));
+    registerBotCapabilityTools(registry, {
+      getSessionContext: () => ({ sessionId: 'self', agentKind: 'pi', workingDir: '/w' }),
+      callbacks: { ...fixture().callbacks, updateProfile },
+    });
+    expect((await registry.call('update_bot_profile', { expectedVersion: 2, name: 'New name', botId: 'other' })).isError).toBe(true);
+    expect((await registry.call('update_bot_profile', { expectedVersion: 2, model: 'disabled' })).isError).toBe(true);
+    expect((await registry.call('update_bot_profile', { expectedVersion: 2 })).isError).toBe(true);
+    expect(updateProfile).not.toHaveBeenCalled();
+    const result = await registry.call('update_bot_profile', { expectedVersion: 2, description: '' });
+    expect(updateProfile).toHaveBeenCalledWith({ callerSessionId: 'self', expectedVersion: 2, description: '' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]).toMatchObject({ text: expect.stringContaining('BOT_PROFILE_UPDATE_FAILED') });
+  });
+});

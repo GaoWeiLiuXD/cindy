@@ -7142,6 +7142,7 @@
     }
   },
   "bots": {
+    "creationName": "이름",
     "sidebar": {
       "newTaskWith": "{{name}}와(과) 새 작업 시작"
     },

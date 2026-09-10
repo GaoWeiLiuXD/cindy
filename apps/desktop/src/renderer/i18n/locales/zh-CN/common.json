@@ -7142,6 +7142,7 @@
     }
   },
   "bots": {
+    "creationName": "名字",
     "sidebar": {
       "newTaskWith": "和{{name}}开个新任务"
     },

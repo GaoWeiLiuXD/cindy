@@ -1,3 +1,4 @@
+import type { BotControlState } from '@cindy/mcps';
 import { and, eq } from 'drizzle-orm';
 import { botProfiles, botProfileVersions, botSessionLinks, sessions } from '../localDb/schema.js';
 import { getDbClient } from '../localDb/client/current.js';
@@ -49,6 +50,9 @@ async function context(callerSessionId: string, opts?: { allowPaused?: boolean }
   const [row] = await db
     .select({
       botId: botProfiles.id,
+      displayName: botProfiles.displayName,
+      description: botProfiles.description,
+      identitySource: botProfileVersions.identitySource,
       version: botProfiles.currentVersion,
       profileStatus: botProfiles.status,
       canonicalSessionId: botProfiles.canonicalSessionId,
@@ -225,6 +229,45 @@ async function selectBotCapability(input: Input & { id: string; joined: boolean 
 /** Host callbacks are bound at initialization, without importing the host singleton. */
 export function createBotCapabilityService(deps: BotCapabilityServiceDeps) {
   return {
+    async inspect(input: { callerSessionId: string }) {
+      try {
+        const ctx = await context(input.callerSessionId);
+        const candidates = await readEffectiveBotModelChain(ctx.config);
+        ctx.assertOwner();
+        const state: BotControlState = {
+          profile: { id: ctx.botId, name: ctx.displayName, description: ctx.description,
+            identitySource: ctx.identitySource, version: ctx.version },
+          session: { id: input.callerSessionId, workingDir: ctx.workingDir, remoteHostId: ctx.remoteHostId },
+          model: { source: Array.isArray(ctx.config.modelChainOverride) && ctx.config.modelChainOverride.length > 0 ? 'override'
+            : ctx.config.modelChainOverride === null || ctx.config.modelOverride === null
+            || (!Array.isArray(ctx.config.modelChainOverride) && !Array.isArray(ctx.config.modelChain) && typeof ctx.config.model !== 'string') ? 'default' : 'override', candidates },
+          memory: { enabled: ctx.config.memory !== false, scope: 'self' },
+          references: { skills: strings(ctx.config.skills), mcpServers: strings(ctx.config.mcpServers),
+            toolsets: strings(ctx.config.toolsets) },
+        };
+        return { ok: true as const, state };
+      } catch {
+        return { ok: false as const, errorCode: 'BOT_STATE_UNAVAILABLE', message: '无法读取当前伙伴状态，请稍后重试' };
+      }
+    },
+    async updateProfile(input: { callerSessionId: string; expectedVersion: number;
+      name?: string; description?: string; identitySource?: string }) {
+      try {
+        const ctx = await context(input.callerSessionId);
+        if (ctx.version !== input.expectedVersion) throw new Error('Profile changed');
+        ctx.assertOwner();
+        await updateBotProfile({ id: ctx.botId,
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.identitySource !== undefined ? { identitySource: input.identitySource } : {}),
+        }, input.expectedVersion);
+        ctx.assertOwner();
+        return { ok: true as const, effective: 'next-turn' as const };
+      } catch {
+        return { ok: false as const, errorCode: 'BOT_PROFILE_UPDATE_FAILED',
+          message: '伙伴状态或资料已变化，请重新读取后重试' };
+      }
+    },
     /** Read the same metadata before a profile exists; this never joins or executes a capability. */
     async forCreation(input: { botId: string; workingDir: string; agentKind: AgentKind; assertOwner: () => void }) {
       const ctx = { ...input, remoteHostId: null, config: {} };

@@ -3,6 +3,8 @@
  * Bot profile 与 Session 归属只在这里写入 SQLite；renderer 只读取投影，
  * 不维护第二份资料或决定 canonical Session。
  */
+import { provisionDefaultBot } from '../../maker-ipc/botDefaultProvisioning.js';
+import { BOT_TEMPLATE_PRESET_AVATARS, BOT_TEMPLATE_PRESET_IDENTITIES } from '../../../shared/botTemplatePreset.js';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
@@ -96,7 +98,8 @@ const log = createLogger('bots');
 function queueBotInvitation(botId: string, retry = false): void {
   enqueueBotInvitation(
     botId,
-    { createCanonicalSession: createBotCanonicalSession, broadcastProfileChanged: broadcastBotProfileChanged },
+    { createCanonicalSession: createBotCanonicalSession, broadcastProfileChanged: broadcastBotProfileChanged,
+      canStartWelcome: async config => (await readEffectiveBotModelChain(config)).length > 0 },
     retry,
   );
 }
@@ -942,7 +945,7 @@ export async function createBotProfile(raw: unknown) {
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(id) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(id)) {
     throwIpcError('INVALID_PARAMS', 'Bot id must be a lowercase portable directory identifier');
   }
-  const requestedAvatar = readBotAvatar(body.avatar) || '🤖';
+  const requestedAvatar = readBotAvatar(body.avatar) || BOT_TEMPLATE_PRESET_AVATARS.dash;
   // Managed addresses must come from validated image bytes ingested below,
   // never from a renderer or model supplying a URL string alone.
   let avatar = portableBotAvatarOrFallback(requestedAvatar);
@@ -953,7 +956,8 @@ export async function createBotProfile(raw: unknown) {
   const skills = draftEntry ? draftEntry.draft.skillRefs : Array.isArray(body.skills)
     ? body.skills.filter((item): item is string => typeof item === 'string').slice(0, 100)
     : [];
-  const welcomeMessage = readText(body.welcomeMessage, 'welcomeMessage');
+  // Older clients may request a welcome; its supplied text is never an assistant message.
+  const prepareInvitation = body.prepareInvitation === true || Boolean(readText(body.welcomeMessage, 'welcomeMessage'));
   const hasRequestedCapabilities =
     body.capabilities && typeof body.capabilities === 'object' && !Array.isArray(body.capabilities);
   const requestedCapabilities = hasRequestedCapabilities
@@ -994,8 +998,8 @@ export async function createBotProfile(raw: unknown) {
   delete persistedCapabilities.invitation;
   delete persistedCapabilities.templateId;
   if (templateId) persistedCapabilities.templateId = templateId;
-  if (body.prepareInvitation === true) persistedCapabilities.invitation = {
-    id: randomUUID(), stage: draftEntry ? 'skills' : 'profile', locale: getResolvedMainLocale(),
+  if (prepareInvitation) persistedCapabilities.invitation = {
+    id: randomUUID(), stage: 'skills', locale: getResolvedMainLocale(),
     avatarRequested: body.generateAvatar === true && !avatarImage,
     ...(draftEntry ? { draft: { ...draftEntry.draft, background: `${draftEntry.draft.background}\n\nCurrent profile (use this name and introduction):\n${name}\n${description}` } } : {}),
   };
@@ -1048,7 +1052,7 @@ export async function createBotProfile(raw: unknown) {
     throw error;
   }
   assertCreationOwnerStillCurrent();
-  if (body.prepareInvitation === true) {
+  if (prepareInvitation) {
     const profile = await readProfile(client, id);
     broadcastBotProfileChanged({ botId: id, change: 'created' });
     queueBotInvitation(id);
@@ -1075,30 +1079,7 @@ export async function createBotProfile(raw: unknown) {
     }
     assertCreationOwnerStillCurrent();
   }
-  let profile = await readProfile(client, id);
-  if (welcomeMessage) {
-    try {
-      const canonical = await createBotCanonicalSession({
-        botId: id,
-        expectedCanonicalSessionId: null,
-        expectedProfileVersion: profile.currentVersion,
-      });
-      await createMessage(canonical.canonicalSessionId, {
-        clientId: `bot-welcome:${id}`,
-        role: 'assistant',
-        content: welcomeMessage,
-        agentKind: null,
-      });
-      profile = await readProfile(client, id);
-    } catch (cause) {
-      // The profile remains valid and can still be opened; canonical recovery is
-      // idempotent and the failure is diagnosable instead of creating a second Bot.
-      log.warn('persist initial Bot welcome failed', {
-        botId: id,
-        error: cause instanceof Error ? cause.message : String(cause),
-      });
-    }
-  }
+  const profile = await readProfile(client, id);
   assertCreationOwnerStillCurrent();
   broadcastBotProfileChanged({ botId: id, change: 'created' });
   return profile;
@@ -1223,7 +1204,8 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     nextCapabilities: normalizedNextConfig,
     previousIdentitySource: version?.identitySource ?? '',
     nextIdentitySource,
-  });
+  }) || (patch.displayName !== undefined && patch.displayName !== current.displayName)
+    || (patch.description !== undefined && patch.description !== current.description);
   // Only the renderer save boundary needs this hook; model-side selections already validate
   // before calling this function. Both paths retain the transaction's profile-version CAS.
   await validateAdditions?.({ botId: id, canonicalSessionId: current.canonicalSessionId,
@@ -1326,6 +1308,26 @@ export function registerBotIpc(): void {
     if (!remote) assertTrustedAppRendererEvent(event);
     const client = tryGetDbClient();
     if (!client) return [];
+    if (!remote) {
+      const owner = captureBotOperationOwner();
+      try {
+        await provisionDefaultBot({
+          ownerRoot: ownerScopedUserDataPath(), assertOwner: owner.assertCurrent,
+          hasBotHistory: async () => {
+            const profiles = await client.drizzle.select({ id: botProfiles.id }).from(botProfiles).limit(1);
+            if (profiles.length) return true;
+            const history = await client.drizzle.select({ id: sessions.id }).from(sessions).where(eq(sessions.source, 'bot')).limit(1);
+            return history.length > 0;
+          },
+          create: () => createBotProfile({ id: 'cindy-default', name: 'Cindy', templateId: 'cindy',
+            avatar: BOT_TEMPLATE_PRESET_AVATARS.cindy, identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy,
+            prepareInvitation: true }),
+        });
+      } catch (error) {
+        log.warn('initial companion deferred', { error: error instanceof Error ? error.name : typeof error });
+      }
+      owner.assertCurrent();
+    }
     const db = client.drizzle;
     // Unread accounting is opt-in: the read position lives in the renderer, so
     // a caller that has none (device-link, first boot) simply gets zeros.
@@ -1340,7 +1342,7 @@ export function registerBotIpc(): void {
       await Promise.all(
         profiles
           .filter(({ status }) => status !== 'archived')
-          .map(({ id }) => recoverBotTemplateSkills(id)),
+          .map(async ({ id }) => { await recoverBotTemplateSkills(id); queueBotInvitation(id); }),
       );
     }
     const results = await Promise.all(

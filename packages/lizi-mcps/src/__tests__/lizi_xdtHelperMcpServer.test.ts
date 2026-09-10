@@ -50,7 +50,7 @@ describe("cindy_helper MCP server", () => {
         name: "程序员",
         description: "负责开发",
         identitySource: "你是一个可靠的程序员伙伴。",
-        welcomeMessage: "你好，我是程序员，以后开发工作可以直接找我。",
+        welcomeMessage: "",
       });
     } finally {
       await client.close();
@@ -509,7 +509,7 @@ describe("cindy_helper MCP server", () => {
     }
   });
 
-  it("keeps a Bot on the Bot-only helper surface", async () => {
+  it("exposes product knowledge while keeping general history and control out of the Bot surface", async () => {
     let surface: "bot" | "default" = "bot";
     const sendToSession = vi.fn(async () => ({
       ok: true as const,
@@ -546,7 +546,7 @@ describe("cindy_helper MCP server", () => {
       const overview = parsePayload(
         await client.callTool({ name: "list_tools", arguments: {} }),
       );
-      expect(overview.categories).toEqual([{ name: "bots", tool_count: 1 }]);
+      expect(overview.categories).toEqual([{ name: "cindy", tool_count: 2 }, { name: "bots", tool_count: 1 }]);
 
       const forbiddenCategory = parsePayload(
         await client.callTool({ name: "list_tools", arguments: { category: "handoff" } }),

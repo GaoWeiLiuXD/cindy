@@ -35,7 +35,7 @@ export function BotPortraitPicker({
   onChange,
 }: {
   value?: string;
-  token: string;
+  token?: string;
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
@@ -71,7 +71,7 @@ export function BotPortraitPicker({
     }
   };
   const generate = async () => {
-    if (busy || disabled) return;
+    if (busy || disabled || !token) return;
     setBusy(true);
     setError(false);
     try {
@@ -135,7 +135,7 @@ export function BotPortraitPicker({
               >
                 {t('bots.guided.upload')}
               </button>
-              <button
+              {token && <button
                 type="button"
                 disabled={busy}
                 onClick={() => void generate()}
@@ -143,7 +143,7 @@ export function BotPortraitPicker({
               >
                 {busy && <Spinner size={12} />}
                 {t('bots.guided.generateAvatar')}
-              </button>
+              </button>}
             </div>
             {candidate && (
               <button

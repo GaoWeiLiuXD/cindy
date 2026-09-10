@@ -1,3 +1,4 @@
+import type { BotModelRoute } from '../../shared/botModelChain.js';
 import {
   DEFAULT_ORCA_WORKER_PERMISSION_MODE,
   resolveOrcaWorkerPermissionMode,
@@ -32,6 +33,7 @@ interface VendorPrefsSnapshot {
 }
 
 export interface NewMakerDraftSnapshot {
+  selectedRoute?: BotModelRoute;
   lastByVendor: Partial<Record<VendorKey, VendorPrefsSnapshot>>;
   /** 每个 vendor 是否由用户在 New Maker picker 明确选过模型；旧 renderer 缺省不提供。 */
   modelChosenByVendor?: Partial<Record<VendorKey, boolean>>;
@@ -46,6 +48,7 @@ export interface NewMakerDraftSnapshot {
 }
 
 let cache: NewMakerDraftSnapshot | null = null;
+let selectedRouteOwner: string | undefined;
 
 export interface WorkerCreationPrefsSnapshot {
   workerPermissionMode: OrcaWorkerPermissionMode;
@@ -70,8 +73,9 @@ export type ProviderModelMemorySnapshot = Record<
 let providerMemoryCache: ProviderModelMemorySnapshot | null = null;
 
 /** Renderer push handler 调; 整体替换缓存 (而不是合并), 跟 source of truth 对齐。 */
-export function setNewMakerDraftCache(snapshot: NewMakerDraftSnapshot): void {
+export function setNewMakerDraftCache(snapshot: NewMakerDraftSnapshot, ownerScope?: string): void {
   cache = snapshot;
+  selectedRouteOwner = ownerScope;
 }
 
 /** Renderer localStorage workerCreationPrefs 的 main 端内存镜像。 */
@@ -211,4 +215,9 @@ export function getRemoteNewMakerDefaultsByVendor(): {
     codex: getRemoteNewMakerDefaults('codex'),
     pi: getRemoteNewMakerDefaults('pi'),
   };
+}
+
+/** Read only the active owner’s current selection; never reuse another account’s mirror. */
+export function getSelectedNewMakerRoute(ownerScope: string): BotModelRoute | undefined {
+  return selectedRouteOwner === ownerScope ? cache?.selectedRoute : undefined;
 }

@@ -119,12 +119,12 @@ afterEach(async () => {
 });
 
 describe('companion invitation with SQLite and real skill files', () => {
-  it('prepares once, persists actual skills and voice, then greets the user', async () => {
-    seed();
+  it('preserves a saved draft on upgrade, then greets through the actual runtime', async () => {
+    seed({ draft });
     queueBotInvitation('bot-1');
     queueBotInvitation('bot-1');
     await vi.waitFor(() => expect(state().stage).toBe('ready'));
-    expect(h.generate).toHaveBeenCalledTimes(1);
+    expect(h.generate).not.toHaveBeenCalled();
     expect(await readBotSkill(h.root, 'bot-1', 'develop-characters')).toMatchObject(
       draft.skills[0],
     );
@@ -138,7 +138,7 @@ describe('companion invitation with SQLite and real skill files', () => {
     expect(state().draft).toBeUndefined();
     queueBotInvitation('bot-1');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(h.generate).toHaveBeenCalledTimes(1);
+    expect(h.generate).not.toHaveBeenCalled();
   });
 
   it('resumes a saved draft without generating again or overwriting an edited skill', async () => {
@@ -154,10 +154,10 @@ describe('companion invitation with SQLite and real skill files', () => {
 
   it('keeps a failed invitation and retries without creating another profile', async () => {
     seed();
-    h.generate.mockResolvedValueOnce({ ok: false, reason: 'no_candidate' });
+    h.welcome.mockResolvedValueOnce({ ok: false });
     queueBotInvitation('bot-1');
     await vi.waitFor(() => expect(state().stage).toBe('failed'));
-    expect(h.welcome).not.toHaveBeenCalled();
+    expect(h.welcome).toHaveBeenCalledTimes(1);
     queueBotInvitation('bot-1', true);
     await vi.waitFor(() => expect(state().stage).toBe('ready'));
     expect(sqlite.prepare('SELECT count(*) AS n FROM bot_profiles').get()).toEqual({ n: 1 });
@@ -177,7 +177,7 @@ describe('companion invitation with SQLite and real skill files', () => {
   );
 
   it('does not lose a prepared character when optional image generation is unavailable', async () => {
-    seed({ avatarRequested: true });
+    seed({ avatarRequested: true, avatarPrompt: draft.avatarPrompt });
     queueBotInvitation('bot-1');
     await vi.waitFor(() => expect(state()).toMatchObject({ stage: 'ready', avatarSkipped: true }));
     expect(sqlite.prepare('SELECT avatar FROM bot_profiles').get()).toEqual({ avatar: '✦' });
@@ -185,14 +185,14 @@ describe('companion invitation with SQLite and real skill files', () => {
   });
 
   it('retries an optional portrait without regenerating the character or greeting again', async () => {
-    seed({ avatarRequested: true });
+    seed({ avatarRequested: true, avatarPrompt: draft.avatarPrompt });
     queueBotInvitation('bot-1');
     await vi.waitFor(() => expect(state().stage).toBe('ready'));
     expect(state().avatarSkipped).toBe(true);
     queueBotInvitation('bot-1', true);
     await vi.waitFor(() => expect(h.prepareAvatar).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(state().stage).toBe('ready'));
-    expect(h.generate).toHaveBeenCalledTimes(1);
+    expect(h.generate).not.toHaveBeenCalled();
     expect(h.welcome).toHaveBeenCalledTimes(1);
   });
 
@@ -207,7 +207,7 @@ describe('companion invitation with SQLite and real skill files', () => {
   });
 
   it('keeps an avatar chosen by the user while AI artwork was in flight', async () => {
-    seed({ avatarRequested: true });
+    seed({ avatarRequested: true, avatarPrompt: draft.avatarPrompt });
     h.prepareAvatar.mockResolvedValueOnce('image-1');
     h.finishAvatar.mockImplementationOnce(async () => {
       sqlite.prepare("UPDATE bot_profiles SET avatar = 'user-upload' WHERE id = 'bot-1'").run();
@@ -239,23 +239,27 @@ describe('companion invitation with SQLite and real skill files', () => {
     );
   });
 
-  it('discards a late model result after account switch', async () => {
+  it('creates from a name without generating a profile or padding Skills', async () => {
     seed();
-    let finish!: (value: unknown) => void;
-    h.generate.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
     queueBotInvitation('bot-1');
-    await vi.waitFor(() => expect(h.generate).toHaveBeenCalled());
+    await vi.waitFor(() => expect(state().stage).toBe('ready'));
+    expect(h.generate).not.toHaveBeenCalled();
+    expect(await readBotSkill(h.root, 'bot-1', 'develop-characters')).toBeNull();
+    expect((await readBotProfileFolder(h.root, 'bot-1')).identitySource).toContain('original');
+    expect(h.welcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards artwork after an account switch without greeting the new account', async () => {
+    seed({ stage: 'avatar', avatarRequested: true, avatarPrompt: draft.avatarPrompt, avatarInvocationId: 'image-1' });
+    let finish!: (value: unknown) => void;
+    h.finishAvatar.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    queueBotInvitation('bot-1');
+    await vi.waitFor(() => expect(h.finishAvatar).toHaveBeenCalled());
     h.owner = 'owner-b';
-    finish({ ok: true, text: JSON.stringify(draft) });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(state().stage).toBe('profile');
+    finish({ url: 'ai-portrait', hash: 'a'.repeat(64) });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(state().stage).toBe('avatar');
     expect(h.welcome).not.toHaveBeenCalled();
-    expect(await fs.readdir(h.root)).toEqual([]);
   });
 });
 

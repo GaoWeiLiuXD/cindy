@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { ProviderView } from '@cindy/model-providers';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   readBotModelChainSettingsState,
@@ -26,6 +26,13 @@ vi.mock('../../appSessionState.js', () => ({
   activeOwnerScopeKey: () => owner.key,
   ownerScopedUserDataPath: () => owner.root,
 }));
+
+import { setModelVisibilityMirror } from '../model-visibility-mirror';
+import { setNewMakerDraftCache } from '../newMakerDefaultsCache';
+beforeEach(() => {
+  setModelVisibilityMirror({}, { fallback: true });
+  setNewMakerDraftCache({ lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
+});
 
 const roots: string[] = [];
 
@@ -67,6 +74,26 @@ describe('bot model chain settings store', () => {
     await writeBotModelChainSettings(state.value.modelChain, { rootPath });
     expect((await readBotModelChainSettingsState({ rootPath, providers: [] })).value)
       .toEqual(state.value);
+  });
+
+  it('uses only enabled Luna with Cindy tuning for new and existing default-following partners', async () => {
+    const rootPath = await testRoot();
+    const providers = [{
+      id: 'openai', source: 'builtin', connected: true, agents: ['codex'],
+      access: { kind: 'subscription', product: 'ChatGPT' },
+      models: { codex: ['gpt-5.6-sol', 'gpt-5.6-luna'].map(id => ({
+        id, mode: 'chat', status: 'active', efforts: ['low', 'medium'], defaultEffort: 'low',
+      })) },
+    }] as ProviderView[];
+    const selectedRoute = { harness: 'codex' as const, providerId: 'openai', model: 'gpt-5.6-luna', effort: 'medium', fastMode: false };
+    setModelVisibilityMirror({ 'codex:openai:gpt-5.6-luna': true }, { fallback: false, followCatalogKeys: [] });
+    setNewMakerDraftCache({ selectedRoute, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
+    expect((await readBotModelChainSettingsState({ rootPath, providers })).value.modelChain).toEqual([selectedRoute]);
+    expect(await readEffectiveBotModelChain({ modelChainOverride: null, model: 'gpt-5.6-sol', effort: 'low' }, { rootPath, providers })).toEqual([selectedRoute]);
+    setModelVisibilityMirror({}, { fallback: true });
+    expect((await readBotModelChainSettingsState({ rootPath, providers })).value.modelChain).toEqual([selectedRoute]);
+    setModelVisibilityMirror({}, { fallback: false, followCatalogKeys: [] });
+    expect(await readEffectiveBotModelChain({ modelChainOverride: null }, { rootPath, providers })).toEqual([]);
   });
 
   it('persists an ordered 1-5 route chain as the Main-owned source of truth', async () => {

@@ -1,3 +1,6 @@
+import { isModelVisible } from '@cindy/model-providers';
+import { getModelVisibilityOverride, waitForModelVisibilityMirror } from '../maker-host/model-visibility-mirror.js';
+import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
 import fs from 'node:fs/promises';
 import { resolveSafe } from '../cindy-media/blobStore.js';
 import { getDbClient } from '../localDb/client/current.js';
@@ -83,7 +86,16 @@ export async function generateBotCreationDraft(
   generating = true;
   try {
     const route = input.data.modelRoute;
+    await waitForModelVisibilityMirror();
+    const providers = await getDesktopProviderService().listProviders({ allowSideEffects: false });
     assertOwner();
+    const assertEnabled = (selection: { agentKind: 'claude-code' | 'codex' | 'pi'; providerId: string; model: string }) => {
+      const provider = providers.find(p => p.id === selection.providerId);
+      const model = provider?.models[selection.agentKind]?.find(m => m.id === selection.model);
+      if (!model || !isModelVisible(getModelVisibilityOverride(selection.agentKind, selection.providerId, selection.model), model.defaultEnabled))
+        throwIpcError('BOT_CREATION_MODEL_UNAVAILABLE', 'Cindy 默认模型未开启，请先选择可用模型');
+    };
+    if (route.providerId) assertEnabled({ ...route, providerId: route.providerId });
     const botId = `bot_${randomUUID()}`;
     const catalog = await listBotCreationCapabilities({
       botId,
@@ -110,8 +122,9 @@ ${JSON.stringify({ skills, tools, previous: previous ? { ...previous, name: inpu
       timeoutMs: 90000,
       disableReasoning: true,
       signal: AbortSignal.timeout(100000),
-      beforeDispatch: async () => {
+      beforeDispatch: async (selection) => {
         assertOwner();
+        assertEnabled(selection);
         return true;
       },
     });

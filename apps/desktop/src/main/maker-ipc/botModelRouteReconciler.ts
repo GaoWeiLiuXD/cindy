@@ -1,3 +1,4 @@
+import { throwIpcError } from '../utils/ipcValidate.js';
 import type { AgentKind } from '@cindy/maker-core';
 import { normalizeBotModelChain, type BotModelRoute } from '../../shared/botModelChain.js';
 
@@ -57,9 +58,13 @@ export function createBotModelRouteReconciler(deps: {
     const operation = (async () => {
       const state = await deps.read(sessionId, 'apply');
       if (deps.ownerEpoch() !== epoch) throw new Error('Bot model route owner changed');
-      if (!state?.chain.length) {
+      if (!state) {
         configured.delete(sessionId);
         return;
+      }
+      if (!state.chain.length) {
+        configured.delete(sessionId);
+        throwIpcError('PRECONDITION_FAILED', '请先选择已开启的伙伴模型');
       }
       const key = JSON.stringify(state.chain);
       const route = configuredRoute(state, configured.get(sessionId));

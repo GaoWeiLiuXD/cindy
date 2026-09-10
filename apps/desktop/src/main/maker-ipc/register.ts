@@ -361,7 +361,7 @@ import {
   orcaWorkers,
   sessions,
 } from '../localDb/schema.js';
-import { nextBotModelRoute } from '../../shared/botModelChain.js';
+import { nextBotModelRoute, normalizeBotModelChain } from '../../shared/botModelChain.js';
 import { createBotModelRouteReconciler } from './botModelRouteReconciler.js';
 import { readEffectiveBotModelChain } from '../maker-host/bot-model-chain-settings-store.js';
 import {
@@ -4778,6 +4778,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     )
       return;
     setNewMakerDraftCache({
+      selectedRoute: normalizeBotModelChain([p.selectedRoute])[0],
       lastByVendor: p.lastByVendor,
       ...(p.modelChosenByVendor && typeof p.modelChosenByVendor === 'object'
         ? { modelChosenByVendor: p.modelChosenByVendor }
@@ -4786,7 +4787,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       effortByModel: p.effortByModel,
       // worktree 勾选记忆(vendor 无关根字段):旧 renderer 不推此字段 → false 兜底。
       worktreeEnabled: p.worktreeEnabled === true,
-    });
+    }, activeOwnerScopeKey());
     broadcastNewMakerDraftChanged();
   });
 

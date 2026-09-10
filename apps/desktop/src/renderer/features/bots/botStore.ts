@@ -1,8 +1,9 @@
+import { isModelEnabled, getModelVisibilityVersion } from '@/state/modelVisibilityPrefs';
 import { botInvitationProgress, type BotInvitationProgress } from '../../../shared/botInvitation';
 import { useSyncExternalStore } from 'react';
 import { getDataOwnerGeneration, isDataOwnerGenerationCurrent } from '@/contexts/dataOwnerGeneration';
 import { getModel } from '@cindy/model-providers';
-import { getDraft, getPersistedVendorModel } from '@/state/newMakerDraft';
+import { getDraft, getDraftForPreferenceSync, getPersistedVendorModel } from '@/state/newMakerDraft';
 import { getDefaultModelForVendor } from '@/lib/modelDefinitions';
 import { pickConnectedModelForAgent } from '@/lib/draftModelCalibration';
 import { refreshLocalCatalogSnapshot } from '@/lib/localCatalogSnapshot';
@@ -228,7 +229,10 @@ const BOT_GLOBAL_MODEL_CHAIN_KEY = 'cindy.bots.global-model-chain.v2';
 type BotModelVendor = ReturnType<typeof vendorForHarness>;
 const botModelListeners = new Set<() => void>();
 function getDefaultModelInputs() {
+  const draft = getDraftForPreferenceSync();
   return {
+    visibilityVersion: getModelVisibilityVersion(),
+    preference: JSON.stringify([draft.vendor, draft.lastByVendor[draft.vendor], draft.fastModeByModel]),
     providers: getCachedProvidersSnapshot(),
     availableAgents: getCachedAvailableVendors(),
   };
@@ -320,10 +324,12 @@ export function getBotGlobalModelChain(): BotModelRoute[] | null {
   ensureProfileOwner();
   if (!globalModelChainCache) return null;
   const inputs = globalModelChainCache.defaultInputs;
-  if (inputs && (
-    inputs.providers !== getCachedProvidersSnapshot()
-    || inputs.availableAgents !== getCachedAvailableVendors()
-  )) return null;
+  if (inputs) {
+    const current = getDefaultModelInputs();
+    if (inputs.providers !== current.providers || inputs.availableAgents !== current.availableAgents
+      || inputs.visibilityVersion !== current.visibilityVersion || inputs.preference !== current.preference)
+      return null;
+  }
   return globalModelChainCache.modelChain;
 }
 
@@ -346,7 +352,15 @@ export function getEffectiveBotModelChain(
   if (stored) return stored;
   const providers = getCachedProvidersSnapshot();
   const availableAgents = getCachedAvailableVendors();
+  const draft = getDraftForPreferenceSync();
+  const selected = draft.lastByVendor[draft.vendor];
   return defaultBotModelChain({ providers: providers?.providers ?? [],
+    isModelEnabled,
+    preferredRoute: {
+      harness: draft.vendor === 'cc' || draft.vendor === 'orca' ? 'claude' : draft.vendor,
+      providerId: selected.providerId ?? null, model: selected.model,
+      effort: selected.effort ?? '', fastMode: draft.fastModeByModel[selected.model] === true,
+    },
     providersLoading: !providers, availableAgents: availableAgents ?? new Set(),
     availableAgentsLoaded: availableAgents !== null });
 }
@@ -485,6 +499,7 @@ export interface CreateBotProfileInput {
 let profiles: BotProfile[] = [];
 const listeners = new Set<() => void>();
 let hydrated = false;
+let profileListLoaded = false;
 let profileOwner = getDataOwnerGeneration();
 let hydrationGeneration = 0;
 const hydrationPromises = new Set<Promise<void>>();
@@ -496,6 +511,7 @@ function ensureProfileOwner(): void {
   if (isDataOwnerGenerationCurrent(profileOwner)) return;
   profileOwner = getDataOwnerGeneration();
   profiles = [];
+  profileListLoaded = false;
   unreadCounts = {};
   globalModelChainCache = null;
   globalModelChainCustomized = null;
@@ -742,6 +758,7 @@ async function hydrateFromDatabase(): Promise<void> {
     if (!isCurrent()) return;
     const dbProfiles = rows.map(normalizeDbProfile).filter((item): item is BotProfile => !!item);
     profiles = dbProfiles;
+    profileListLoaded = true;
     projectGlobalModelChain();
     applyUnreadCounts(rows);
     // A Bot we have never tracked starts read: shipping unread badges must not
@@ -755,7 +772,7 @@ async function hydrateFromDatabase(): Promise<void> {
     // DB readiness can race the first renderer render during account/bootstrap.
     // The Bots layout explicitly calls refreshBotProfiles when entered, so do
     // not keep polling a signed-out renderer in the background.
-    if (isCurrent()) hydrated = false;
+    if (isCurrent()) { hydrated = false; profileListLoaded = true; emit(); }
   }
 }
 
@@ -807,6 +824,11 @@ export async function runBotLifecycleAction(
     }
   }
   return result;
+}
+
+export function hasLoadedBotProfiles(): boolean {
+  ensureProfileOwner();
+  return profileListLoaded;
 }
 
 export function getBotProfiles(): BotProfile[] {

@@ -1,3 +1,4 @@
+import { BOT_CONTROL_GUIDANCE } from '@cindy/mcps';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { buildBotMemoryScopeKey } from '@cindy/maker-core';
 import { createHash, randomUUID } from 'node:crypto';
@@ -308,12 +309,13 @@ export function buildBotCapabilityContextPrompt(
   // tunnels cindy, so keep plugin guidance there.
   const cindyAvailable = options.cindyAvailable !== false;
   const pluginGuidance = cindyAvailable
-    ? ' Installed plugins are available on demand through `cindy` (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions.'
+    ? ' Installed plugins are a separate discovery surface from Skill/MCP/toolset references. An empty capability search does not mean no plugin can do the work. Before declaring a connected-service task unavailable, inspect the relevant installed plugin. Installed plugins are available on demand through `cindy` (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions.'
     : '';
   return [
     '## Cindy Bot Runtime',
     'You are running as a Cindy Bot with a durable Profile. This task is one active runtime of that Bot, not an ordinary standalone task.',
     ...(helperAvailable ? [
+      BOT_CONTROL_GUIDANCE,
       `Use direct Bot tools for your own memory, Skills and teammates. When work needs another capability, use \`find_bot_capabilities\` in the helper bots category to search existing Skills, MCP connections or built-in tools, then \`set_bot_capability\` to join it. References reuse Cindy installations and authorization; do not copy credentials or edit shared sources. New mounts take effect next turn in this same task.${pluginGuidance} Discover only what the work needs; do not repeatedly list the whole tool surface.`,
           "A real Cindy background task is a standalone Session in the user's task list. Follow the workload split in the `start_session_task` guidance: handle short simple work yourself and proactively start independent tasks for coding and medium or large work. Do not wait for the user to ask for delegation. Use `check_session_task`, `message_session_task`, and `stop_session_task` to control that same task when needed. Completion returns automatically; you remain responsible for reviewing and presenting the result.",
           'Use `send_to_agent` only to send one bounded asynchronous message to a named teammate. It is not a task and has no progress or cancellation. Never use a teammate named Cindy as a substitute for `start_session_task`.',

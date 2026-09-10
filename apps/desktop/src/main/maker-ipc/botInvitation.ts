@@ -8,8 +8,6 @@ import {
 import { getDbClient } from '../localDb/client/current.js';
 import { botProfiles, botProfileVersions } from '../localDb/schema.js';
 import { createLogger } from '../logger.js';
-import { getMaker } from '../maker-host/index.js';
-import { requestUtilityText } from '../utility-model/oneShotCandidates.js';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { prepareBotInvitationAvatar, finishBotInvitationAvatar } from './botInvitationAvatar.js';
 import { botInvitationProgress, type BotInvitationProgress } from '../../shared/botInvitation.js';
@@ -21,13 +19,12 @@ import { seedBotTemplateSkills } from './botTemplateSkillSeed.js';
 import { seedBotSkillIfMissing } from './botSkillStore.js';
 import { ensureBotContentDirs, writeBotProfileFolder } from './botProfileFolder.js';
 import {
-  botInvitationPrompt,
-  parseBotInvitationDraft,
   type BotInvitationDraft,
 } from './botInvitationDraft.js';
 
 /** The IPC owner supplies reverse calls; this worker never imports the IPC registry. */
 export interface BotInvitationCallbacks {
+  canStartWelcome?(config: Record<string, unknown>): Promise<boolean>;
   createCanonicalSession(input: {
     botId: string;
     expectedCanonicalSessionId: string | null;
@@ -164,34 +161,15 @@ export function queueBotInvitation(
         state = (await load()).invitation!;
       }
       if (state.stage === 'failed') {
-        await save({ stage: state.draft ? 'skills' : 'profile' });
+        await save({ stage: 'skills' });
         state = (await load()).invitation!;
       }
       const preset = isBotTemplatePresetId(first.config.templateId)
         ? first.config.templateId
         : null;
-      let draft = state.draft;
-      if (!preset && !draft && state.stage === 'profile') {
-        assertOwner();
-        const result = await requestUtilityText(
-          getMaker(),
-          botInvitationPrompt(first.profile.displayName, first.profile.description, state.locale),
-          {
-            maxTokens: 5500,
-            timeoutMs: 90000,
-            disableReasoning: true,
-            signal: AbortSignal.timeout(100000),
-            beforeDispatch: async () => {
-              assertOwner();
-              return true;
-            },
-          },
-        );
-        assertOwner();
-        if (!result.ok) throw new Error('INVITATION_GENERATION_FAILED');
-        draft = parseBotInvitationDraft(result.text);
-        await save({ draft, avatarPrompt: draft.avatarPrompt, stage: 'skills' });
-      } else if (state.stage === 'profile') await save({ stage: 'skills' });
+      const draft = state.draft;
+      // Existing saved drafts remain usable on upgrade; no new auxiliary model call.
+      if (state.stage === 'profile') await save({ stage: 'skills' });
 
       const presetVoice = state.locale.startsWith('zh')
         ? ({
@@ -264,6 +242,8 @@ export function queueBotInvitation(
       }
       if (portraitOnly) return;
       const current = await load();
+      if (callbacks.canStartWelcome && !await callbacks.canStartWelcome(current.config)) return;
+      assertOwner();
       const canonical = await callbacks.createCanonicalSession({
         botId,
         expectedCanonicalSessionId: current.profile.canonicalSessionId,

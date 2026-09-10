@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  getSelectedNewMakerRoute,
   getRemoteNewMakerDefaults,
   getRemoteNewMakerDefaultsByVendor,
   getThinkingEnabledFromMemory,
@@ -155,4 +156,14 @@ describe('getRemoteNewMakerDefaults (device-link 远程草稿镜像)', () => {
       providerId: 'xd',
     });
   });
+});
+
+it('does not reuse the selected default route across owners or older snapshots', () => {
+  const selectedRoute = { harness: 'codex' as const, providerId: 'openai', model: 'luna', effort: 'medium', fastMode: false };
+  const snapshot = { selectedRoute, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} };
+  setNewMakerDraftCache(snapshot, 'owner-a');
+  expect(getSelectedNewMakerRoute('owner-a')).toEqual(selectedRoute);
+  expect(getSelectedNewMakerRoute('owner-b')).toBeUndefined();
+  setNewMakerDraftCache({ lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, 'owner-a');
+  expect(getSelectedNewMakerRoute('owner-a')).toBeUndefined();
 });
