@@ -1,3 +1,6 @@
+import { bindRuntimeRecoveryNotice, advanceRuntimeRecoveryNotice } from '../../im/shared/runtimeRecoveryNotice.js';
+import { readFileSync } from 'node:fs';
+import { ScriptTarget, transpileModule } from 'typescript';
 import { Session, type Maker, type AgentEvent, type AgentSessionHandle } from '@cindy/maker-core';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -63,6 +66,72 @@ function live(id: string, closeGate: Promise<void> = Promise.resolve()) {
 }
 
 describe('Pi package runtime invalidation', () => {
+  it.each([false, true])('delivers retirement recovery after Host continuation (refresh=%s)', async (refresh) => {
+    const runtime = live('continued');
+    const notices = vi.fn(async () => true);
+    await runtime.instance.send('IM input', { beforeProviderStart: () => bindRuntimeRecoveryNotice(runtime.instance, notices, { warn() {} }) });
+    const firstGeneration = runtime.instance.getTurnGeneration();
+    runtime.finish('first segment');
+    await vi.waitFor(() => expect(runtime.seen.some(event => event.type === 'done')).toBe(true));
+    await runtime.instance.send('Host continuation', {
+      onDispatching: () => { if (refresh) advanceRuntimeRecoveryNotice(runtime.instance); },
+    });
+    expect(runtime.instance.getTurnGeneration()).toBeGreaterThan(firstGeneration);
+    runtime.close.mockRejectedValueOnce(new Error('exit unconfirmed'));
+    await runtime.instance.closeAfterCurrentTurn({ failureEvent: () => ({
+      type: 'text', source: 'pi', data: { isFinal: true, text: 'internal receipt' },
+    }) });
+    runtime.finish('final result');
+    await vi.waitFor(() => expect(runtime.instance.getStatus()).toBe('error'));
+    expect(notices).toHaveBeenCalledTimes(refresh ? 1 : 0);
+    expect(runtime.handle.send).toHaveBeenCalledTimes(2);
+    await runtime.instance.close();
+  });
+
+  it.each([
+    ['install', undefined, true], ['update', undefined, true],
+    ['set-enabled', true, true], ['set-enabled', false, false], ['remove', undefined, false],
+  ] as const)('Settings %s enabled=%s retains only positive in-flight work', async (action, enabled, deferredClose) => {
+    const busy = live('settings-busy');
+    const idle = live('settings-idle');
+    const maker: InvalidationMaker = {
+      advanceLocalPiPackageRuntimeGeneration: vi.fn(),
+      listActiveSessions: () => [busy.instance, idle.instance],
+      getSessionMeta: vi.fn(async (id: string) => ({ id, agentKind: 'pi' as const, workDir: '/repo', model: 'm', title: id, createdAt: 1, updatedAt: 1 })),
+      closeSessionIfCurrent: async (instance, _reason, opts) => opts?.afterCurrentTurn
+        ? instance.closeAfterCurrentTurn(opts) : (await instance.close(), 'closed'),
+    };
+    const source = readFileSync(new URL('../../maker-ipc/register.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('ipcMain.handle(MAKER_INVOKE.PI_PACKAGES_MUTATE');
+    const block = source.slice(start, source.indexOf('\n  ipcMain.handle(', start + 1));
+    let handler!: (event: unknown, raw: unknown) => Promise<unknown>;
+    const dependencies = {
+      ipcMain: { handle: (_: unknown, fn: typeof handler) => { handler = fn; } },
+      MAKER_INVOKE: { PI_PACKAGES_MUTATE: 'mutate' }, maker,
+      assertTrustedAppRendererEvent() {}, requireObject: (value: unknown) => value,
+      requireEnum: (value: unknown) => value, throwIpcError: () => { throw new Error('bad input'); },
+      runPiPackageMutationIpcBoundary: (run: () => Promise<unknown>) => run(),
+      piPackageMutationNeedsGrant: () => false,
+      mutatePiPackage: async (_: unknown, __: unknown, hooks: { onRuntimeInvalidationPublished(): Promise<void> }) => {
+        await hooks.onRuntimeInvalidationPublished(); return { ok: true };
+      },
+      invalidateLocalPiPackageRuntimes, t: () => 'Restart Cindy', log: { warn() {} },
+    };
+    new Function(...Object.keys(dependencies), transpileModule(block, {
+      compilerOptions: { target: ScriptTarget.ES2022 },
+    }).outputText)(...Object.values(dependencies));
+    await busy.instance.send('keep working');
+    await handler({}, { action, enabled, source: 'npm:example' });
+    expect(idle.close).toHaveBeenCalledOnce();
+    expect(busy.close).toHaveBeenCalledTimes(deferredClose ? 0 : 1);
+    if (deferredClose) {
+      busy.finish('result delivered');
+      await vi.waitFor(() => expect(busy.instance.getStatus()).toBe('closed'));
+      expect(busy.seen.some(event => event.type === 'done')).toBe(true);
+    }
+    expect(busy.handle.send).toHaveBeenCalledOnce();
+  });
+
   it.each(['success', 'failure', 'close', 'timeout'] as const)('retains a finished caller through convergence delivery: %s', async (mode) => {
     const fails = mode !== 'success';
     const caller = live('caller');

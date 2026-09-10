@@ -152,7 +152,8 @@ export async function settleLocalPiPackageRuntimeSnapshot(
 
 export async function invalidateLocalPiPackageRuntimes(
   maker: InvalidationMaker,
+  opts?: { afterCurrentTurn?: boolean; failureEvent?: () => AgentEvent },
 ): Promise<PiPackageRuntimeInvalidationResult> {
   const snapshot = await captureLocalPiPackageRuntimeInvalidationSnapshot(maker);
-  return invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot);
+  return invalidateLocalPiPackageRuntimeSnapshot(maker, snapshot, opts);
 }

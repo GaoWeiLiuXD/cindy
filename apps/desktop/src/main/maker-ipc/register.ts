@@ -1,3 +1,4 @@
+import { advanceRuntimeRecoveryNotice } from '../im/shared/runtimeRecoveryNotice.js';
 import { registerPluginListHandler } from './pluginListHandler.js';
 import { initializeBotAuthorizationHost } from './botAuthorizationHost.js';
 import { resolveBotAuthorizationDelivery, buildBotAuthorizationContinuation, commitBotAuthorizationInput, type BotAuthorizationInputGuard, getBotAuthorizationService } from './botAuthorizationService.js';
@@ -4130,6 +4131,7 @@ async function handleSilentStopTurnEnd(
         { type: 'user', content: SILENT_STOP_RESUME_PROMPT },
         {
           origin: turnOrigin,
+          onDispatching: () => advanceRuntimeRecoveryNotice(session),
           onAccepted: async () => {
             await createDbMessage(session.id, {
               clientId,
@@ -5856,7 +5858,14 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           if (runtimesInvalidated && phase === 'commit') return;
           runtimesInvalidated = true;
           try {
-            const invalidation = await invalidateLocalPiPackageRuntimes(maker);
+            const invalidation = await invalidateLocalPiPackageRuntimes(maker, {
+              afterCurrentTurn: request.action !== 'remove'
+                && !(request.action === 'set-enabled' && request.enabled === false),
+              failureEvent: () => ({
+                type: 'text', source: 'pi',
+                data: { isFinal: true, text: t('settings.piPackages.failure.runtimeRetirementFailed') },
+              }),
+            });
             if (invalidation.failedSessionIds.length > 0) {
               runtimeConvergencePartial = true;
               log.warn('Pi package changed but some local runtimes did not close', {
