@@ -11,6 +11,7 @@ import {
   buildWindowsRegistryProbeScript,
   buildWindowsDescendantCleanupScript,
   countWindowsPowerShellDiagnostics,
+  maxWindowsPathKindProbeBatchCount,
   terminateWindowsPowerShellDescendants,
   warnWindowsGitPathProbeDiagnostics,
   warnWindowsGitPathProbeFailure,
@@ -68,7 +69,9 @@ describe('Windows Git PATH PowerShell probes', () => {
     expect(script).toContain('Write-ProbeOutput $operation.Process');
     expect(script).toContain('$budgetMs = 2750');
     expect(script).toContain('if ($nextGroupIndex -lt $groups.Count -or $operations.Count -gt 0) {');
-    expect(script).toContain('WriteLine("__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__`tpath-process-timeout")');
+    for (const phase of ['output', 'start', 'exit', 'complete', 'timeout', 'budget', 'coordinator', 'cleanup']) {
+      expect(script).toContain(`WriteLine("__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\`tpath-process-${phase}")`);
+    }
     expect(script).not.toContain('foreach ($candidate in $paths)');
     expect(script).not.toContain('[RunspaceFactory]');
     expect(script.indexOf('$clock = [Diagnostics.Stopwatch]::StartNew()'))
@@ -108,16 +111,19 @@ describe('Windows Git PATH PowerShell probes', () => {
     expect(() => buildWindowsDescendantCleanupScript(0)).toThrow(RangeError);
   });
 
-  it('shares the existing operation budget across actual concurrent waves', () => {
-    expect(buildWindowsPathKindProbeScript(4, 3_000, 2)).toContain('$operationTimeoutMs = 2500');
-    expect(buildWindowsPathKindProbeScript(4, 10_000, 2)).toContain('$operationTimeoutMs = 9500');
-    expect(buildWindowsPathKindProbeScript(16, 3_000, 8)).toContain('$operationTimeoutMs = 1250');
-    expect(buildWindowsPathKindProbeScript(4, 500, 2)).toContain('$operationTimeoutMs = 1');
+  it('bounds an explicit child budget and queue admission by the coordinator budget', () => {
+    expect(maxWindowsPathKindProbeBatchCount(3_000)).toBe(8);
+    expect(maxWindowsPathKindProbeBatchCount(10_000, 10_000)).toBe(4);
+    const script = buildWindowsPathKindProbeScript(25, 10_000, 25, { operationTimeoutMs: 10_000 });
+    expect(script).toContain('$operationTimeoutMs = 9500');
+    expect(script).toContain('$budgetMs = 9750');
+    expect(script).toContain('$groups = @($allGroups | Select-Object -First 4)');
+    expect(script).toContain('$maxConcurrency = 4');
   });
 
-  it.runIf(process.platform === 'win32')(
-    'executes grouped path probes in Windows PowerShell',
-    () => {
+  it.runIf(process.platform === 'win32').each([0, 2_000])(
+    'executes grouped path probes in Windows PowerShell with %i ms child delay',
+    (delayMs) => {
       const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
       if (!systemRoot) throw new Error('Windows system root is unavailable');
       const tempRoot = mkdtempSync(path.join(tmpdir(), 'cindy-git-path-'));
@@ -132,34 +138,48 @@ describe('Windows Git PATH PowerShell probes', () => {
           { paths: [path.join(staleRoot, 'cmd'), path.join(staleRoot, 'cmd', 'git.exe')] },
           { paths: [validCmd, validGit] },
         ];
-        const script = buildWindowsPathKindProbeScript(4, 10_000, 2);
-        const encodedCommand = script.match(/\$probeCommand = '([^']+)'/)?.[1];
-        expect(encodedCommand).toBeTruthy();
-        // Deterministic slow-worker injection: even without CI contention the
-        // former 1250ms cap would kill both probes before they inspect paths.
-        const slowCommand = Buffer.from('Start-Sleep -Milliseconds 2000\n'
-          + Buffer.from(encodedCommand!, 'base64').toString('utf16le'), 'utf16le').toString('base64');
-        const output = execFileSync(
-          path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-          // Hosted Windows runners can spend several seconds starting the
-          // nested PowerShell probes before any candidate is inspected.
-          ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script.replace(encodedCommand!, slowCommand)],
-          {
-            encoding: 'utf8',
-            input: Buffer.from(JSON.stringify(groups), 'utf8'),
-            stdio: ['pipe', 'pipe', 'pipe'],
-            timeout: 15_000,
-            windowsHide: true,
-          },
-        );
+        const runProbe = (script: string, childDelayMs = delayMs) => {
+          // Inject latency in the real nested command, without adding a production
+          // delay hook. This deterministically exercises the old 1250ms cutoff.
+          const encoded = script.match(/\$probeCommand = '([^']+)'/)?.[1];
+          if (!encoded) throw new Error('Missing nested probe command');
+          const delayedCommand = Buffer.from(
+            `Start-Sleep -Milliseconds ${childDelayMs}\n${Buffer.from(encoded, 'base64').toString('utf16le')}`,
+            'utf16le',
+          ).toString('base64');
+          return execFileSync(
+            path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+            ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script.replace(encoded, delayedCommand)],
+            {
+              encoding: 'utf8',
+              input: Buffer.from(JSON.stringify(groups), 'utf8'),
+              stdio: ['pipe', 'pipe', 'pipe'],
+              timeout: 15_000,
+              windowsHide: true,
+            },
+          );
+        };
+        if (delayMs > 0) {
+          // Outlive even the outer deadline, so scheduler pauses cannot make the
+          // negative case complete before the coordinator observes expiry.
+          const expired = runProbe(buildWindowsPathKindProbeScript(4, 10_000, 2), 30_000);
+          expect(expired).toMatch(/__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-process-(timeout|budget)/);
+          expect(expired).not.toContain(`F\t${Buffer.from(validGit, 'utf16le').toString('base64')}`);
+        }
+
+        // Correctness needs startup headroom at BOTH timeout layers. Production
+        // callers retain their default 1250ms child budget and 3000ms outer budget.
+        const output = runProbe(buildWindowsPathKindProbeScript(4, 10_000, 2, { operationTimeoutMs: 10_000 }));
 
         expect(output).toContain(`D\t${Buffer.from(validCmd, 'utf16le').toString('base64')}`);
         expect(output).toContain(`F\t${Buffer.from(validGit, 'utf16le').toString('base64')}`);
+        expect(output).not.toContain(Buffer.from(path.join(staleRoot, 'cmd'), 'utf16le').toString('base64'));
+        expect(countWindowsPowerShellDiagnostics(output)).toBe(0);
       } finally {
         rmSync(tempRoot, { recursive: true, force: true });
       }
     },
-    30_000,
+    40_000,
   );
 
   it.runIf(process.platform === 'win32')(
@@ -269,19 +289,18 @@ describe('Windows Git PATH PowerShell probes', () => {
     const warn = vi.fn();
     const output = [
       '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-kind',
-      '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-process',
-      '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-process-timeout',
+      '__CINDY_WINDOWS_GIT_PATH_DIAGNOSTIC__\tpath-runspace',
       'F\tignored-record',
     ].join('\r\n');
 
-    expect(countWindowsPowerShellDiagnostics(output)).toBe(3);
+    expect(countWindowsPowerShellDiagnostics(output)).toBe(2);
     warnWindowsGitPathProbeDiagnostics({ warn }, 'path-kinds', output);
     warnWindowsGitPathProbeDiagnostics(undefined, 'path-kinds', output);
 
     expect(warn).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
       'windows git path probe completed with recoverable PowerShell errors',
-      { probe: 'path-kinds', failures: 3 },
+      { probe: 'path-kinds', failures: 2 },
     );
   });
 
