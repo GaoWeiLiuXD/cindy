@@ -7365,11 +7365,12 @@
     "guided": {
       "title": "创建伙伴",
       "reviewTitle": "你的新伙伴",
-      "question": "你想要一位怎样的伙伴？",
+      "question": "简单描述一下你的期待",
       "placeholder": "比如，陪我练英语，能聊生活，也能认真纠正我的表达。",
       "generate": "生成伙伴",
       "generating": "正在构思伙伴…",
       "generationFailed": "暂时没能生成，请保留你的想法再试一次。",
+      "modelRequired": "请先在 Cindy 中选择可用的默认模型。",
       "cindyDescription": "我会帮你使用 Cindy、连接工具，也会和你一起把事情做完。",
       "cindySummary": "打理 Cindy，连接工具，把事情做完。",
       "openCindy": "打开 Cindy",

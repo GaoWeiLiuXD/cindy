@@ -11,10 +11,17 @@ const mocks = vi.hoisted(() => ({
   BotModelSelectionRequiredError: class extends Error {},
   addBotProfileAndWait: vi.fn(),
   generateDraft: vi.fn(),
+  defaultModel: 'cindy-selected-model',
   navigate: vi.fn(),
   onboarding: false,
   availableVendors: new Set(['cc', 'codex', 'pi']),
   profiles: [] as Array<{ id: string; name: string; invitation: { stage: string } }>,
+}));
+vi.mock('@/state/newMakerDraft', () => ({
+  getDraftForPreferenceSync: () => ({
+    vendor: 'codex',
+    lastByVendor: { codex: { providerId: 'openai', model: mocks.defaultModel } },
+  }),
 }));
 vi.mock('@/hooks/useProviderOnboarding', () => ({
   useProviderOnboarding: () => ({ visible: mocks.onboarding }),
@@ -92,6 +99,7 @@ vi.mock('../BotPortraitPicker', () => ({
 import { BotRosterView } from '../BotRosterView';
 
 beforeEach(() => {
+  mocks.defaultModel = 'cindy-selected-model';
   mocks.generateDraft.mockReset();
   mocks.generateDraft.mockResolvedValue({
     token: 'draft-1',
@@ -279,6 +287,8 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'bots.guided.generate' }));
     await screen.findByText('Mika');
+    expect(mocks.generateDraft.mock.lastCall?.[0].modelRoute.model).toBe('cindy-selected-model');
+    mocks.defaultModel = 'updated-cindy-model';
     mocks.generateDraft.mockRejectedValueOnce(new Error('offline'));
     fireEvent.change(screen.getByLabelText('bots.guided.refine'), {
       target: { value: 'More playful' },
@@ -290,7 +300,26 @@ describe('BotRosterView — 唯一的伙伴创建界面', () => {
       token: 'draft-1',
       name: 'Mika',
       prompt: 'More playful',
+      modelRoute: { agentKind: 'codex', providerId: 'openai', model: 'updated-cindy-model' },
     });
+  });
+
+  it('asks for a Cindy default without generating when the selection is empty', async () => {
+    mocks.defaultModel = '';
+    render(<BotRosterView />);
+    fireEvent.change(screen.getByLabelText('bots.guided.question'), { target: { value: 'A partner' } });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.generate' }));
+    await screen.findByText('bots.guided.modelRequired');
+    expect(mocks.generateDraft).not.toHaveBeenCalled();
+  });
+
+  it('shows the default model recovery message when the host cannot use the selected route', async () => {
+    mocks.generateDraft.mockRejectedValueOnce(new Error('[BOT_CREATION_MODEL_UNAVAILABLE] unavailable'));
+    render(<BotRosterView />);
+    fireEvent.change(screen.getByLabelText('bots.guided.question'), { target: { value: 'A partner' } });
+    fireEvent.click(screen.getByRole('button', { name: 'bots.guided.generate' }));
+    await screen.findByText('bots.guided.modelRequired');
+    expect(mocks.generateDraft).toHaveBeenCalledTimes(1);
   });
 
   it('closes the creation dialog without creating a teammate', () => {

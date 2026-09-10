@@ -1,3 +1,16 @@
+/** The current Cindy default route, captured when generating or refining a partner. */
+export interface BotCreationRequest {
+  prompt: string;
+  token?: string;
+  name?: string;
+  description?: string;
+  modelRoute: {
+    agentKind: 'claude-code' | 'codex' | 'pi';
+    providerId: string | null;
+    model: string;
+  };
+}
+
 /** Only editable, user-facing fields cross the draft boundary. */
 export interface BotCreationDraft {
   token: string;

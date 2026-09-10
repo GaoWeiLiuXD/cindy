@@ -7365,11 +7365,12 @@
     "guided": {
       "title": "建立夥伴",
       "reviewTitle": "你的新夥伴",
-      "question": "你想要一位怎樣的夥伴？",
+      "question": "簡單描述一下你的期待",
       "placeholder": "例如，陪我練英語，能聊生活，也能認真糾正我的表達。",
       "generate": "產生夥伴",
       "generating": "正在構思夥伴…",
       "generationFailed": "暫時無法產生，請保留你的想法再試一次。",
+      "modelRequired": "請先在 Cindy 中選擇可用的預設模型。",
       "cindyDescription": "我會幫你使用 Cindy、連接工具，也會和你一起把事情做完。",
       "cindySummary": "管理 Cindy，連接工具，把事情做完。",
       "openCindy": "開啟 Cindy",

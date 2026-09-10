@@ -10,6 +10,7 @@ import { BotInvitationWelcome } from './BotInvitationWelcome';
 import { ConnectProviderCard } from '@/components/onboarding/ConnectProviderCard';
 import { useProviderOnboarding } from '@/hooks/useProviderOnboarding';
 import { Spinner } from '@/components/ui/spinner';
+import { Button } from '@/components/ui/button';
 import { BotAvatar } from './BotAvatar';
 import { BotPortraitPicker, galleryPortrait } from './BotPortraitPicker';
 import {
@@ -19,6 +20,8 @@ import {
   useBotProfiles,
   type BotProfile,
 } from './botStore';
+import { extractIpcError } from '@/utils/ipcError';
+import { getDraftForPreferenceSync } from '@/state/newMakerDraft';
 import { getBotTemplate } from './botTemplates';
 
 interface BotRosterViewProps {
@@ -89,7 +92,19 @@ export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterVie
     setError(null);
     setEditing(null);
     try {
+      const defaults = getDraftForPreferenceSync();
+      const prefs = defaults.lastByVendor[defaults.vendor];
+      if (!prefs.model.trim()) {
+        setError(t('bots.guided.modelRequired'));
+        return;
+      }
       const result = await window.electronAPI.localDb.bots.generateDraft({
+        modelRoute: {
+          agentKind: defaults.vendor === 'cc' || defaults.vendor === 'orca'
+            ? 'claude-code' : defaults.vendor,
+          providerId: prefs.providerId ?? null,
+          model: prefs.model,
+        },
         prompt: request,
         ...(draft ? { token: draft.token, name: draft.name, description: draft.description } : {}),
       });
@@ -100,8 +115,11 @@ export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterVie
       setPortrait(avatar);
       setDraft(result);
       setRefinement('');
-    } catch {
-      if (generation.current === current) setError(t('bots.guided.generationFailed'));
+    } catch (error) {
+      if (generation.current === current) {
+        setError(t(extractIpcError(error)?.code === 'BOT_CREATION_MODEL_UNAVAILABLE'
+          ? 'bots.guided.modelRequired' : 'bots.guided.generationFailed'));
+      }
     } finally {
       if (generation.current === current) setGenerating(false);
     }
@@ -217,7 +235,7 @@ export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterVie
                   >
                     <label
                       htmlFor="companion-request"
-                      className="mb-4 block text-28 font-medium leading-snug"
+                      className="mb-3 block text-14 leading-6 text-[var(--text-secondary)]"
                     >
                       {t('bots.guided.question')}
                     </label>
@@ -232,17 +250,17 @@ export function BotRosterView({ onCreated, onClose, restoreFocus }: BotRosterVie
                       placeholder={t('bots.guided.placeholder')}
                       className={`${input} resize-none`}
                     />
-                    <div className="mt-3 flex flex-wrap gap-1">
+                    <div className="mt-4 flex flex-wrap gap-3">
                       {['english', 'ideas', 'life'].map((key) => (
-                        <button
+                        <Button
                           key={key}
-                          type="button"
+                          variant="secondary"
+                          size="lg"
                           disabled={busy}
                           onClick={() => setPrompt(t(`bots.guided.examples.${key}.prompt`))}
-                          className={secondary}
                         >
                           {t(`bots.guided.examples.${key}.label`)}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                     <div className="mt-5 flex justify-end">

@@ -15,11 +15,6 @@ vi.mock('../../maker-host/index.js', () => ({
   getMaker: () => ({}),
   listBotCreationCapabilities: h.catalog,
 }));
-vi.mock('../../maker-host/bot-model-chain-settings-store.js', () => ({
-  readEffectiveBotModelChain: async () => [
-    { harness: 'pi', providerId: 'connected-provider', model: 'selected-model' },
-  ],
-}));
 vi.mock('../../utility-model/oneShotCandidates.js', () => ({ requestUtilityText: h.generate }));
 vi.mock('../../i18n.js', () => ({ getResolvedMainLocale: () => 'en' }));
 vi.mock('../botInvitationAvatar.js', () => ({
@@ -28,6 +23,7 @@ vi.mock('../botInvitationAvatar.js', () => ({
 }));
 vi.mock('../../cindy-media/blobStore.js', () => ({ resolveSafe: vi.fn() }));
 import { generateBotCreationDraft, readBotCreationDraft } from '../botCreationDraft.js';
+const modelRoute = { agentKind: 'pi', providerId: 'connected-provider', model: 'selected-model' };
 const generated = {
   name: 'Mika',
   description: 'I enjoy practicing English together.',
@@ -52,8 +48,23 @@ beforeEach(() => {
   h.generate.mockResolvedValue({ ok: true, text: JSON.stringify(generated) });
 });
 describe('owner-bound companion previews', () => {
+  it('rejects missing or invalid default routes without selecting another model', async () => {
+    for (const route of [undefined, {}, { ...modelRoute, model: '' }, { ...modelRoute, agentKind: 'unknown' }]) {
+      await expect(generateBotCreationDraft({ prompt: 'Practice English', modelRoute: route }, [])).rejects.toThrow();
+    }
+    expect(h.generate).not.toHaveBeenCalled();
+    expect(h.catalog).not.toHaveBeenCalled();
+  });
+  it('uses the latest Cindy selection for refinement and does not retry on another route', async () => {
+    const preview = await generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, []);
+    h.generate.mockResolvedValueOnce({ ok: false, reason: 'no_candidate' });
+    const updated = { agentKind: 'codex', providerId: 'openai', model: 'different-model' };
+    await expect(generateBotCreationDraft({ prompt: 'More playful', token: preview.token, modelRoute: updated }, [])).rejects.toThrow('[BOT_CREATION_MODEL_UNAVAILABLE]');
+    expect(h.generate).toHaveBeenCalledTimes(2);
+    expect(h.generate.mock.lastCall![2]).toMatchObject(updated);
+  });
   it('uses real capability references, avoids name collisions, and keeps identity private until invite', async () => {
-    const preview = await generateBotCreationDraft({ prompt: 'Practice English' }, ['Ｍｉｋａ']);
+    const preview = await generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, ['Ｍｉｋａ']);
     expect(preview).toEqual({
       token: expect.any(String),
       name: 'Mika 2',
@@ -76,10 +87,11 @@ describe('owner-bound companion previews', () => {
     });
   });
   it('includes the displayed edits when refining and never accepts caller-authored skills', async () => {
-    const first = await generateBotCreationDraft({ prompt: 'Practice English' }, []);
+    const first = await generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, []);
     await generateBotCreationDraft(
       {
         prompt: 'More playful',
+        modelRoute,
         token: first.token,
         name: 'June',
         description: 'My revised introduction',
@@ -93,7 +105,7 @@ describe('owner-bound companion previews', () => {
     expect(prompt).not.toContain('injected');
   });
   it('rejects a draft from another account or database generation', async () => {
-    const preview = await generateBotCreationDraft({ prompt: 'Practice English' }, []);
+    const preview = await generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, []);
     h.owner = 'b';
     expect(() => readBotCreationDraft(preview.token)).toThrow();
     h.owner = 'a';
@@ -105,16 +117,16 @@ describe('owner-bound companion previews', () => {
       h.owner = 'b';
       return { ok: true, text: JSON.stringify(generated) };
     });
-    await expect(generateBotCreationDraft({ prompt: 'Practice English' }, [])).rejects.toThrow();
+    await expect(generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, [])).rejects.toThrow();
     await expect(
-      generateBotCreationDraft({ prompt: 'Practice English' }, []),
+      generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, []),
     ).resolves.toMatchObject({ name: 'Mika' });
   });
   it('rejects a failed or malformed generation without leaving the generator locked', async () => {
     h.generate.mockResolvedValueOnce({ ok: true, text: '{}' });
-    await expect(generateBotCreationDraft({ prompt: 'Practice English' }, [])).rejects.toThrow();
+    await expect(generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, [])).rejects.toThrow();
     await expect(
-      generateBotCreationDraft({ prompt: 'Practice English' }, []),
+      generateBotCreationDraft({ prompt: 'Practice English', modelRoute }, []),
     ).resolves.toMatchObject({ name: 'Mika' });
   });
 });

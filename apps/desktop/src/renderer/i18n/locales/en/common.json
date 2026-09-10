@@ -7367,11 +7367,12 @@
     "guided": {
       "title": "Create a teammate",
       "reviewTitle": "Your new teammate",
-      "question": "Who would you like by your side?",
+      "question": "Briefly describe your expectations.",
       "placeholder": "For example, help me practice English through everyday conversation and thoughtful corrections.",
       "generate": "Create teammate",
       "generating": "Shaping your teammate…",
       "generationFailed": "Could not generate your teammate. Your idea is still here; please try again.",
+      "modelRequired": "Select an available default model in Cindy first.",
       "cindyDescription": "I can help you use Cindy, connect your tools, and get things done together.",
       "cindySummary": "Manage Cindy, connect tools, and get things done.",
       "openCindy": "Open Cindy",

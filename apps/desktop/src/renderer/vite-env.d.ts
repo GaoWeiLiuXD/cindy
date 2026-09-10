@@ -4588,7 +4588,7 @@ interface ElectronAPI {
       }>;
       list: (body?: { lastReadAtByBotId?: Record<string, number> }) => Promise<unknown[]>;
       get: (botId: string) => Promise<unknown>;
-      generateDraft: (body: { prompt: string; token?: string; name?: string; description?: string }) => Promise<import('../shared/botCreation').BotCreationDraft>;
+      generateDraft: (body: import('../shared/botCreation').BotCreationRequest) => Promise<import('../shared/botCreation').BotCreationDraft>;
       generateAvatar: (token: string) => Promise<{ avatarImageBase64: string }>;
       chooseAvatar: (body: { botId: string }) => Promise<{
         canceled: boolean;

@@ -5188,7 +5188,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     bots: {
       generateAvatar: (token: string): Promise<{ avatarImageBase64: string }> => ipcRenderer.invoke('local-db:bots:generate-avatar', token),
-      generateDraft: (body: { prompt: string; token?: string; name?: string; description?: string }): Promise<import('../shared/botCreation').BotCreationDraft> => ipcRenderer.invoke('local-db:bots:generate-draft', body),
+      generateDraft: (body: import('../shared/botCreation').BotCreationRequest): Promise<import('../shared/botCreation').BotCreationDraft> => ipcRenderer.invoke('local-db:bots:generate-draft', body),
       getModelChainSettings: (): Promise<{
         modelChain: import('../shared/botModelChain').BotModelRoute[];
         isCustomized: boolean;
