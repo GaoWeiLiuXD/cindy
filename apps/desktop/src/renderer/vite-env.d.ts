@@ -2400,6 +2400,7 @@ interface ElectronAPI {
   }) => void;
 
   syncNewMakerDraft: (snapshot: {
+    ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp;
     selectedRoute?: import('../shared/botModelChain').BotModelRoute;
     lastByVendor: Partial<
       Record<

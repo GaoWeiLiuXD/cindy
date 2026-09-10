@@ -746,6 +746,11 @@ export function getDraftForPreferenceSync(): NewMakerDraft {
     : persistedDraft;
 }
 
+/** Do not stamp a previous owner's draft during the auth namespace handoff. */
+export function getDraftForOwnerPreferenceSync(ownerId: string | null): NewMakerDraft | null {
+  return activeDataOwnerId === ownerId ? getDraftForPreferenceSync() : null;
+}
+
 /** Switch the persistent draft namespace together with the active data owner. */
 export function setNewMakerDraftOwner(ownerId: string | null): void {
   const normalized = typeof ownerId === 'string' && ownerId.trim().length > 0 ? ownerId : null;

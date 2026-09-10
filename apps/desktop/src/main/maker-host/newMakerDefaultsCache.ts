@@ -1,4 +1,5 @@
-import type { BotModelRoute } from '../../shared/botModelChain.js';
+import { normalizeBotModelChain, type BotModelRoute } from '../../shared/botModelChain.js';
+import { isDataOwnerPushStamp, type DataOwnerPushStamp } from '../../shared/dataOwnerPush.js';
 import {
   DEFAULT_ORCA_WORKER_PERMISSION_MODE,
   resolveOrcaWorkerPermissionMode,
@@ -76,6 +77,31 @@ let providerMemoryCache: ProviderModelMemorySnapshot | null = null;
 export function setNewMakerDraftCache(snapshot: NewMakerDraftSnapshot, ownerScope?: string): void {
   cache = snapshot;
   selectedRouteOwner = ownerScope;
+}
+
+/** One owner-fenced mirror for both ordinary task defaults and Bot defaults. */
+export function syncNewMakerDraftCache(
+  raw: unknown,
+  activeOwner: DataOwnerPushStamp,
+  ownerScope: string,
+  boundaryPending: boolean,
+): boolean {
+  if (boundaryPending || !raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const p = raw as Partial<NewMakerDraftSnapshot> & { ownerStamp?: unknown };
+  if (!isDataOwnerPushStamp(p.ownerStamp)
+    || p.ownerStamp.dataOwnerId !== activeOwner.dataOwnerId
+    || p.ownerStamp.ownerGeneration !== activeOwner.ownerGeneration) return false;
+  const record = (value: unknown) => !!value && typeof value === 'object' && !Array.isArray(value);
+  if (!record(p.lastByVendor) || !record(p.fastModeByModel) || !record(p.effortByModel)) return false;
+  setNewMakerDraftCache({
+    selectedRoute: normalizeBotModelChain([p.selectedRoute])[0],
+    lastByVendor: p.lastByVendor!,
+    ...(record(p.modelChosenByVendor) ? { modelChosenByVendor: p.modelChosenByVendor } : {}),
+    fastModeByModel: p.fastModeByModel!,
+    effortByModel: p.effortByModel!,
+    worktreeEnabled: p.worktreeEnabled === true,
+  }, ownerScope);
+  return true;
 }
 
 /** Renderer localStorage workerCreationPrefs 的 main 端内存镜像。 */

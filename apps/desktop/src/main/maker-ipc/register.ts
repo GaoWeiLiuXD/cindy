@@ -363,7 +363,7 @@ import {
 } from '../localDb/schema.js';
 import { nextBotModelRoute, normalizeBotModelChain } from '../../shared/botModelChain.js';
 import { createBotModelRouteReconciler } from './botModelRouteReconciler.js';
-import { readEffectiveBotModelChain } from '../maker-host/bot-model-chain-settings-store.js';
+import { readEffectiveBotModelChain, readEffectiveBotModelSelection } from '../maker-host/bot-model-chain-settings-store.js';
 import {
   isOrcaWorkerPermissionMode,
   type OrcaWorkerPermissionMode,
@@ -452,9 +452,8 @@ import {
   getRemoteNewMakerDefaultsByVendor,
   getWorkerDefaultsFromNewMaker,
   getWorkerPermissionModeFromCreationPrefs,
-  type NewMakerDraftSnapshot,
   type ProviderModelMemorySnapshot,
-  setNewMakerDraftCache,
+  syncNewMakerDraftCache,
   setProviderModelMemoryCache,
   setWorkerCreationPrefsCache,
 } from '../maker-host/newMakerDefaultsCache.js';
@@ -4590,6 +4589,14 @@ let disposePiPackagesChangedBroadcast: (() => void) | null = null;
  * soon as the Renderer selects an owner, before the splash-gated Maker IPC bundle is available.
  */
 export function registerModelVisibilitySyncIpc(): void {
+  // Register with model visibility before the first window; a cold-start preference
+  // push must not be lost while the larger Maker bundle is still initializing.
+  ipcMain.on(MAKER_SEND.SYNC_NEW_MAKER_DRAFT, (event, payload: unknown) => {
+    assertTrustedAppRendererEvent(event);
+    if (syncNewMakerDraftCache(payload, getActiveDataOwnerPushStamp(),
+      activeOwnerScopeKey(), isAppSessionBoundaryPending())) broadcastNewMakerDraftChanged();
+  });
+
   ipcMain.handle(
     MAKER_INVOKE.MODEL_VISIBILITY_SYNC,
     async (event, dataOwnerId: unknown, ownerGeneration: unknown, map: unknown, policy?: unknown) => {
@@ -4759,38 +4766,6 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     (sessionId) => turnModelPromiseBySession.get(sessionId) ?? readSessionModelForUsage(sessionId),
   );
   initRenameSessionsConfirm(renameSessionsConfirmBridge);
-
-  // ── newMakerDraft 缓存同步 ──────────────────────────────────────────────
-  // Renderer push (fire-and-forget) → main 内存缓存; collab spawn worker 时
-  // 读这份缓存决定 model/effort/fastMode。startup 立刻推一次 + 用户每次改 New
-  // Maker 偏好时增量推（含每个 vendor 的显式模型选择状态），payload 形态严格按
-  // newMakerDefaultsCache.NewMakerDraftSnapshot。
-  // 校验失败 (payload 不是 object / 缺字段) → no-op, 缓存维持上一次值, 避免脏数据污染。
-  ipcMain.on(MAKER_SEND.SYNC_NEW_MAKER_DRAFT, (_e, payload: unknown) => {
-    if (!payload || typeof payload !== 'object') return;
-    const p = payload as Partial<NewMakerDraftSnapshot>;
-    if (
-      !p.lastByVendor ||
-      typeof p.lastByVendor !== 'object' ||
-      !p.fastModeByModel ||
-      typeof p.fastModeByModel !== 'object' ||
-      !p.effortByModel ||
-      typeof p.effortByModel !== 'object'
-    )
-      return;
-    setNewMakerDraftCache({
-      selectedRoute: normalizeBotModelChain([p.selectedRoute])[0],
-      lastByVendor: p.lastByVendor,
-      ...(p.modelChosenByVendor && typeof p.modelChosenByVendor === 'object'
-        ? { modelChosenByVendor: p.modelChosenByVendor }
-        : {}),
-      fastModeByModel: p.fastModeByModel,
-      effortByModel: p.effortByModel,
-      // worktree 勾选记忆(vendor 无关根字段):旧 renderer 不推此字段 → false 兜底。
-      worktreeEnabled: p.worktreeEnabled === true,
-    }, activeOwnerScopeKey());
-    broadcastNewMakerDraftChanged();
-  });
 
   // Worker 创建偏好与模型默认值同样以 renderer localStorage 为真源。main 只保留
   // 权限模式镜像，供 Orca UI / MCP 创建路径读取。
@@ -8177,6 +8152,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   pendingAgentSwitchApplyHolder = async (sessionId, signal, selection) => {
     const release = await acquireSendToSessionLock(sessionId);
     try {
+      await reconcileBotModelRoute(sessionId, true);
       await applyPendingAgentSwitchIfIdle(agentSwitchDeps, sessionId, {
         bootstrapAfterSwitch: true,
         signal,
@@ -8703,6 +8679,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // await 上,日志即可直接定位挂点(PR #2829 QA:回执 deliver 挂死 64 分钟零线索)。
     let lockStage = 'resolve-session-meta+row';
     const run = waitPrev.then(async () => {
+      await reconcileBotModelRoute(targetSessionId, true);
       const [meta, dbRow] = await Promise.all([
         maker.getSessionMeta(targetSessionId).catch(() => null),
         getSessionRowSnapshot(targetSessionId),
@@ -10853,6 +10830,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
 
   const reconcileBotModelRoute = createBotModelRouteReconciler({
     ownerEpoch: captureSessionRuntimeControlOwnerEpoch,
+    withSessionLock: withSendToSessionLock,
     read: async (sessionId, purpose) => {
       const [row] = await getDbClient().drizzle.select({
         capabilitiesJson: botProfileVersions.capabilitiesJson,
@@ -10880,11 +10858,12 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
           eq(sessions.status, 'active'),
         )).limit(1);
       if (!row) return null;
-      const chain = await readEffectiveBotModelChain(JSON.parse(row.capabilitiesJson));
+      const selection = await readEffectiveBotModelSelection(JSON.parse(row.capabilitiesJson));
       const control = getSessionRuntimeControlSnapshot(sessionId);
       const live = maker.getSession(sessionId);
       return {
-        chain,
+        chain: selection.chain,
+        followsCindyDefault: selection.followsCindyDefault,
         current: {
           agentKind: live?.agentKind ?? dbToMakerAgentKind(row.agentKind),
           model: live?.model ?? row.model ?? '',
@@ -10901,18 +10880,18 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (route.agentKind !== current.agentKind) {
         // Register the ordinary switch intent. Its existing send transaction
         // parks the native binding and hands history to the chosen harness.
-        await withSendToSessionLock(sessionId, () => performSessionAgentSwitch(agentSwitchDeps, {
+        await performSessionAgentSwitch(agentSwitchDeps, {
           sessionId,
           targetAgentKind: route.agentKind,
           model: route.model,
           providerId: route.providerId,
           effort: route.effort,
           fastMode: route.fastMode,
-        }));
+        });
       } else {
         const result = await applySessionRuntimeSelection(sessionId, route.model, route.providerId,
           { effort: route.effort as SessionRuntimeProfile['effort'], fastMode: route.fastMode },
-          { source: 'user', deferWhileRunning: true });
+          { source: 'user', deferWhileRunning: true, sessionLockHeld: true });
         if (runtimeSelectionRequiresModelWindowConfirmation(result)) {
           throwIpcError('PRECONDITION_FAILED', 'Model context window confirmation is required');
         }
@@ -11932,6 +11911,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     const compactedRuntime = maker.getSession(sessionId);
     if (compactedRuntime) await refreshBotCapabilityEpochBeforeSend(compactedRuntime);
     return await withSendToSessionLock(sessionId, async () => {
+      await reconcileBotModelRoute(sessionId, true);
       const [botInput] = await getDbClient()
         .drizzle.select({
           source: sessions.source,

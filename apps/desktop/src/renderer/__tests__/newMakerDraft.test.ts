@@ -1810,3 +1810,14 @@ describe('newMakerDraft store', () => {
     });
   });
 });
+
+
+it('does not stamp a prior owner draft during the synchronous auth handoff', async () => {
+  const { setNewMakerDraftOwner, getDraftForOwnerPreferenceSync, patchCurrentVendorPrefs } = await loadModule();
+  setNewMakerDraftOwner('A');
+  patchCurrentVendorPrefs({ model: 'owner-a-model' });
+  expect(getDraftForOwnerPreferenceSync('B')).toBeNull();
+  setNewMakerDraftOwner('B');
+  expect(getDraftForOwnerPreferenceSync('B')?.lastByVendor.cc.model).not.toBe('owner-a-model');
+  expect(getDraftForOwnerPreferenceSync('A')).toBeNull();
+});

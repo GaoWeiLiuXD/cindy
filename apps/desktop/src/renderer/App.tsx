@@ -1,3 +1,4 @@
+import { getDataOwnerGeneration } from './contexts/dataOwnerGeneration';
 import { RouterProvider } from 'react-router-dom';
 
 import { useEffect } from 'react';
@@ -48,7 +49,7 @@ import {
 } from '@/lib/localCatalogSnapshot';
 import { useResyncAgentIslandSettingsAfterLogin } from '@/hooks/useAgentIslandSettings';
 import {
-  getDraftForPreferenceSync,
+  getDraftForOwnerPreferenceSync,
   subscribeDraft,
   setEffortForModel,
   setFastModeForModel,
@@ -99,7 +100,9 @@ function LoginHandoffHost({ children }: { children: React.ReactNode }) {
 function syncNewMakerPrefs() {
   // 多 renderer 的模块内存彼此独立；跨窗口通知必须从共享持久快照同步，避免旧窗口把
   // 自己的 model / workingDir 等完整旧草稿覆盖进 main 缓存。
-  const draft = getDraftForPreferenceSync();
+  const owner = getDataOwnerGeneration();
+  const draft = getDraftForOwnerPreferenceSync(owner.dataOwnerId);
+  if (!draft) return;
   const cc = draft.lastByVendor.cc;
   window.electronAPI.syncDesktopCcPrefs({
     model: cc.model,
@@ -116,6 +119,7 @@ function syncNewMakerPrefs() {
   // 不消费这两项,远程草稿镜像才用)。fire-and-forget。
   const selected = draft.lastByVendor[draft.vendor];
   window.electronAPI.syncNewMakerDraft({
+    ownerStamp: { dataOwnerId: owner.dataOwnerId, ownerGeneration: owner.generation },
     selectedRoute: {
       harness: draft.vendor === 'cc' || draft.vendor === 'orca' ? 'claude' : draft.vendor,
       providerId: selected.providerId ?? null,

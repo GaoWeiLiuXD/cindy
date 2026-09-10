@@ -138,19 +138,26 @@ export async function resetBotModelChainSettings(
  * A null override means the permanent Bot Profile follows the owner-scoped
  * global route chain. Explicit per-Bot chains remain frozen in its profile.
  */
-export async function readEffectiveBotModelChain(
+export async function readEffectiveBotModelSelection(
   config: Record<string, unknown>,
-  options?: { rootPath?: string; providers?: readonly ProviderView[]; availableAgents?: ReadonlySet<'cc' | 'codex' | 'pi'> },
-): Promise<BotModelRoute[]> {
+  options?: Parameters<typeof readBotModelChainSettingsState>[0],
+): Promise<{ chain: BotModelRoute[]; followsCindyDefault: boolean }> {
   if (Array.isArray(config.modelChainOverride)) {
     const explicit = normalizeBotModelChain(config.modelChainOverride);
-    if (explicit.length > 0) return explicit;
+    if (explicit.length > 0) return { chain: explicit, followsCindyDefault: false };
   }
-  // Before modelChainOverride existed, modelOverride:null was the durable
-  // marker for “follow the Bot default”. Preserve that meaning on upgrade.
-  if (config.modelChainOverride === null || config.modelOverride === null) {
-    return (await readBotModelChainSettings(options)).modelChain;
+  // Preserve old explicit routes; null is the durable follow-default marker.
+  if (config.modelChainOverride !== null && config.modelOverride !== null) {
+    const legacy = normalizeBotModelChain(config.modelChain, config);
+    if (legacy.length || typeof config.model === 'string') return { chain: legacy, followsCindyDefault: false };
   }
-  const legacy = normalizeBotModelChain(config.modelChain, config);
-  return legacy.length || typeof config.model === 'string' ? legacy : (await readBotModelChainSettings(options)).modelChain;
+  const state = await readBotModelChainSettingsState(options);
+  return { chain: state.value.modelChain, followsCindyDefault: !state.isCustomized };
+}
+
+export async function readEffectiveBotModelChain(
+  config: Record<string, unknown>,
+  options?: Parameters<typeof readBotModelChainSettingsState>[0],
+): Promise<BotModelRoute[]> {
+  return (await readEffectiveBotModelSelection(config, options)).chain;
 }

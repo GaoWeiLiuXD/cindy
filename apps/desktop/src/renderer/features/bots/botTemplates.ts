@@ -1,6 +1,7 @@
 import {
   BOT_TEMPLATE_PRESET_AVATARS,
   BOT_TEMPLATE_PRESET_IDENTITIES,
+  CINDY_DEFAULT_IDENTITY,
   type BotTemplatePresetId,
 } from '../../../shared/botTemplatePreset';
 
@@ -28,7 +29,7 @@ export const BOT_TEMPLATES: readonly BotTemplateDefinition<BotTemplateId>[] = [
     avatarColor: 'blue',
     translationKey: 'cindy',
     toolsets: ['docs'],
-    identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy,
+    identitySource: CINDY_DEFAULT_IDENTITY,
   },
   {
     id: 'dash',

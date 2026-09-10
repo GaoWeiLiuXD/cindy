@@ -4,7 +4,7 @@
  * 不维护第二份资料或决定 canonical Session。
  */
 import { provisionDefaultBot } from '../../maker-ipc/botDefaultProvisioning.js';
-import { BOT_TEMPLATE_PRESET_AVATARS, BOT_TEMPLATE_PRESET_IDENTITIES } from '../../../shared/botTemplatePreset.js';
+import { BOT_TEMPLATE_PRESET_AVATARS, BOT_TEMPLATE_PRESET_IDENTITIES, CINDY_DEFAULT_IDENTITY } from '../../../shared/botTemplatePreset.js';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
@@ -1320,7 +1320,7 @@ export function registerBotIpc(): void {
             return history.length > 0;
           },
           create: () => createBotProfile({ id: 'cindy-default', name: 'Cindy', templateId: 'cindy',
-            avatar: BOT_TEMPLATE_PRESET_AVATARS.cindy, identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy,
+            avatar: BOT_TEMPLATE_PRESET_AVATARS.cindy, identitySource: CINDY_DEFAULT_IDENTITY,
             prepareInvitation: true }),
         });
       } catch (error) {

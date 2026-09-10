@@ -309,7 +309,7 @@ export function buildBotCapabilityContextPrompt(
   // tunnels cindy, so keep plugin guidance there.
   const cindyAvailable = options.cindyAvailable !== false;
   const pluginGuidance = cindyAvailable
-    ? ' Installed plugins are a separate discovery surface from Skill/MCP/toolset references. An empty capability search does not mean no plugin can do the work. Before declaring a connected-service task unavailable, inspect the relevant installed plugin. Installed plugins are available on demand through `cindy` (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions.'
+    ? ' Installed plugins are a separate discovery surface from Skill/MCP/toolset references. An empty capability search does not mean no plugin can do the work. Before declaring a connected-service task unavailable, inspect the relevant installed plugin. Installed plugins are available on demand through `cindy` (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions. When a plugin returns SETUP_REQUIRED with an authorization request id, its login/configuration card is already in this chat and the requested tool has not run. End the turn and wait for the Host authorization-completed notification, then continue the original work through the live plugin tool. Do not poll, ask for credentials in chat, invent login links, or treat login as task execution approval. The phone can display/cancel the card; connection and secret entry happen on the trusted desktop.'
     : '';
   return [
     '## Cindy Bot Runtime',
@@ -825,7 +825,9 @@ export async function hydrateBotProfileRuntime(
     partnerActionsEnabled: row.role === 'canonical' && helperAvailable,
     routinesEnabled: row.role === 'canonical' && helperAvailable && !opts.remoteHostId,
     botCreationEnabled: row.role === 'canonical' && helperAvailable,
-    ownSkillsEnabled: ownSkillPluginRoot !== null,
+    // Skill management is available before the first Skill exists. An empty
+    // index must not hide the instructions for learning the first reusable method.
+    ownSkillsEnabled: row.role === 'canonical' && helperAvailable && !opts.remoteHostId,
     botModeEnabled: row.role === 'canonical',
   };
   /*

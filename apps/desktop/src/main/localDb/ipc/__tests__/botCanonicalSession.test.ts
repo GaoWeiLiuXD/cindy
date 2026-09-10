@@ -1646,10 +1646,12 @@ describe('Bot canonical Session lifecycle', () => {
       permissionMode: 'bypassPermissions',
     });
 
-    const first = await hydrateBotProfileRuntime(makeOpts(), {
+    const initial = makeOpts();
+    const first = await hydrateBotProfileRuntime(initial, {
       listSkills: async () => [],
       listOwnSkills: async () => ({ pluginRoot: '/userdata/bot-skills/bot-1', skills: [] }),
     });
+    expect(initial.botProfileContextPrompt).toContain('save_bot_skill');
     await markBotProfileRuntimeApplied(first!);
 
     const resumed = makeOpts();

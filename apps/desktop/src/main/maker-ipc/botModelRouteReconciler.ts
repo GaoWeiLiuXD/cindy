@@ -14,13 +14,14 @@ interface BotRouteState {
   chain: BotModelRoute[];
   current: RuntimeRoute;
   hasRuntimeOverride: boolean;
+  followsCindyDefault?: boolean;
   next?: RuntimeRoute;
 }
 
 function configuredRoute(state: BotRouteState, previous: string | undefined, chain = state.chain): RuntimeRoute | null {
   const key = JSON.stringify(chain);
   const isDraftChange = key !== JSON.stringify(state.chain);
-  if (!isDraftChange && state.hasRuntimeOverride && (previous === undefined || previous === key)) return null;
+  if (!state.followsCindyDefault && !isDraftChange && state.hasRuntimeOverride && (previous === undefined || previous === key)) return null;
   const primary = chain[0];
   if (!primary) return null;
   return {
@@ -30,12 +31,18 @@ function configuredRoute(state: BotRouteState, previous: string | undefined, cha
   };
 }
 
+function sameRoute(a: RuntimeRoute, b: RuntimeRoute): boolean {
+  return a.agentKind === b.agentKind && a.model === b.model && a.providerId === b.providerId
+    && a.effort === b.effort && a.fastMode === b.fastMode;
+}
+
 /** Apply the permanent profile through ordinary Session model/switch controls.
  * Fallback and Agent choices remain effective until the configured chain changes.
  * Background tasks keep their frozen route; the reader selects canonical tasks only.
  */
 export function createBotModelRouteReconciler(deps: {
   ownerEpoch(): string;
+  withSessionLock?<T>(sessionId: string, run: () => Promise<T>): Promise<T>;
   read(sessionId: string, purpose: 'apply' | 'preview'): Promise<BotRouteState | null>;
   apply(sessionId: string, route: RuntimeRoute, current: RuntimeRoute): Promise<void>;
 }) {
@@ -51,11 +58,11 @@ export function createBotModelRouteReconciler(deps: {
     }
     return epoch;
   };
-  const reconcile = async (sessionId: string): Promise<void> => {
+  const reconcile = async (sessionId: string, sessionLockHeld = false): Promise<void> => {
     const epoch = syncOwner();
     const existing = inFlight.get(sessionId);
-    if (existing) return existing;
-    const operation = (async () => {
+    if (existing && !sessionLockHeld) return existing;
+    const run = async () => {
       const state = await deps.read(sessionId, 'apply');
       if (deps.ownerEpoch() !== epoch) throw new Error('Bot model route owner changed');
       if (!state) {
@@ -73,14 +80,16 @@ export function createBotModelRouteReconciler(deps: {
         return;
       }
       const current = state.current;
-      if (route.agentKind !== current.agentKind || route.model !== current.model
-        || route.providerId !== current.providerId || route.effort !== current.effort
-        || route.fastMode !== current.fastMode) {
+      if (!sameRoute(route, current) || (state.next && !sameRoute(route, state.next))) {
         await deps.apply(sessionId, route, current);
       }
       if (deps.ownerEpoch() !== epoch) throw new Error('Bot model route owner changed');
       configured.set(sessionId, key);
-    })();
+    };
+    // Read after acquiring the same lock as ordinary sends. A caller already
+    // inside that lock must never await an outside reconcile queued behind it.
+    if (sessionLockHeld) return run();
+    const operation = deps.withSessionLock ? deps.withSessionLock(sessionId, run) : run();
     inFlight.set(sessionId, operation);
     try { await operation; } finally {
       if (inFlight.get(sessionId) === operation) inFlight.delete(sessionId);
