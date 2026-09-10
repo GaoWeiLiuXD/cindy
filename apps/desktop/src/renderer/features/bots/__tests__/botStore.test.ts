@@ -17,6 +17,13 @@ import { getDefaultModelForVendor } from '@/lib/modelDefinitions';
 import { getCachedProvidersSnapshot } from '@/lib/providersSnapshotStore';
 import { getPersistedVendorModel } from '@/state/newMakerDraft';
 
+vi.mock('@/state/newMakerDraft', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/state/newMakerDraft')>(),
+  getDraftForPreferenceSync: () => ({ vendor: 'pi', lastByVendor: { pi: {
+    model: 'z-ai/glm-5.3-flash', providerId: 'xd', effort: 'high',
+  } }, fastModeByModel: {} }),
+}));
+
 vi.mock('@/hooks/useAvailableAgents', () => ({ getCachedAvailableVendors: () => new Set(['cc', 'codex', 'pi']) }));
 
 vi.mock('@/lib/modelDefinitions', () => ({
@@ -138,7 +145,7 @@ describe('bot profile store', () => {
     });
   });
 
-  it('defaults new Bots to Pi GLM-5.3-Flash when it is selectable', () => {
+  it('uses Cindy selected default when it is selectable', () => {
     const bot = addBotProfile({ name: 'Pi Bot', description: '' });
     createdIds.push(bot.id);
 
@@ -150,7 +157,7 @@ describe('bot profile store', () => {
     });
   });
 
-  it('selects connected client defaults when GLM-5.3-Flash is unavailable', () => {
+  it('does not replace an unavailable Cindy default with another connected model', async () => {
     setProviders([
       piProvider(
         'openai',
@@ -164,15 +171,8 @@ describe('bot profile store', () => {
       piProvider('xd', false, [piModel('z-ai/glm-5.3-flash')]),
     ]);
 
-    const bot = addBotProfile({ name: 'Fallback Bot', description: '' });
-    createdIds.push(bot.id);
-
-    expect(bot.capabilities).toMatchObject({
-      harness: 'pi',
-      model: 'chatgpt/gpt-5.6-sol',
-      providerId: 'openai',
-      effort: 'medium',
-    });
+    await expect(addBotProfileAndWait({ name: 'Needs default', description: '' }))
+      .rejects.toBeInstanceOf(BotModelSelectionRequiredError);
   });
 
   it('does not create an empty profile when a connected source has no recommended model', async () => {

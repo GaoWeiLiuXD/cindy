@@ -1,18 +1,11 @@
 import { isModelSelectableForNewRoute } from '@cindy/model-providers';
-import { resolveNewMakerDefaultTuples } from './newMakerDefaultTuple.js';
-import { BOT_MODEL_CHAIN_MAX, type BotModelRoute } from './botModelChain.js';
+import type { resolveNewMakerDefaultTuples } from './newMakerDefaultTuple.js';
+import type { BotModelRoute } from './botModelChain.js';
 
 /** Adapt the client's ordered defaults to Bot routes without another selection policy. */
 export function defaultBotModelChain(
   args: Parameters<typeof resolveNewMakerDefaultTuples>[0] & { preferredRoute?: BotModelRoute | null },
 ): BotModelRoute[] {
-  const chain: BotModelRoute[] = resolveNewMakerDefaultTuples(args).map((tuple) => ({
-    harness: tuple.vendor === 'cc' ? 'claude' : tuple.vendor,
-    providerId: tuple.providerId,
-    model: tuple.model,
-    effort: tuple.effort ?? '',
-    fastMode: false,
-  }));
   const preferred = args.preferredRoute;
   if (preferred && !args.providersLoading && args.availableAgentsLoaded) {
     const agent = preferred.harness === 'claude' ? 'claude-code' : preferred.harness;
@@ -28,5 +21,6 @@ export function defaultBotModelChain(
       return [preferred];
     }
   }
-  return chain.slice(0, BOT_MODEL_CHAIN_MAX);
+  // Missing, stale or unavailable Cindy defaults are not permission to choose a replacement.
+  return [];
 }

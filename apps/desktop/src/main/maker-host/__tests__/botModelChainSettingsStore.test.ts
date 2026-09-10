@@ -31,7 +31,7 @@ import { setModelVisibilityMirror } from '../model-visibility-mirror';
 import { setNewMakerDraftCache } from '../newMakerDefaultsCache';
 beforeEach(() => {
   setModelVisibilityMirror({}, { fallback: true });
-  setNewMakerDraftCache({ lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
+  setNewMakerDraftCache({ selectedRoute: { harness: 'codex', providerId: 'openai', model: 'gpt-5.6-sol', effort: 'medium', fastMode: false }, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
 });
 
 const roots: string[] = [];
@@ -63,6 +63,10 @@ describe('bot model chain settings store', () => {
       routing: { codex: { upstream: 'https://example.invalid', authStrategy: 'oauth-passthrough' } },
       models: { codex: [{ id: 'gpt-5.6-sol', mode: 'chat', status: 'active', efforts: ['medium'], defaultEffort: 'medium' }] },
     }] as ProviderView[];
+    // Connected catalog alone cannot select a model while the default mirror is absent.
+    setNewMakerDraftCache({ lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
+    expect((await readBotModelChainSettingsState({ rootPath, providers })).value.modelChain).toEqual([]);
+    setNewMakerDraftCache({ selectedRoute: { harness: 'codex', providerId: 'openai', model: 'gpt-5.6-sol', effort: 'medium', fastMode: false }, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
     const state = await readBotModelChainSettingsState({ rootPath, providers });
     expect(state.isCustomized).toBe(false);
     expect(state.value.modelChain[0]).toMatchObject({
@@ -92,7 +96,7 @@ describe('bot model chain settings store', () => {
     expect(await readEffectiveBotModelChain({ modelChainOverride: null, model: 'gpt-5.6-sol', effort: 'low' }, { rootPath, providers })).toEqual([selectedRoute]);
     setModelVisibilityMirror({}, { fallback: true });
     expect((await readBotModelChainSettingsState({ rootPath, providers })).value.modelChain).toEqual([selectedRoute]);
-    setModelVisibilityMirror({}, { fallback: false, followCatalogKeys: [] });
+    setModelVisibilityMirror({ 'codex:openai:gpt-5.6-luna': false }, { fallback: true });
     expect(await readEffectiveBotModelChain({ modelChainOverride: null }, { rootPath, providers })).toEqual([]);
   });
 

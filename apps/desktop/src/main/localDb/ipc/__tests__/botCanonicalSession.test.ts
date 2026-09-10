@@ -1,3 +1,4 @@
+import { setNewMakerDraftCache } from '../../../maker-host/newMakerDefaultsCache';
 import { setModelVisibilityMirror } from '../../../maker-host/model-visibility-mirror';
 import Database from 'better-sqlite3';
 import type { ProviderView } from '@cindy/model-providers';
@@ -460,6 +461,7 @@ beforeEach(async () => {
   h.getSession.mockReset();
   h.getSession.mockReturnValue(null);
   h.ownerScopeKey = 'owner-a:1';
+  setNewMakerDraftCache({ selectedRoute: { harness: 'pi', providerId: 'xd', model: 'z-ai/glm-5.3-flash', effort: 'high', fastMode: false }, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, h.ownerScopeKey);
   h.ownerBoundaryPending = false;
   h.searchConversations.mockResolvedValue({
     query: '',
@@ -577,6 +579,7 @@ describe('Bot canonical Session lifecycle', () => {
       routing: { codex: { upstream: 'https://example.invalid', authStrategy: 'oauth-passthrough' } },
       models: { codex: [{ id: 'gpt-5.6-sol', mode: 'chat', status: 'active', efforts: ['medium'], defaultEffort: 'medium' }] },
     }] as ProviderView[];
+    setNewMakerDraftCache({ selectedRoute: { harness: 'codex', providerId: 'openai', model: 'gpt-5.6-sol', effort: 'medium', fastMode: false }, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, h.ownerScopeKey);
     const created = await invoke('local-db:bots:create', { id: 'codex-only', name: 'Codex Bot' });
     const canonical = await invoke('local-db:bots:create-canonical-session', {
       botId: created.id, expectedCanonicalSessionId: created.canonicalSessionId ?? null,
