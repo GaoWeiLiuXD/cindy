@@ -424,15 +424,19 @@ describe('Host automatic review lifecycle', () => {
     const reviewGate = createDeferred();
     const closeGate = createDeferred();
     const modeGate = createDeferred();
+    const planGate = createDeferred();
+    let planMode: boolean | null = false;
     const review = vi.fn(async () => { await reviewGate.promise; return { verdict: 'allow' as const }; });
     const handle = { id: 'host-review', agentKind, model: 'm',
       send: async () => { running = true; }, events: () => events, isTurnRunning: () => running,
       requestGracefulStop: async () => ({ status: 'requested' }),
       close: () => closeGate.promise.finally(() => events.end()), setPermissionMode: () => modeGate.promise, abort: async () => {},
       setInteractionResolver() {}, reviewAutoPermissionAction: review,
+      getPlanMode: () => planMode,
+      setPlanMode: async (enabled: boolean) => { await planGate.promise; planMode = enabled; },
     } as unknown as AgentSessionHandle;
     const session = new Session({ id: 'host-review', agentKind, workDir: '/repo', handle,
-      capabilities: { permissionModes: [{ id: 'ask', displayName: 'Ask' }], setPermissionModeMidSession: { supported: true } } as never,
+      capabilities: { permissionModes: [{ id: 'ask', displayName: 'Ask' }], setPermissionModeMidSession: { supported: true }, planMode: { supported: true } } as never,
       logger: createLogger(), permissionMode, turnStallMs: 0,
     });
     const emit = async (event: AgentEvent) => {
@@ -443,9 +447,49 @@ describe('Host automatic review lifecycle', () => {
       await vi.waitFor(() => expect(seen).toHaveBeenCalled());
       unsubscribe();
     };
-    return { session, review, reviewGate, closeGate, modeGate, emit };
+    return { session, handle, review, reviewGate, closeGate, modeGate, planGate, setProviderPlanMode: (value: boolean | null) => { planMode = value; }, emit };
   }
   const action = { kind: 'other' as const, description: 'plugin file handoff' };
+  it('does not invalidate Host authority for a no-op Plan update', async () => {
+    const { session, closeGate } = setup();
+    const before = session.stablePlanModeState;
+    await session.setPlanMode(false);
+    expect(session.stablePlanModeState).toEqual(before);
+    closeGate.resolve();
+    await session.close();
+  });
+  it.each(['bypassPermissions', 'auto', 'ask'] as const)('Host %s cannot override enabled or unknown Plan mode', async (mode) => {
+    const { session, review, setProviderPlanMode, closeGate } = setup('pi', mode);
+    for (const enabled of [true, null]) {
+      setProviderPlanMode(enabled);
+      expect(await session.reviewHostPermissionAction(action)).toMatchObject({ verdict: 'block' });
+    }
+    expect(review).not.toHaveBeenCalled();
+    closeGate.resolve();
+    await session.close();
+  });
+  it.each(['enabled', 'restored', 'failed'] as const)('Plan changes invalidate pending Host approvals even when %s', async (outcome) => {
+    const { session, handle, review, reviewGate, planGate, closeGate } = setup();
+    const oldGeneration = session.stablePlanModeState?.generation;
+    const pending = session.reviewHostPermissionAction(action);
+    await vi.waitFor(() => expect(review).toHaveBeenCalledOnce());
+    const changing = session.setPlanMode(true);
+    expect(session.stablePlanModeState).toBeNull();
+    expect(await session.reviewHostPermissionAction(action)).toMatchObject({ verdict: 'block' });
+    planGate.resolve();
+    await changing;
+    if (outcome !== 'enabled') await session.setPlanMode(false);
+    if (outcome === 'failed') {
+      // Even a provider transport failure invalidates the previous authority.
+      handle.setPlanMode = async () => { throw new Error('transport failed'); };
+      await expect(session.setPlanMode(true)).rejects.toThrow('transport failed');
+    }
+    expect(session.stablePlanModeState?.generation).not.toBe(oldGeneration);
+    reviewGate.resolve();
+    expect(await pending).toMatchObject({ verdict: 'block' });
+    closeGate.resolve();
+    await session.close();
+  });
   it.each(['bypassPermissions', 'ask'] as const)('Host operations follow %s without AI review', async (mode) => {
     const { session, review, closeGate } = setup('pi', mode);
     expect(await session.reviewHostPermissionAction(action)).toEqual({ verdict: mode === 'ask' ? 'ask' : 'allow' });

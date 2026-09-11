@@ -6986,7 +6986,14 @@ export class CodexAgent extends BaseAgent {
           // (codex review P1;与已修复的 Pi / Claude 线程同口径)。cast 破 TS 收窄:TS 不建模
           // await 期间经 setPermissionMode 的重赋值,仍视此处为 'auto';运行期确实可能已变。
           const modeAfterReview = mutablePermissionMode as PermissionMode;
-          if (modeAfterReview === 'bypassPermissions') return 'accept';
+          if (modeAfterReview === 'bypassPermissions') {
+            if (turnPolicyForcePrompt) {
+              denialReason = formatPermissionDenial('system', 'Permission mode changed; retry within the authorized turn scope.');
+              reportMcpDenial('system');
+              return 'decline';
+            }
+            return 'accept';
+          }
           if (modeAfterReview !== 'auto') {
             forcePrompt = true;
           } else if (decision.verdict === 'allow') {

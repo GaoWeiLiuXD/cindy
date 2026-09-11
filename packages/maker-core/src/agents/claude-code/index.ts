@@ -2235,6 +2235,9 @@ export class ClaudeCodeAgent extends BaseAgent {
         // mutablePermissionMode 仍视为 'auto';运行期它确实可能已变,故按 union 类型现读。
         const modeAfterReview = mutablePermissionMode as PermissionMode;
         if (modeAfterReview === 'bypassPermissions') {
+          if (turnPolicyForcePrompt) {
+            return { behavior: 'deny', message: 'Permission mode changed; retry within the authorized turn scope.' };
+          }
           return { behavior: 'allow', updatedInput: executionInput };
         }
         if (modeAfterReview !== 'auto') {
@@ -3423,15 +3426,17 @@ export class ClaudeCodeAgent extends BaseAgent {
                 reason: 'no interaction resolver attached; denying non-read-only tool (fail-closed)',
               };
             }
-            if (mutablePermissionMode === 'bypassPermissions') {
-              return { kind: 'permission', behavior: 'allow' };
-            }
-            // 远端会话走同一份 host MCP 策略 —— 否则 SSH 会话里可信 server 又要逐次
-            // 弹窗, prompt-each-time 的"禁止持久化授权"保护也整套缺失。
             const remoteTurnPolicyForcePrompt = forceTurnConfirmation(
               remoteToolName || 'unknown',
               params.input ?? {},
             );
+            if (mutablePermissionMode === 'bypassPermissions') {
+              return remoteTurnPolicyForcePrompt
+                ? { kind: 'permission', behavior: 'deny', reason: 'Permission mode changed; retry within the authorized turn scope.' }
+                : { kind: 'permission', behavior: 'allow' };
+            }
+            // 远端会话走同一份 host MCP 策略 —— 否则 SSH 会话里可信 server 又要逐次
+            // 弹窗, prompt-each-time 的"禁止持久化授权"保护也整套缺失。
             const remoteMcpPolicy = classifyMcpApprovalPolicy(remoteToolName, params.input ?? {});
             const remoteHostApprovalPresentation = mcpApprovalPresentation(
               remoteToolName,
@@ -3463,7 +3468,11 @@ export class ClaudeCodeAgent extends BaseAgent {
                 'linux',
               );
               const modeAfterReview = mutablePermissionMode as PermissionMode;
-              if (modeAfterReview === 'bypassPermissions') return { kind: 'permission', behavior: 'allow' };
+              if (modeAfterReview === 'bypassPermissions') {
+                return remoteTurnPolicyForcePrompt
+                  ? { kind: 'permission', behavior: 'deny', reason: 'Permission mode changed; retry within the authorized turn scope.' }
+                  : { kind: 'permission', behavior: 'allow' };
+              }
               if (modeAfterReview === 'auto' && autoDecision.verdict === 'allow') {
                 return { kind: 'permission', behavior: 'allow' };
               }

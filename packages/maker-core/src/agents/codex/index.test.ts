@@ -13732,6 +13732,31 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
+  it.each([false, true])('Auto to Full access retains turn scope without restoring MCP forced prompts (%s)', async (restricted) => {
+    const gate = deferred<{ verdict: 'allow' }>();
+    const review = vi.fn<AutoReviewDelegate>(() => gate.promise);
+    const agent = new CodexAgent(createDeps({}, { reviewAutoPermissionAction: review, getMcpToolApprovalPolicy: () => 'prompt-each-time' }));
+    const host = installFakeHost(agent, (method) => method === Method.TurnStart ? { turn: { id: 'scope-turn' } } : undefined);
+    const handle = await agent.startSession({ sessionId: 'scope-switch', model: 'gpt-5.5', providerId: 'xd', workingDir: '/repo', permissionMode: 'auto' });
+    const resolver = vi.fn(async () => ({ kind: 'permission', behavior: 'allow' }) as const);
+    handle.setInteractionResolver(resolver);
+    await handle.send({ type: 'user', content: 'Send the approved report.' }, restricted ? {
+      turnPermissionPolicy: {
+        origin: { kind: 'im', channel: 'telegram' }, confirmationSurface: 'channel', forceConfirmToolCall: () => true,
+      },
+    } : undefined);
+    const pending = host.getThreadHandlers()!.mcpServerElicitation!({
+      threadId: 'start-thread-id', turnId: 'scope-turn', serverName: 'cindy', mode: 'form',
+      _meta: { codex_approval_kind: 'mcp_tool_call', tool_name: 'send', tool_params: {} }, message: 'Allow tool call', requestedSchema: {},
+    });
+    await vi.waitFor(() => expect(review).toHaveBeenCalledOnce());
+    await handle.setPermissionMode!('bypassPermissions');
+    gate.resolve({ verdict: 'allow' });
+    expect(await pending).toEqual({ action: restricted ? 'decline' : 'accept', content: null, _meta: null });
+    expect(resolver).not.toHaveBeenCalled();
+    await handle.close();
+  });
+
   it.each(['prompt', 'prompt-each-time'] as const)('Auto MCP policy %s uses AI allow/block/ask', async (policy) => {
     for (const verdict of ['allow', 'block', 'ask'] as const) {
       const review = vi.fn<AutoReviewDelegate>(async () => ({ verdict }));

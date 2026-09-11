@@ -1650,6 +1650,29 @@ describe('remote sessions share the same permission semantics', () => {
     await handle.close();
   });
 
+  it.each([false, true])('remote Auto to Full access retains turn scope without restoring MCP forced prompts (%s)', async (restricted) => {
+    let release!: (decision: { verdict: 'allow' }) => void;
+    const reviewer = vi.fn(() => new Promise<{ verdict: 'allow' }>((resolve) => { release = resolve; }));
+    const { handle, onApprovalRequest, seen } = await startRemoteSession(() => 'prompt-each-time', {
+      permissionMode: 'auto', reviewAutoPermissionAction: reviewer,
+      attachResolver: () => ({ kind: 'permission', behavior: 'allow' }),
+    });
+    await handle.send({ type: 'user', content: 'Send the approved report.' }, restricted ? {
+      turnPermissionPolicy: {
+        origin: { kind: 'im', channel: 'telegram' }, confirmationSurface: 'channel', forceConfirmToolCall: () => true,
+      },
+    } : undefined);
+    const pending = onApprovalRequest({ requestId: 'remote-scope-switch', kind: 'permission',
+      toolName: 'mcp__cindy_contacts__call_tool', input: { name: 'contacts_merge' },
+    });
+    await vi.waitFor(() => expect(reviewer).toHaveBeenCalledOnce());
+    await handle.setPermissionMode!('bypassPermissions');
+    release({ verdict: 'allow' });
+    expect(await pending).toMatchObject({ behavior: restricted ? 'deny' : 'allow' });
+    expect(permissionRequests(seen)).toHaveLength(0);
+    await handle.close();
+  });
+
   it('reviews remote destructive paths with explicit unavailable realpath evidence', async () => {
     const reviewer = vi.fn(async () => ({ verdict: 'allow' as const }));
     const { handle, onApprovalRequest, seen } = await startRemoteSession(
