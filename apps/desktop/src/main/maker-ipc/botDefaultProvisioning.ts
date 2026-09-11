@@ -9,6 +9,22 @@ export async function markDefaultBotOffered(ownerRoot: string): Promise<void> {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
 }
 
+/** Initialization and deletion must serialize on the captured owner's receipt. */
+export async function withDefaultBotProvisioningLock<T>(
+  ownerRoot: string,
+  assertOwner: () => void,
+  action: () => Promise<T>,
+): Promise<T> {
+  assertOwner();
+  const receipt = path.join(ownerRoot, 'bots', '.initial-companion');
+  await fs.mkdir(path.dirname(receipt), { recursive: true });
+  return withCrossProcessLock(`${receipt}.lock`, { label: 'initial-companion' }, async lock => {
+    if (!lock.held) throw new Error(`Default teammate initialization lock ${lock.reason}`);
+    assertOwner();
+    return action();
+  });
+}
+
 /** One-time onboarding receipt, deliberately outside any deletable Bot Home. */
 export async function provisionDefaultBot(input: {
   ownerRoot: string;
@@ -18,10 +34,7 @@ export async function provisionDefaultBot(input: {
 }): Promise<void> {
   input.assertOwner();
   const receipt = path.join(input.ownerRoot, 'bots', '.initial-companion');
-  await fs.mkdir(path.dirname(receipt), { recursive: true });
-  await withCrossProcessLock(`${receipt}.lock`, { label: 'initial-companion' }, async lock => {
-    if (!lock.held) return;
-    input.assertOwner();
+  await withDefaultBotProvisioningLock(input.ownerRoot, input.assertOwner, async () => {
     try {
       await fs.access(receipt);
       return;

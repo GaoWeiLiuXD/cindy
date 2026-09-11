@@ -5425,6 +5425,53 @@ describe('CodexAgent.startSession developerInstructions', () => {
     await handle.close();
   });
 
+  it('deduplicates a persisted remote teammate guide across new handles and refreshes updates/compaction', async () => {
+    // A remote rollout is the durable evidence; no process-local injected flag.
+    let rollout = '';
+    let injections = 0;
+    const readFileTail = vi.fn(async () => rollout);
+    const resume = async (guide: string) => {
+      const agent = new CodexAgent(createDeps({}, {
+        getRemoteAgentFileOps: () => ({ readFileTail, readFile: vi.fn(), stat: vi.fn(), listDir: vi.fn(), sha256File: vi.fn() }),
+      }));
+      installFakeHost(agent, (method, params) => {
+        if (method === Method.ThreadResume) return {
+          thread: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', path: '/remote/rollout.jsonl' },
+          model: 'gpt-5.4', modelProvider: 'openai', cwd: '/remote',
+        };
+        if (method === Method.ThreadInjectItems) {
+          injections++;
+          for (const item of (params as { items: unknown[] }).items) {
+            rollout += JSON.stringify({ type: 'response_item', payload: item }) + '\n';
+          }
+          return {};
+        }
+      }, { userAgent: 'mock-codex/0.153.4',
+        buildSessionMcpConfig: () => ({ 'mcp_servers.cindy_helper.url': 'http://remote.test/mcp' }) });
+      const handle = await agent.startSession({
+        sessionId: 'old-remote-teammate', resumeSessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        remoteHostId: 'remote-host', workingDir: '/remote', model: 'gpt-5.4', providerId: 'openai',
+        botProfileContextPrompt: guide,
+        botRuntimeProfile: { botId: 'old', profileVersion: 5,
+          skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
+          mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
+          toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
+        },
+      });
+      await handle.close();
+    };
+    await resume('GUIDE A');
+    expect(injections).toBe(1);
+    await resume('GUIDE A');
+    expect(injections).toBe(1);
+    await resume('GUIDE B');
+    expect(injections).toBe(2);
+    rollout += JSON.stringify({ type: 'compacted' }) + '\n';
+    await resume('GUIDE B');
+    expect(injections).toBe(3);
+    expect(readFileTail).toHaveBeenCalledWith('/remote/rollout.jsonl', 256 * 1024);
+  });
+
   it('keeps thread/start developerInstructions identical to proxy resume registered text for the same prompt inputs', async () => {
     const runtimeConfig = { systemPrompt: 'HOST PRODUCT PROMPT' };
     const userPrompt = [

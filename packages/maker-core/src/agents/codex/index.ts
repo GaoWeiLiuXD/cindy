@@ -6068,8 +6068,9 @@ export class CodexAgent extends BaseAgent {
     let threadId!: string;
     let sessionRolloutPath: string | undefined;
     const recordNativeThreadLocation = async (thread: { id: string; [key: string]: unknown }): Promise<void> => {
-      if (opts.remoteHostId || !sessionCodexHome || typeof thread.path !== 'string') return;
+      if (typeof thread.path !== 'string') return;
       sessionRolloutPath = thread.path;
+      if (opts.remoteHostId || !sessionCodexHome) return;
       await this.deps.recordCodexThreadLocation?.(thread.id, sessionSqliteHome ?? sessionCodexHome, thread.path);
     };
     let codexThreadModelProviderId: string | undefined;
@@ -6240,7 +6241,8 @@ export class CodexAgent extends BaseAgent {
         // native history API before exposing the refreshed runtime as ready.
         if (opts.botRuntimeProfile && developerInstructions && !useProxyChannel) {
           const current = teammateRuntimeInstructionItem(developerInstructions);
-          if (!await hasCurrentTeammateInstructions(opts.remoteHostId ? undefined : sessionRolloutPath, current.marker)) {
+          if (!await hasCurrentTeammateInstructions(sessionRolloutPath, current.marker,
+            opts.remoteHostId ? this.deps.getRemoteAgentFileOps?.(opts.remoteHostId) ?? {} : undefined)) {
             assertCurrentHost('thread/inject_items');
             await host.request(Method.ThreadInjectItems, { threadId, items: [current.item] }, {
               timeoutMs: CRITICAL_THREAD_RPC_TIMEOUT_MS,

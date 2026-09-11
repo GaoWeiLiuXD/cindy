@@ -85,6 +85,7 @@ describe('bot model chain settings store', () => {
     const providers = [{
       id: 'openai', source: 'builtin', connected: true, agents: ['codex'],
       access: { kind: 'subscription', product: 'ChatGPT' },
+      routing: { codex: { upstream: 'https://example.invalid', authStrategy: 'oauth-passthrough' } },
       models: { codex: ['gpt-5.6-sol', 'gpt-5.6-luna'].map(id => ({
         id, mode: 'chat', status: 'active', efforts: ['low', 'medium'], defaultEffort: 'low',
       })) },
@@ -94,6 +95,9 @@ describe('bot model chain settings store', () => {
     setNewMakerDraftCache({ selectedRoute, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
     expect((await readBotModelChainSettingsState({ rootPath, providers })).value.modelChain).toEqual([selectedRoute]);
     expect(await readEffectiveBotModelChain({ modelChainOverride: null, model: 'gpt-5.6-sol', effort: 'low' }, { rootPath, providers })).toEqual([selectedRoute]);
+    setNewMakerDraftCache({ selectedRoute: { ...selectedRoute, providerId: null }, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, owner.key);
+    expect(await readEffectiveBotModelChain({ modelChainOverride: null }, { rootPath, providers })).toEqual([selectedRoute]);
+    expect(await fs.readdir(rootPath)).toEqual([]);
     setModelVisibilityMirror({}, { fallback: true });
     expect((await readBotModelChainSettingsState({ rootPath, providers })).value.modelChain).toEqual([selectedRoute]);
     setModelVisibilityMirror({ 'codex:openai:gpt-5.6-luna': false }, { fallback: true });

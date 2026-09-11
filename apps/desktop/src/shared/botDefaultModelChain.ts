@@ -1,4 +1,4 @@
-import { isModelSelectableForNewRoute } from '@cindy/model-providers';
+import { effectiveSourceIdForModel } from '@cindy/model-providers';
 import type { resolveNewMakerDefaultTuples } from './newMakerDefaultTuple.js';
 import type { BotModelRoute } from './botModelChain.js';
 
@@ -10,15 +10,16 @@ export function defaultBotModelChain(
   if (preferred && !args.providersLoading && args.availableAgentsLoaded) {
     const agent = preferred.harness === 'claude' ? 'claude-code' : preferred.harness;
     const vendor = agent === 'claude-code' ? 'cc' : agent;
-    const provider = args.providers.find(p => p.id === preferred.providerId && p.connected
-      && !p.suspended && !p.modelDiscoveryFailure);
-    const model = provider?.models[agent]?.find(m => m.id === preferred.model);
-    if (provider && model && args.availableAgents.has(vendor)
-      && (args.isModelEnabled?.(agent, provider.id, model) ?? model.defaultEnabled !== false)
-      && isModelSelectableForNewRoute(model, { userProvider: provider.source === 'user' })) {
-      // A selected Cindy default is not consent to add factory fallback models.
-      // Additional routes belong to the explicitly configured Bot model chain.
-      return [preferred];
+    if (!args.availableAgents.has(vendor)) return [];
+    // Legacy drafts may leave the source implicit. Resolve only the selected
+    // model through the ordinary task resolver, after applying user availability.
+    const providers = args.providers.filter(p => p.connected && !p.suspended && !p.modelDiscoveryFailure)
+      .map(p => ({ ...p, models: { ...p.models, [agent]: (p.models[agent] ?? []).filter(m =>
+        args.isModelEnabled?.(agent, p.id, m) ?? m.defaultEnabled !== false) } }));
+    const providerId = effectiveSourceIdForModel(providers, preferred.providerId, preferred.model, agent);
+    if (providerId) {
+      // A selected app default is not consent to add factory fallback models.
+      return [{ ...preferred, providerId }];
     }
   }
   // Missing, stale or unavailable Cindy defaults are not permission to choose a replacement.

@@ -119,6 +119,21 @@ afterEach(async () => {
 });
 
 describe('companion invitation with SQLite and real skill files', () => {
+  it('keeps cold-start recovery pending until the welcome dispatcher is registered', async () => {
+    vi.resetModules();
+    const cold = await import('../botInvitation.js');
+    seed({ stage: 'welcome' }, { modelChain: [{ harness: 'codex', providerId: 'user-provider', model: 'user-model' }] });
+    const createCanonicalSession = vi.fn(async () => ({ canonicalSessionId: 'chat-1' }));
+    cold.queueBotInvitation('bot-1', { canStartWelcome: async () => true, createCanonicalSession, broadcastProfileChanged: h.broadcast });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(state().stage).toBe('welcome');
+    expect(createCanonicalSession).not.toHaveBeenCalled();
+    cold.setBotInvitationWelcomeDispatch(h.welcome);
+    await vi.waitFor(() => expect(state().stage).toBe('ready'));
+    expect(createCanonicalSession).toHaveBeenCalledOnce();
+    expect(h.welcome).toHaveBeenCalledOnce();
+  });
+
   it('preserves a saved draft on upgrade, then greets through the actual runtime', async () => {
     seed({ draft });
     queueBotInvitation('bot-1');

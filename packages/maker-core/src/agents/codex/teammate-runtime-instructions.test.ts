@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { hasCurrentTeammateInstructions, teammateRuntimeInstructionItem } from './teammate-runtime-instructions';
 let root: string;
 let file: string;
@@ -38,4 +38,23 @@ it('does not accept a delivery marker from before a compaction boundary', async 
   expect(await hasCurrentTeammateInstructions(file, marker)).toBe(false);
   await writeFile(file, JSON.stringify({ type: 'compacted', payload: { message: 'brief summary' } }) + '\n' + entry('BASELINE'));
   expect(await hasCurrentTeammateInstructions(file, marker)).toBe(true);
+});
+
+it('reads remote history again after reconnect, while respecting updates and compaction', async () => {
+  let history = entry('BASELINE A');
+  const readFileTail = vi.fn(async () => history);
+  const marker = teammateRuntimeInstructionItem('BASELINE A').marker;
+  expect(await hasCurrentTeammateInstructions('/remote/rollout.jsonl', marker, { readFileTail })).toBe(true);
+  expect(await hasCurrentTeammateInstructions('/remote/rollout.jsonl', marker, { readFileTail })).toBe(true);
+  expect(readFileTail).toHaveBeenCalledWith('/remote/rollout.jsonl', 256 * 1024);
+  history += entry('BASELINE B');
+  expect(await hasCurrentTeammateInstructions('/remote/rollout.jsonl', marker, { readFileTail })).toBe(false);
+  history += JSON.stringify({ type: 'compacted' }) + '\n';
+  expect(await hasCurrentTeammateInstructions('/remote/rollout.jsonl', teammateRuntimeInstructionItem('BASELINE B').marker, { readFileTail })).toBe(false);
+});
+it('never uses local history for a missing, incompatible or failed remote reader', async () => {
+  await writeFile(file, entry('BASELINE'));
+  const marker = teammateRuntimeInstructionItem('BASELINE').marker;
+  expect(await hasCurrentTeammateInstructions(file, marker, {})).toBe(false);
+  expect(await hasCurrentTeammateInstructions(file, marker, { readFileTail: async () => { throw new Error('SSH disconnected'); } })).toBe(false);
 });

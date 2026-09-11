@@ -79,7 +79,13 @@ const h = await vi.hoisted(async () => {
 });
 
 vi.mock('node:fs/promises', () => ({ default: { rm: h.remove } }));
-vi.mock('../../../maker-ipc/botDefaultProvisioning.js', () => ({ provisionDefaultBot: vi.fn(), markDefaultBotOffered: vi.fn() }));
+vi.mock('../../../maker-ipc/botDefaultProvisioning.js', () => ({
+  provisionDefaultBot: vi.fn(), markDefaultBotOffered: vi.fn(),
+  withDefaultBotProvisioningLock: async (_root: string, assertOwner: () => void, action: () => Promise<unknown>) => {
+    assertOwner();
+    return action();
+  },
+}));
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => h.userDataDir),
@@ -448,6 +454,7 @@ beforeEach(async () => {
   h.nextSession = 0;
   h.providers = [{
     id: 'xd', connected: true, source: 'builtin', agents: ['pi'], access: { kind: 'managed' },
+    routing: { pi: { upstream: 'https://example.invalid', authStrategy: 'gateway-key' } },
     models: { pi: [{ id: 'z-ai/glm-5.3-flash', efforts: ['high'], defaultEffort: 'high',
       newSessionDefault: ['pi'], supportsImageInput: true }] },
   }] as ProviderView[];

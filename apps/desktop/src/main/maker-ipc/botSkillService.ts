@@ -187,13 +187,14 @@ export async function saveBotSkillForSession(
       ...(params.slug ? { slug: params.slug } : {}),
     });
     assertOwnerBoundary(deps, boundary);
-    const refreshQueued = (deps.requestRefresh ?? requestBotRuntimeEpochRefresh)(
+    const refreshed = await (deps.requestRefresh ?? requestBotRuntimeEpochRefresh)(
       owner.canonicalSessionId ?? params.callerSessionId, 'resource',
     );
+    assertOwnerBoundary(deps, boundary);
     return {
       ok: true,
       created,
-      effective: refreshQueued ? 'next-turn' : 'next-session',
+      effective: refreshed ? 'next-turn' : 'next-session',
       skill: {
         slug: record.slug,
         name: record.name,

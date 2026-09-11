@@ -46,6 +46,7 @@ type WelcomeDispatch = (input: {
 let welcomeDispatch: WelcomeDispatch | undefined;
 export function setBotInvitationWelcomeDispatch(dispatch: WelcomeDispatch): void {
   welcomeDispatch = dispatch;
+  drainInvitations();
 }
 
 const log = createLogger('botInvitation');
@@ -247,6 +248,9 @@ export function queueBotInvitation(
 }
 
 function drainInvitations(): void {
+  // DB recovery can precede Maker IPC registration. Keep owner-bound work queued
+  // until the real dispatcher exists, rather than persisting a false failure.
+  if (!welcomeDispatch) return;
   while (running.size < MAX_RUNNING && pending.size) {
     const [key, task] = pending.entries().next().value!;
     pending.delete(key);

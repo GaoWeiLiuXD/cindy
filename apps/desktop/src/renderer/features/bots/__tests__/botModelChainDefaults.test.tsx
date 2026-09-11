@@ -55,6 +55,7 @@ function providers(gatewayConnected: boolean, openaiConnected: boolean): Provide
     source: 'builtin',
     connected: index === 0 ? gatewayConnected : openaiConnected,
     agents: [route.harness],
+    routing: { [route.harness]: { upstream: 'https://example.invalid', authStrategy: 'oauth-passthrough' } },
     access: index === 0 ? { kind: 'managed' } : { kind: 'subscription', product: 'openai' },
     models: { [route.harness]: [{
       id: route.model, name: route.model, status: 'active', sortOrder: 0,

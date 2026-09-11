@@ -10946,7 +10946,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   });
 
   configureBotRuntimeEpochRefreshRequest((sessionId, reason) => {
-    void (async () => {
+    return (async () => {
       const refresh = (live: WiredSession) => {
         botCompactRuntimeRefreshCoordinator.noteBoundary(live);
         return botCompactRuntimeRefreshCoordinator.attempt(live);
@@ -10965,6 +10965,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       if (outcome === 'refreshed') {
         log.info('Bot runtime capability epoch refreshed', { sessionId, reason });
       }
+      return outcome;
     }).catch((error) => {
       // Profile/resource writes must not create an unhandled rejection. The
       // refresh coordinator preflights before close, so the current healthy
@@ -10974,6 +10975,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
         reason,
         error: error instanceof Error ? error.message : String(error),
       });
+      return 'deferred' as const;
     });
   });
 

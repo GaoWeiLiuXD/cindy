@@ -23,7 +23,7 @@ const id = JSON.stringify(['codex', 'openai', 'luna']);
 
 beforeEach(() => {
   host.owner = 'owner:1'; host.enabled = true; host.connected = true; host.agents = ['codex'];
-  host.providers.mockImplementation(async () => [{ id: 'openai', source: 'builtin', connected: host.connected,
+  host.providers.mockImplementation(async () => [{ id: 'openai', source: 'builtin', connected: host.connected, agents: ['codex'], routing: { codex: { upstream: 'https://example.invalid', authStrategy: 'oauth-passthrough' } },
     models: { codex: ['luna', 'sol'].map(model => ({ id: model, status: 'active', mode: 'chat', defaultEnabled: true,
       efforts: ['low', 'medium'], defaultEffort: 'medium' })) } }] as ProviderView[]);
   mirror();

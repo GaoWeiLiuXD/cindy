@@ -42,8 +42,8 @@ const SAVE = {
 };
 
 describe('saveBotSkillForSession', () => {
-  it('queues the canonical chat for safe refresh after a delegated task learns a Skill', async () => {
-    const requestRefresh = vi.fn(() => true);
+  it('confirms the canonical chat refresh after a delegated task learns a Skill', async () => {
+    const requestRefresh = vi.fn(async () => true);
     const result = await saveBotSkillForSession(SAVE, { ...depsFor('bot-1'), requestRefresh,
       resolveBotId: async () => ({ ok: true, botId: 'bot-1', canonicalSessionId: 'main-chat' }),
     });
@@ -52,8 +52,22 @@ describe('saveBotSkillForSession', () => {
     expect(await readBotSkillForBot('bot-1', 'weekly-report', { userDataDir })).not.toBeNull();
   });
 
+  it('waits for refresh completion and reports a failed refresh without losing the saved Skill', async () => {
+    let complete!: (refreshed: boolean) => void;
+    const refresh = new Promise<boolean>(resolve => { complete = resolve; });
+    const requestRefresh = vi.fn(() => refresh);
+    let settled = false;
+    const saving = saveBotSkillForSession(SAVE, { ...depsFor('bot-1'), requestRefresh })
+      .then(result => { settled = true; return result; });
+    await vi.waitFor(() => expect(requestRefresh).toHaveBeenCalledOnce());
+    expect(settled).toBe(false);
+    complete(false);
+    expect(await saving).toMatchObject({ ok: true, effective: 'next-session' });
+    expect(await readBotSkillForBot('bot-1', 'weekly-report', { userDataDir })).not.toBeNull();
+  });
+
   it('does not request a runtime refresh when saving fails', async () => {
-    const requestRefresh = vi.fn(() => true);
+    const requestRefresh = vi.fn(async () => true);
     expect(await saveBotSkillForSession({ ...SAVE, name: '无有效名字' }, { ...depsFor('bot-1'), requestRefresh }))
       .toMatchObject({ ok: false });
     expect(requestRefresh).not.toHaveBeenCalled();
@@ -121,6 +135,15 @@ describe('saveBotSkillForSession', () => {
 
     expect(result).toMatchObject({ ok: false, errorCode: 'OWNER_SCOPE_CHANGED' });
     await expect(fs.access(path.join(userDataDir, 'bots', 'bot-1'))).rejects.toBeTruthy();
+  });
+
+  it('does not return a Skill receipt to a different owner after awaiting runtime refresh', async () => {
+    let scope = 'owner-a:1';
+    const result = await saveBotSkillForSession(SAVE, {
+      ...depsFor('bot-1'), ownerScopeKey: () => scope, ownerBoundaryPending: () => false,
+      requestRefresh: async () => { scope = 'owner-b:2'; return true; },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'OWNER_SCOPE_CHANGED' });
   });
 
   it('turns a store rejection into an errorCode instead of throwing at the MCP boundary', async () => {
