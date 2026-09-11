@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import type { ProviderView } from '@cindy/model-providers';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -73,6 +73,7 @@ const h = await vi.hoisted(async () => {
   customMcpConfigs: [] as CustomMcpConfig[],
   mcpProviders: [] as McpProvider[],
   providers: [] as ProviderView[],
+  listProviders: vi.fn(async (): Promise<ProviderView[]> => h.providers),
   ownerScopeKey: 'owner-a:1',
   ownerBoundaryPending: false,
 });
@@ -129,7 +130,7 @@ vi.mock('../../../maker-host/custom-mcp-store.js', async (importOriginal) => ({
   listCustomMcpServers: async () => h.customMcpConfigs,
 }));
 vi.mock('../../../maker-host/createDesktopProviderService.js', () => ({
-  getDesktopProviderService: () => ({ listProviders: async () => h.providers }),
+  getDesktopProviderService: () => ({ listProviders: h.listProviders }),
 }));
 vi.mock('../../../maker-host/index.js', () => ({
   validateBotCapabilityAdditions: h.validateCapabilityAdditions,
@@ -459,6 +460,7 @@ beforeEach(async () => {
   resetCustomMcpRegistry();
   registerCustomMcpArrays(h.mcpProviders);
   vi.clearAllMocks();
+  h.listProviders.mockReset().mockImplementation(async () => h.providers);
   vi.mocked(provisionDefaultBot).mockReset();
   h.remove.mockImplementation(async (...args) => {
     const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
@@ -851,6 +853,44 @@ describe('Bot canonical Session lifecycle', () => {
     h.sqlite!.prepare('DELETE FROM bot_profiles').run();
     await expect(mobileList()).resolves.toEqual([]);
     await expect(invoke('local-db:bots:list', undefined)).resolves.toEqual([]);
+  });
+
+  it.each(['legacy IPC', 'resource registry'])('queues committed Cindy before a failed projection on first %s entry', async (entry) => {
+    const real = await vi.importActual<typeof import('../../../maker-ipc/botDefaultProvisioning')>(
+      '../../../maker-ipc/botDefaultProvisioning');
+    vi.mocked(provisionDefaultBot).mockImplementation(real.provisionDefaultBot);
+    h.sqlite!.prepare('DELETE FROM bot_profiles').run();
+    h.ownerScopeKey = `mobile-projection-failure-${entry}:1`;
+    const invitation = await import('../../../maker-ipc/botInvitation');
+    const queued = vi.spyOn(invitation, 'queueBotInvitation').mockImplementation(() => {});
+    let projectionFailed = false;
+    h.listProviders.mockImplementation(async () => {
+      if (!projectionFailed && h.sqlite!.prepare("SELECT id FROM bot_profiles WHERE id = 'cindy-default'").get()) {
+        // A provider read after the create transaction, before the presentation
+        // can complete. The invitation must already be queued at this point.
+        expect(queued).toHaveBeenCalledWith('cindy-default', expect.any(Object), false);
+        projectionFailed = true;
+        throw new Error('Temporary provider projection failure');
+      }
+      return h.providers;
+    });
+    try {
+      const list: () => Promise<{ id: string }[]> = entry === 'legacy IPC' ? () => runDeviceLinkInvokeContext(
+        { controllerDeviceId: 'mobile-first', channel: 'local-db:bots:list' },
+        () => invoke('local-db:bots:list', undefined),
+      ) : listBotRemoteResourceSources;
+      expect((await list()).map(row => row.id)).toEqual(['cindy-default']);
+      expect(projectionFailed).toBe(true);
+      expect(queued).toHaveBeenCalledTimes(1);
+      const stored = h.sqlite!.prepare("SELECT capabilities_json AS config FROM bot_profile_versions WHERE bot_id = 'cindy-default'").get() as { config: string };
+      expect(JSON.parse(stored.config).invitation).toMatchObject({ stage: 'skills' });
+      // A second remote read only sees durable history. It must not be needed
+      // to repair the lost queue entry, or create a second default teammate.
+      expect((await list()).map(row => row.id)).toEqual(['cindy-default']);
+      expect(queued).toHaveBeenCalledTimes(1);
+    } finally {
+      queued.mockRestore();
+    }
   });
 
   it('rejects a remote list when its owner changes during provisioning', async () => {
@@ -1629,7 +1669,7 @@ describe('Bot canonical Session lifecycle', () => {
     expect(opts.botRuntimeProfile?.skillPolicy.catalog).toEqual([]);
   });
 
-  it('does not mount local learned Skills into a remote Bot task', async () => {
+  it.each(['pi', 'claude-code', 'codex'] as const)('does not advertise or mount local personal Skills on remote %s', async (agentKind) => {
     const created = await invoke('local-db:bots:create-canonical-session', {
       botId: 'bot-1',
       expectedCanonicalSessionId: null,
@@ -1637,7 +1677,7 @@ describe('Bot canonical Session lifecycle', () => {
     });
     const opts: MakerSessionCreateOpts = {
       id: created.session.id,
-      agentKind: 'pi',
+      agentKind,
       workingDir: created.session.workingDir,
       workspaceKind: 'dialogue',
       model: 'grok-4.5',
@@ -1647,6 +1687,7 @@ describe('Bot canonical Session lifecycle', () => {
 
     await hydrateBotProfileRuntime(opts, {
       listSkills: async () => [],
+      listToolsets: async () => [{ id: 'xdt_helper', name: 'Helper', available: true }],
       listOwnSkills: async () => ({
         pluginRoot: '/userdata/bot-skills/bot-1',
         skills: [{ name: 'weekly-report', description: '', path: '/userdata/bot-skills/bot-1/skills/weekly-report' }],
@@ -1656,6 +1697,41 @@ describe('Bot canonical Session lifecycle', () => {
     // 路径是本机的,远端 harness 打不开 —— 挂一串死路径比不挂更糟。
     expect(opts.botRuntimeProfile?.skillPolicy.ownSkills).toBeUndefined();
     expect(opts.botRuntimeProfile?.skillPolicy.ownSkillPluginRoots).toBeUndefined();
+    expect(opts.botProfileContextPrompt).not.toContain('`save_teammate_skill`');
+    expect(opts.botProfileContextPrompt).not.toContain('`list_teammate_skills`');
+    expect(opts.botProfileContextPrompt).not.toContain('then create or refine a useful personal Skill');
+    expect(opts.botProfileContextPrompt).toContain('Personal Skill storage and learning are unavailable');
+    expect(opts.botProfileContextPrompt).toContain('`create_teammate`');
+    expect(opts.botProfileContextPrompt).toContain('`start_session_task`');
+    expect(opts.botProfileContextPrompt).toContain('Respect the user’s memory switch');
+    if (agentKind === 'pi') expect(opts.botProfileContextPrompt).toContain('`ghost_list`, `ghost_info`, `ghost_call`');
+  });
+
+  it.each(['canonical', 'delegation'] as const)('rejects remote %s personal Skill access before local storage or refresh', async (role) => {
+    const created = await invoke('local-db:bots:create-canonical-session', {
+      botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+    });
+    const sessionId = created.session.id;
+    h.sqlite!.prepare('UPDATE sessions SET remote_host_id = ? WHERE id = ?').run('ssh-host', sessionId);
+    h.sqlite!.prepare('UPDATE bot_session_links SET role = ? WHERE session_id = ?').run(role, sessionId);
+    const userDataDir = join(h.userDataDir, `remote-skill-guard-${role}`);
+    const requestRefresh = vi.fn(async () => true);
+    const deps = { userDataDir, requestRefresh };
+    const input = { callerSessionId: sessionId, name: 'Verified workflow', description: 'A reusable method', body: 'A verified sequence of steps.' };
+    const rejected = { ok: false, errorCode: 'REMOTE_SKILLS_UNAVAILABLE' };
+    expect(await listBotSkillsForSession({ callerSessionId: sessionId }, deps)).toMatchObject(rejected);
+    expect(await saveBotSkillForSession(input, deps)).toMatchObject(rejected);
+    expect(existsSync(userDataDir)).toBe(false);
+    expect(requestRefresh).not.toHaveBeenCalled();
+
+    // Device-link control of a desktop runtime is still local: the execution
+    // target, not the caller's phone/transport, determines shelf availability.
+    h.sqlite!.prepare('UPDATE sessions SET remote_host_id = NULL WHERE id = ?').run(sessionId);
+    expect(await saveBotSkillForSession(input, deps)).toMatchObject({ ok: true, effective: 'next-turn' });
+    expect(await listBotSkillsForSession({ callerSessionId: sessionId }, deps)).toMatchObject({
+      ok: true, skills: [expect.objectContaining({ name: input.name })],
+    });
+    expect(requestRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('does not promise or mount a local Bot Home into a remote task', async () => {

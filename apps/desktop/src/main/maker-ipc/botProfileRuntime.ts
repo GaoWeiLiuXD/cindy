@@ -863,7 +863,7 @@ export async function hydrateBotProfileRuntime(
       // Delegation children keep Cindy's normal Session prompt plus their
       // narrow task context.
       ...(row.role === 'canonical'
-        ? [buildBotCapabilityContextPrompt({ helperAvailable, cindyAvailable })]
+        ? [buildBotCapabilityContextPrompt({ helperAvailable, cindyAvailable, ownSkillsEnabled: promptCapabilities.ownSkillsEnabled })]
         : []),
     ],
   };

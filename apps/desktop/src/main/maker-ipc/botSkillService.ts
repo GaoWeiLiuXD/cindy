@@ -128,6 +128,7 @@ async function defaultResolveBotId(callerSessionId: string): Promise<
       canonicalSessionId: botProfiles.canonicalSessionId,
       role: botSessionLinks.role,
       sessionStatus: sessions.status,
+      remoteHostId: sessions.remoteHostId,
       profileStatus: botProfiles.status,
       linkArchivedAt: botSessionLinks.archivedAt,
     })
@@ -144,6 +145,12 @@ async function defaultResolveBotId(callerSessionId: string): Promise<
   }
   if (row.role !== 'canonical' && row.role !== 'delegation') {
     return { ok: false, errorCode: 'BOT_SESSION_READ_ONLY', message: '当前 Bot 历史任务为只读状态' };
+  }
+  // Runtime hydration cannot mount the local personal shelf on an SSH host.
+  // Reject before migration/read/write and before refreshing the local canonical.
+  // Device-link callers executing on this desktop still have no remoteHostId.
+  if (row.remoteHostId) {
+    return { ok: false, errorCode: 'REMOTE_SKILLS_UNAVAILABLE', message: '当前远端任务尚未挂载伙伴自有 Skill 存储，不能读取或保存本机 Skill，也不能承诺远端生效' };
   }
   return { ok: true, botId: row.botId, canonicalSessionId: row.canonicalSessionId };
 }

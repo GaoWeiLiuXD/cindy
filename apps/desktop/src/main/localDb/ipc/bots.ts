@@ -1023,9 +1023,11 @@ export async function createBotProfile(raw: unknown) {
   }
   assertCreationOwnerStillCurrent();
   if (prepareInvitation) {
+    // Creation is already committed. A fallible presentation read must not
+    // strand that durable invitation before it reaches the runtime queue.
+    queueBotInvitation(id);
     const profile = await readProfile(client, id);
     broadcastBotProfileChanged({ botId: id, change: 'created' });
-    queueBotInvitation(id);
     return profile;
   }
   await syncBotProfileFolder(
