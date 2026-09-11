@@ -64,6 +64,7 @@ export interface BotControlState {
 /** Same instructions in the runtime baseline and tool descriptions. */
 export const TEAMMATE_CONTROL_GUIDANCE = [
   'Use `get_teammate_state` to inspect your current profile, stable chat, configured model candidates, memory switch and capability references. Candidates and selected references are not proof of the model or tools running this turn; the live runtime and registered tools are authoritative.',
+  'The references arrays contain optional external grants, not the shared teammate guide or your personal Skill shelf. Empty references do not mean you have no Skills. Use `list_teammate_skills` to inspect personal Skills; report the preloaded shared guide separately.',
   'Use `update_teammate_profile` only when the user asks to change your name, introduction or identity; read the current version first and patch only the requested fields. Changes apply next turn without replacing memory, Skills, model settings or chat history.',
   'Use `get_capabilities` for application features and UI guidance. It describes the product, not a permission grant or proof that every feature is available here. Use the matching live tool to act, and verify its result before claiming success.',
 ].join('\n');

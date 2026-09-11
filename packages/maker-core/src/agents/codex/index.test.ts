@@ -5384,6 +5384,47 @@ describe('CodexAgent.startSession developerInstructions', () => {
     await handle.close();
   });
 
+  it.each([false, true])('requires current teammate baseline delivery on native resume (injection rejected: %s)', async (rejectInjection) => {
+    const agent = new CodexAgent(createDeps({}));
+    const host = installFakeHost(agent, method => {
+      if (method !== Method.ThreadInjectItems) return undefined;
+      if (rejectInjection) throw new Error('instruction injection rejected');
+      return {};
+    }, { userAgent: 'mock-codex/0.153.4' });
+    const started = agent.startSession({
+      sessionId: 'old-teammate', resumeSessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      codexHistoryHasProductPrompt: true,
+      workingDir: '/repo', model: 'gpt-5.6-luna', providerId: 'openai', effort: 'medium',
+      botProfilePrompt: 'EXISTING USER PERSONA', botProfileContextPrompt: 'CURRENT TEAMMATE GUIDE',
+      botRuntimeProfile: {
+        botId: 'old', profileVersion: 5,
+        skillPolicy: { mode: 'allowlist', configured: [], catalog: [] },
+        mcpPolicy: { mode: 'allowlist', configured: [], catalog: [] },
+        toolsetPolicy: { mode: 'allowlist', configured: [], catalog: [] },
+      },
+    });
+    if (rejectInjection) {
+      await expect(started).rejects.toThrow('instruction injection rejected');
+      expect(host.request.mock.calls.some(([method]) => method === Method.ThreadStart || method === Method.TurnStart)).toBe(false);
+      return;
+    }
+    const handle = await started;
+    const calls = host.request.mock.calls;
+    const resume = calls.findIndex(([method]) => method === Method.ThreadResume);
+    const inject = calls.findIndex(([method]) => method === Method.ThreadInjectItems);
+    expect(inject).toBeGreaterThan(resume);
+    expect((calls[resume][1] as { developerInstructions?: string }).developerInstructions).toContain('CURRENT TEAMMATE GUIDE');
+    expect(calls.some(([method]) => method === Method.ThreadStart)).toBe(false);
+    expect(calls.some(([method]) => method === Method.TurnStart)).toBe(false);
+    const params = calls[inject][1] as { threadId: string; items: Array<{ role: string; content: Array<{ text: string }> }> };
+    expect(params.threadId).toBe('resume-thread-id');
+    expect(params.items[0].role).toBe('developer');
+    expect(params.items[0].content[0].text).toContain('CURRENT TEAMMATE GUIDE');
+    expect(params.items[0].content[0].text).toContain('EXISTING USER PERSONA');
+    expect(handle.codexProductPromptDelivery).toEqual({ threadId: 'resume-thread-id', historyHasProductPrompt: true });
+    await handle.close();
+  });
+
   it('keeps thread/start developerInstructions identical to proxy resume registered text for the same prompt inputs', async () => {
     const runtimeConfig = { systemPrompt: 'HOST PRODUCT PROMPT' };
     const userPrompt = [
