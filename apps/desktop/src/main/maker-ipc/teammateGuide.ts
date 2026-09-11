@@ -5,7 +5,7 @@ export const TEAMMATE_GUIDE_NAME = 'teammate-guide';
 export const TEAMMATE_GUIDE_DESCRIPTION = 'Shared operating procedures for every teammate: manage tasks, contact and create teammates, change model defaults, use tools, and maintain personal Skills and memory.';
 
 export function buildTeammateGuide(
-  options: { helperAvailable?: boolean; cindyAvailable?: boolean; ownSkillsEnabled?: boolean } = {},
+  options: { helperAvailable?: boolean; cindyAvailable?: boolean; ownSkillsEnabled?: boolean; pluginAuthorizationCardsEnabled?: boolean } = {},
 ): string {
   const helperAvailable = options.helperAvailable !== false;
   // Use the same capability signal as runtime Skill mounting and learning.
@@ -15,8 +15,11 @@ export function buildTeammateGuide(
   // plugins there would tell the model to call tools it cannot reach. Remote Pi
   // tunnels cindy, so keep plugin guidance there.
   const cindyAvailable = options.cindyAvailable !== false;
+  const pluginSetupGuidance = options.pluginAuthorizationCardsEnabled === false
+    ? ' This remote runtime does not provide plugin authorization cards or completion notifications. If a plugin returns SETUP_REQUIRED, the requested tool has not run. Ask the user to open the application’s Plugins page on the trusted desktop and complete that plugin’s connection or configuration, then retry the original work after the user confirms readiness. Do not wait for an authorization-completed notification, poll, request credentials in chat, invent login links, or treat login as task execution approval.'
+    : ' When a plugin returns SETUP_REQUIRED with an authorization request id, its login/configuration card is already in this chat and the requested tool has not run. End the turn and wait for the Host authorization-completed notification, then continue the original work through the live plugin tool. Do not poll, ask for credentials in chat, invent login links, or treat login as task execution approval. The phone can display/cancel the card; connection and secret entry happen on the trusted desktop.';
   const pluginGuidance = cindyAvailable
-    ? ' Installed plugins are a separate discovery surface from Skill/MCP/toolset references. An empty capability search does not mean no plugin can do the work. Before declaring a connected-service task unavailable, inspect the relevant installed plugin. Installed plugins are available on demand through the installed-plugin gateway (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions. When a plugin returns SETUP_REQUIRED with an authorization request id, its login/configuration card is already in this chat and the requested tool has not run. End the turn and wait for the Host authorization-completed notification, then continue the original work through the live plugin tool. Do not poll, ask for credentials in chat, invent login links, or treat login as task execution approval. The phone can display/cancel the card; connection and secret entry happen on the trusted desktop.'
+    ? ' Installed plugins are a separate discovery surface from Skill/MCP/toolset references. An empty capability search does not mean no plugin can do the work. Before declaring a connected-service task unavailable, inspect the relevant installed plugin. Installed plugins are available on demand through the installed-plugin gateway (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions.' + pluginSetupGuidance
     : '';
   return [
     '## teammate-guide — 伙伴使用指南',

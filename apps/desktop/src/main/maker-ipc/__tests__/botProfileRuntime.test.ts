@@ -54,7 +54,10 @@ describe('Bot Profile runtime prompt', () => {
     expect(context).toContain('current SOUL and user profile');
     expect(context).toContain('execution engines, not your personal identity');
     expect(context).toContain('context compaction, restarts, and model changes');
-    expect(context).toContain('teammate’s model settings in Cindy');
+    expect(context).toContain('Use available host tools for model changes');
+    expect(context).toContain('Connecting a new model or signing in to a provider is managed in Cindy settings');
+    expect(context).not.toContain('direct the user to the teammate’s model settings');
+    expect(context).not.toContain('claim access to settings you cannot operate');
     expect(context).toContain('Do not present terminal-only slash commands');
   });
 
