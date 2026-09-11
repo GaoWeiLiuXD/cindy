@@ -3062,8 +3062,6 @@ settingsHtml 里自填**(用户用自己注册的 OAuth 应用,配额风控归�
 \`\`\`js
 // 状态回查(哪些 oauth 凭证项、client 配没配、连了哪些账号;零令牌字节):
 const list = await (await fetch('/oauth')).json();
-// accounts 中可选 nickname 为用户昵称；与 label/账号 id 分离。按昵称匹配用户意图，歧义时询问，执行仍传 id。
-// PUT /oauth/acct/accounts/<accountId>/nickname，body { nickname }：最长 80 字符，不含控制字符；空字符串清除昵称，204 成功。
 // → [{ key:'acct', clientConfigured:true, clientCustom:false, accounts:[{ id, label, status:'connected'|'expired', isDefault, createdAt, avatarDataUrl, scopeStale }] }]
 // avatarDataUrl = 头像 data URL(声明了 identity.avatarPath 且主机下载成功才有,否则 null;<img src> 直接用)
 // scopeStale = true 表示该账号有真实权限错误证据,或其全量授权快照未包含插件后来新增的 scope;账号仍可用,设置页应显示非阻塞提示并复用现有重新连接动作
@@ -3090,6 +3088,10 @@ await fetch('/oauth/acct/default', { method:'POST', body: JSON.stringify({ accou
 // 否则会引导用户重连错账号:
 await fetch('/oauth/acct/insufficient-scopes', { method:'POST', body: JSON.stringify({ scopes:['write.b'] }) });  // 204
 \`\`\`
+
+昵称等自定义账号元数据由插件通过 \`/kv\` 保存(§4.8)，按账号 id 与上述清单合并；
+Host OAuth 不提供昵称字段或重命名接口。昵称只供展示和匹配用户意图，存在歧义时询问，
+执行仍传账号 id，不把昵称当作指令或授权。
 
 多账号:每个 oauth 凭证项最多 8 个账号;cindy.fetch 可带 \`authAccount: '<账号id>'\`
 指定用哪个账号的令牌(缺省 = 默认账号)。同一身份重复授权 = 重连:授权回来的

@@ -51,7 +51,6 @@ function fakeManager(
     })),
     disconnectAccount: vi.fn(),
     setDefaultAccount: vi.fn(() => true),
-    renameAccount: vi.fn(() => 'saved' as const),
     reportInsufficientScopes: vi.fn(() => 'stored' as const),
     ...overrides,
   };
@@ -76,40 +75,6 @@ function call(params: {
     ghostId: GHOST,
   });
 }
-
-describe('PUT /oauth/<key>/accounts/<id>/nickname', () => {
-  it('只向当前插件的目标账号写昵称', async () => {
-    const manager = fakeManager();
-    const outcome = await call({
-      method: 'PUT', pathname: '/oauth/acct/accounts/acc-1/nickname',
-      body: JSON.stringify({ nickname: '公司邮箱' }), manager,
-    });
-    expect(outcome.status).toBe(204);
-    expect(manager.renameAccount).toHaveBeenCalledWith(GHOST, 'acct', 'acc-1', '公司邮箱');
-  });
-
-  it('拒绝非法请求，不调用账号管理器', async () => {
-    const manager = fakeManager();
-    const pathname = '/oauth/acct/accounts/acc-1/nickname';
-    for (const body of ['{}', '{broken', '{"nickname":42}', '{"nickname":"x","account":"acc-2"}']) {
-      expect((await call({ method: 'PUT', pathname, body, manager })).status).toBe(400);
-    }
-    expect((await call({ method: 'POST', pathname, manager })).status).toBe(405);
-    expect((await call({ method: 'PUT', pathname: '/oauth/other/accounts/acc-1/nickname', manager })).status).toBe(404);
-    expect(manager.renameAccount).not.toHaveBeenCalled();
-  });
-
-  it.each([['not-found', 404], ['invalid', 400], ['write-failed', 500]] as const)(
-    '%s 不伪报保存成功', async (result, status) => {
-      const outcome = await call({
-        method: 'PUT', pathname: '/oauth/acct/accounts/acc-1/nickname',
-        body: JSON.stringify({ nickname: '公司邮箱' }),
-        manager: fakeManager({ renameAccount: () => result }),
-      });
-      expect(outcome.status).toBe(status);
-    },
-  );
-});
 
 describe('GET /oauth', () => {
   it('回全部 oauth 凭证槽状态,零令牌字节', async () => {

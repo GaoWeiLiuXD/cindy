@@ -69,7 +69,6 @@ export interface GhostOauthEndpointManager {
   ): Promise<GhostOauthConnectResult>;
   disconnectAccount(ghostId: string, secretKey: string, accountId: string): void;
   setDefaultAccount(ghostId: string, secretKey: string, accountId: string): boolean;
-  renameAccount(ghostId: string, secretKey: string, accountId: string, nickname: string): 'saved' | 'not-found' | 'invalid' | 'write-failed';
   /** 'unchanged' = 证据已在库未重写(调用方跳过广播);false = 无默认账号或写失败。 */
   reportInsufficientScopes(
     ghostId: string,
@@ -314,24 +313,6 @@ export async function handleGhostOauthRequest(args: {
       return { status: 204 };
     } catch (err) {
       log?.warn('ghost oauth 缺失 scope 证据入库失败', { ghostId, secretKey, err: String(err) });
-      return { status: 500 };
-    }
-  }
-
-  if (action === 'accounts' && segments.length === 4 && segments[3] === 'nickname') {
-    if (method !== 'PUT') return { status: 405 };
-    const parsed = await readJsonBody();
-    if (!parsed.ok) return { status: parsed.status };
-    const nickname = parsed.body.nickname;
-    if (typeof nickname !== 'string' || Object.keys(parsed.body).some((key) => key !== 'nickname')) return { status: 400 };
-    try {
-      const result = await runMutation(() => manager.renameAccount(ghostId, secretKey, segments[2], nickname));
-      if (result === 'not-found') return { status: 404 };
-      if (result === 'invalid') return { status: 400 };
-      if (result === 'write-failed') return { status: 500 };
-      notifyChanged(secretKey);
-      return { status: 204 };
-    } catch {
       return { status: 500 };
     }
   }
