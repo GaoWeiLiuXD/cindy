@@ -1366,7 +1366,7 @@ describe('Bot canonical Session lifecycle', () => {
     const allowed = resolveBotAllowedBuiltinPluginIds(policy.catalog, policy.configured);
     expect(allowed.includes('xdt_helper')).toBe(helperEnabled);
     expect(opts.botProfileContextPrompt?.includes('`start_session_task`')).toBe(helperEnabled);
-    expect(opts.botProfileContextPrompt?.includes('`find_bot_capabilities`')).toBe(helperEnabled);
+    expect(opts.botProfileContextPrompt?.includes('`find_teammate_capabilities`')).toBe(helperEnabled);
     // Remote Claude/Codex mount helper but not the cindy plugin gateway.
     expect(opts.botProfileContextPrompt).not.toContain('ghost_list');
     expect(opts.botProfileContextPrompt).not.toContain('ghost_call');
@@ -1396,7 +1396,7 @@ describe('Bot canonical Session lifecycle', () => {
       }],
     });
 
-    expect(opts.botProfileContextPrompt).toContain('`find_bot_capabilities`');
+    expect(opts.botProfileContextPrompt).toContain('`find_teammate_capabilities`');
     expect(opts.botProfileContextPrompt).toContain('ghost_list');
     expect(opts.botProfileContextPrompt).toContain('ghost_call');
   });
@@ -1542,6 +1542,11 @@ describe('Bot canonical Session lifecycle', () => {
     await hydrateBotProfileRuntime(opts, {
       listSkills: async () => [],
       listOwnSkills: async ({ botId }) => ({
+        baseline: { pluginRoot: '/userdata/managed-teammate-skills/v1', skill: {
+          name: 'teammate-guide', description: 'Shared baseline',
+          path: '/userdata/managed-teammate-skills/v1/skills/teammate-guide',
+          filePath: '/userdata/managed-teammate-skills/v1/skills/teammate-guide/SKILL.md',
+        } },
         pluginRoot: `/userdata/bot-skills/${botId}`,
         skills: [{
           name: 'weekly-report',
@@ -1553,6 +1558,9 @@ describe('Bot canonical Session lifecycle', () => {
     }, { persistSnapshot: false });
 
     expect(opts.botRuntimeProfile?.skillPolicy.ownSkills).toEqual([
+      { name: 'teammate-guide', description: 'Shared baseline',
+        path: '/userdata/managed-teammate-skills/v1/skills/teammate-guide',
+        filePath: '/userdata/managed-teammate-skills/v1/skills/teammate-guide/SKILL.md' },
       {
         name: 'weekly-report',
         description: 'How I put the weekly report together',
@@ -1562,6 +1570,7 @@ describe('Bot canonical Session lifecycle', () => {
     ]);
     // Claude Code 只会开关它自己发现到的 Skill,所以还要给它一个本地 plugin 根。
     expect(opts.botRuntimeProfile?.skillPolicy.ownSkillPluginRoots).toEqual([
+      '/userdata/managed-teammate-skills/v1',
       '/userdata/bot-skills/bot-1',
     ]);
     // 用户配的 Skill 那一栏不受影响。
@@ -1651,7 +1660,7 @@ describe('Bot canonical Session lifecycle', () => {
       listSkills: async () => [],
       listOwnSkills: async () => ({ pluginRoot: '/userdata/bot-skills/bot-1', skills: [] }),
     });
-    expect(initial.botProfileContextPrompt).toContain('save_bot_skill');
+    expect(initial.botProfileContextPrompt).toContain('save_teammate_skill');
     await markBotProfileRuntimeApplied(first!);
 
     const resumed = makeOpts();

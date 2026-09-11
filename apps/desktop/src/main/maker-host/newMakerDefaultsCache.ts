@@ -50,6 +50,11 @@ export interface NewMakerDraftSnapshot {
 
 let cache: NewMakerDraftSnapshot | null = null;
 let selectedRouteOwner: string | undefined;
+const defaultListeners = new Set<(confirmedRequestId?: string) => void>();
+export function subscribeNewMakerDefaults(listener: (confirmedRequestId?: string) => void): () => void {
+  defaultListeners.add(listener);
+  return () => { defaultListeners.delete(listener); };
+}
 
 export interface WorkerCreationPrefsSnapshot {
   workerPermissionMode: OrcaWorkerPermissionMode;
@@ -74,9 +79,10 @@ export type ProviderModelMemorySnapshot = Record<
 let providerMemoryCache: ProviderModelMemorySnapshot | null = null;
 
 /** Renderer push handler 调; 整体替换缓存 (而不是合并), 跟 source of truth 对齐。 */
-export function setNewMakerDraftCache(snapshot: NewMakerDraftSnapshot, ownerScope?: string): void {
+export function setNewMakerDraftCache(snapshot: NewMakerDraftSnapshot, ownerScope?: string, confirmedRequestId?: string): void {
   cache = snapshot;
   selectedRouteOwner = ownerScope;
+  for (const listener of defaultListeners) listener(confirmedRequestId);
 }
 
 /** One owner-fenced mirror for both ordinary task defaults and Bot defaults. */
@@ -87,7 +93,7 @@ export function syncNewMakerDraftCache(
   boundaryPending: boolean,
 ): boolean {
   if (boundaryPending || !raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
-  const p = raw as Partial<NewMakerDraftSnapshot> & { ownerStamp?: unknown };
+  const p = raw as Partial<NewMakerDraftSnapshot> & { ownerStamp?: unknown; appDefaultModelRequestId?: unknown };
   if (!isDataOwnerPushStamp(p.ownerStamp)
     || p.ownerStamp.dataOwnerId !== activeOwner.dataOwnerId
     || p.ownerStamp.ownerGeneration !== activeOwner.ownerGeneration) return false;
@@ -100,7 +106,8 @@ export function syncNewMakerDraftCache(
     fastModeByModel: p.fastModeByModel!,
     effortByModel: p.effortByModel!,
     worktreeEnabled: p.worktreeEnabled === true,
-  }, ownerScope);
+  }, ownerScope, typeof p.appDefaultModelRequestId === 'string' && p.appDefaultModelRequestId.length <= 64
+    ? p.appDefaultModelRequestId : undefined);
   return true;
 }
 

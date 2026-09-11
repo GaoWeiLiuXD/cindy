@@ -1,3 +1,4 @@
+import { configureAppDefaultModelSelection } from './appDefaultModelControl.js';
 import { setBotInvitationWelcomeDispatch } from './botInvitation.js';
 import type { TurnUsageContext } from './turnUsageContext.js';
 import { registerPluginListHandler } from './pluginListHandler.js';
@@ -4589,6 +4590,13 @@ let disposePiPackagesChangedBroadcast: (() => void) | null = null;
  * soon as the Renderer selects an owner, before the splash-gated Maker IPC bundle is available.
  */
 export function registerModelVisibilitySyncIpc(): void {
+  configureAppDefaultModelSelection((appDefaultSelection) => {
+    broadcastToAllWindows(MAKER_PUSH.DRAFT_PREF_APPLY, {
+      agent: appDefaultSelection.route.harness === 'claude' ? 'claude-code' : appDefaultSelection.route.harness,
+      providerId: appDefaultSelection.route.providerId ?? '', modelId: appDefaultSelection.route.model,
+      active: true, appDefaultSelection,
+    });
+  });
   // Register with model visibility before the first window; a cold-start preference
   // push must not be lost while the larger Maker bundle is still initializing.
   ipcMain.on(MAKER_SEND.SYNC_NEW_MAKER_DRAFT, (event, payload: unknown) => {

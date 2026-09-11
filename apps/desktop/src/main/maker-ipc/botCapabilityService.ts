@@ -1,3 +1,4 @@
+import { inspectAppDefaultModel, changeAppDefaultModel } from './appDefaultModelControl.js';
 import type { BotControlState } from '@cindy/mcps';
 import { and, eq } from 'drizzle-orm';
 import { botProfiles, botProfileVersions, botSessionLinks, sessions } from '../localDb/schema.js';
@@ -229,6 +230,26 @@ async function selectBotCapability(input: Input & { id: string; joined: boolean 
 /** Host callbacks are bound at initialization, without importing the host singleton. */
 export function createBotCapabilityService(deps: BotCapabilityServiceDeps) {
   return {
+    async models(input: { callerSessionId: string }) {
+      try {
+        const ctx = await context(input.callerSessionId);
+        const selection = await inspectAppDefaultModel();
+        ctx.assertOwner();
+        return { ok: true as const, ...selection };
+      } catch {
+        return { ok: false as const, errorCode: 'MODEL_SETTINGS_UNAVAILABLE', message: '无法读取当前用户的默认模型和可用型号' };
+      }
+    },
+    async setDefaultModel(input: { callerSessionId: string; id: string; effort?: string }) {
+      try {
+        const ctx = await context(input.callerSessionId);
+        const result = await changeAppDefaultModel(input.id, input.effort, ctx.assertOwner);
+        ctx.assertOwner();
+        return { ok: true as const, ...result };
+      } catch {
+        return { ok: false as const, errorCode: 'MODEL_DEFAULT_NOT_CONFIRMED', message: '默认模型未确认保存；型号可能已停用、账号或选择已变化，请重新查询当前设置。' };
+      }
+    },
     async inspect(input: { callerSessionId: string }) {
       try {
         const ctx = await context(input.callerSessionId);

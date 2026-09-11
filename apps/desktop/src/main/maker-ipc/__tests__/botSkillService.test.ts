@@ -8,7 +8,7 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   collectBotOwnSkillMounts,
@@ -42,6 +42,22 @@ const SAVE = {
 };
 
 describe('saveBotSkillForSession', () => {
+  it('queues the canonical chat for safe refresh after a delegated task learns a Skill', async () => {
+    const requestRefresh = vi.fn(() => true);
+    const result = await saveBotSkillForSession(SAVE, { ...depsFor('bot-1'), requestRefresh,
+      resolveBotId: async () => ({ ok: true, botId: 'bot-1', canonicalSessionId: 'main-chat' }),
+    });
+    expect(result).toMatchObject({ ok: true, effective: 'next-turn' });
+    expect(requestRefresh).toHaveBeenCalledExactlyOnceWith('main-chat', 'resource');
+    expect(await readBotSkillForBot('bot-1', 'weekly-report', { userDataDir })).not.toBeNull();
+  });
+
+  it('does not request a runtime refresh when saving fails', async () => {
+    const requestRefresh = vi.fn(() => true);
+    expect(await saveBotSkillForSession({ ...SAVE, name: '无有效名字' }, { ...depsFor('bot-1'), requestRefresh }))
+      .toMatchObject({ ok: false });
+    expect(requestRefresh).not.toHaveBeenCalled();
+  });
   it('tells the model the skill only takes effect next session', async () => {
     const result = await saveBotSkillForSession(SAVE, depsFor('bot-1'));
 
@@ -114,6 +130,21 @@ describe('saveBotSkillForSession', () => {
 });
 
 describe('设置页与会话挂载读的是同一份磁盘事实', () => {
+  it('mounts exactly the same managed baseline for Cindy and a fresh named Bot, outside learned shelves', async () => {
+    const cindy = await collectBotOwnSkillMounts('bot-cindy', { userDataDir });
+    const fresh = await collectBotOwnSkillMounts('bot-fresh', { userDataDir });
+    expect(cindy.baseline).toEqual(fresh.baseline);
+    expect(cindy.baseline.skill.name).toBe('teammate-guide');
+    expect(cindy.baseline.pluginRoot).not.toContain('bot-cindy');
+    const source = await fs.readFile(fresh.baseline.skill.filePath, 'utf8');
+    for (const tool of ['start_session_task', 'send_to_agent', 'create_teammate', 'get_app_default_model', 'set_app_default_model', 'save_teammate_skill', 'ghost_call'])
+      expect(source).toContain(tool);
+    expect(cindy.skills).toEqual([]);
+    expect(fresh.skills).toEqual([]);
+    await saveBotSkillForSession(SAVE, depsFor('bot-fresh'));
+    expect((await collectBotOwnSkillMounts('bot-cindy', { userDataDir })).skills).toEqual([]);
+    expect((await collectBotOwnSkillMounts('bot-fresh', { userDataDir })).baseline).toEqual(cindy.baseline);
+  });
   it('exposes every saved skill as a mountable directory plus a CC plugin root', async () => {
     await saveBotSkillForSession(SAVE, depsFor('bot-1'));
 

@@ -1,4 +1,4 @@
-import { BOT_CONTROL_GUIDANCE } from '@cindy/mcps';
+import { buildTeammateGuide as buildBotCapabilityContextPrompt } from './teammateGuide.js';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { buildBotMemoryScopeKey } from '@cindy/maker-core';
 import { createHash, randomUUID } from 'node:crypto';
@@ -125,6 +125,7 @@ export interface BotProfileRuntimeDeps {
    */
   listOwnSkills?: (input: { botId: string }) => Promise<{
     pluginRoot: string;
+    baseline?: { pluginRoot: string; skill: { name: string; description: string; path: string; filePath: string } };
     skills: { name: string; description: string; path: string; filePath?: string }[];
   }>;
   readSkillSource?: (input: {
@@ -299,35 +300,7 @@ export function buildBotProfileContextPrompt(displayName: string): string {
  * 设置页不再为它维护第二套「成长」分类;记忆和技能的实际存储与工具契约才是真相源。
  * 文本是常量,不含会话变量,因此 prompt 前缀保持稳定,不影响缓存率。
  */
-export function buildBotCapabilityContextPrompt(
-  options: { helperAvailable?: boolean; cindyAvailable?: boolean } = {},
-): string {
-  const helperAvailable = options.helperAvailable !== false;
-  // cindy / ghost_* live on the local builtin gateway. SSH Claude/Codex only
-  // inject collab, memory and helper (REMOTE_ALLOWED_SERVER_NAMES); advertising
-  // plugins there would tell the model to call tools it cannot reach. Remote Pi
-  // tunnels cindy, so keep plugin guidance there.
-  const cindyAvailable = options.cindyAvailable !== false;
-  const pluginGuidance = cindyAvailable
-    ? ' Installed plugins are a separate discovery surface from Skill/MCP/toolset references. An empty capability search does not mean no plugin can do the work. Before declaring a connected-service task unavailable, inspect the relevant installed plugin. Installed plugins are available on demand through `cindy` (`ghost_list`, `ghost_info`, `ghost_call`) under their existing permissions. When a plugin returns SETUP_REQUIRED with an authorization request id, its login/configuration card is already in this chat and the requested tool has not run. End the turn and wait for the Host authorization-completed notification, then continue the original work through the live plugin tool. Do not poll, ask for credentials in chat, invent login links, or treat login as task execution approval. The phone can display/cancel the card; connection and secret entry happen on the trusted desktop.'
-    : '';
-  return [
-    '## Cindy Bot Runtime',
-    'You are running as a Cindy Bot with a durable Profile. This task is one active runtime of that Bot, not an ordinary standalone task.',
-    ...(helperAvailable ? [
-      BOT_CONTROL_GUIDANCE,
-      `Use direct Bot tools for your own memory, Skills and teammates. When work needs another capability, use \`find_bot_capabilities\` in the helper bots category to search existing Skills, MCP connections or built-in tools, then \`set_bot_capability\` to join it. References reuse Cindy installations and authorization; do not copy credentials or edit shared sources. New mounts take effect next turn in this same task.${pluginGuidance} Discover only what the work needs; do not repeatedly list the whole tool surface.`,
-          "A real Cindy background task is a standalone Session in the user's task list. Follow the workload split in the `start_session_task` guidance: handle short simple work yourself and proactively start independent tasks for coding and medium or large work. Do not wait for the user to ask for delegation. Use `check_session_task`, `message_session_task`, and `stop_session_task` to control that same task when needed. Completion returns automatically; you remain responsible for reviewing and presenting the result.",
-          'Use `send_to_agent` only to send one bounded asynchronous message to a named teammate. It is not a task and has no progress or cancellation. Never use a teammate named Cindy as a substitute for `start_session_task`.',
-          "A teammate message does not rewrite another Bot's identity or make that Bot obey. If the user asks for obedience or control, explain this boundary and offer either a message or a tracked Session task, whichever matches the work.",
-        ] : []),
-    'Long-term memory and your own Skills are deliberate, user-visible records, not a diary of every turn. When the user first states a specific stable preference, correction, or long-lived background fact, remember it immediately instead of waiting for repetition or sending the user to Settings. When one complete workflow succeeds in a real task and is clearly reusable, save it as a Skill after that first verified success. Ask only when long-term value is genuinely unclear. Never start a background review worker just to create memory or Skills.',
-    'Before writing memory, search for an existing record and update it instead of creating a duplicate. Use a `learned-` name only for a stable reusable working habit, never for a one-off conclusion, temporary path, guess, or unverified step.',
-    ...(helperAvailable ? [
-      'Before `save_bot_skill`, call `list_bot_skills`. Save or update a Skill only after the workflow has succeeded and the reusable steps are known. A saved Skill is mounted from the next task onward and remains visible, editable, and removable by the user.',
-    ] : []),
-  ].join('\n');
-}
+export { buildTeammateGuide as buildBotCapabilityContextPrompt } from './teammateGuide.js';
 
 /**
  * 把 Bot Home 的 workspace 补进会话可写面。整个 Home 不能直接可写：根部留有
@@ -719,17 +692,20 @@ export async function hydrateBotProfileRuntime(
     冻上,等于「一学会就再也 resume 不了」。
   */
   let ownSkills: { name: string; description: string; path: string; filePath?: string }[] = [];
-  let ownSkillPluginRoot: string | null = null;
+  let ownSkillPluginRoots: string[] = [];
   // SSH remote 会话的 harness 跑在远端文件系统上,本机 userData 里的技能目录
   // 在那边不存在 —— 与其挂一串打不开的路径,不如这类会话直接不挂。
   if (deps.listOwnSkills && !opts.remoteHostId) {
     try {
       const own = await deps.listOwnSkills({ botId: row.botId });
-      ownSkills = own.skills;
-      ownSkillPluginRoot = own.skills.length > 0 ? own.pluginRoot : null;
+      ownSkills = [...(own.baseline && row.role === 'canonical' ? [own.baseline.skill] : []), ...own.skills];
+      ownSkillPluginRoots = [
+        ...(own.baseline && row.role === 'canonical' ? [own.baseline.pluginRoot] : []),
+        ...(own.skills.length > 0 ? [own.pluginRoot] : []),
+      ];
     } catch {
       ownSkills = [];
-      ownSkillPluginRoot = null;
+      ownSkillPluginRoots = [];
     }
   }
   let mcpCatalog: BotMcpCatalogItem[] = [];
@@ -923,7 +899,7 @@ export async function hydrateBotProfileRuntime(
             })),
           }
         : {}),
-      ...(ownSkillPluginRoot ? { ownSkillPluginRoots: [ownSkillPluginRoot] } : {}),
+      ...(ownSkillPluginRoots.length ? { ownSkillPluginRoots } : {}),
     },
     mcpPolicy: {
       mode: runtimeMcpMode,

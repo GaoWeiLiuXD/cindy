@@ -17,24 +17,10 @@ afterEach(async () => {
 });
 
 describe('seedBotTemplateSkills', () => {
-  it.each([
-    ['cindy', 'help-with-cindy', '使用 Cindy 完成工作'],
-    ['dash', 'make-executive-decisions', '高管决策'],
-    ['lizi', 'deliver-engineering-changes', '开发交付'],
-  ] as const)(
-    'installs the %s preset as a real Bot-owned Skill',
-    async (templateId, slug, name) => {
-      const result = await seedBotTemplateSkills(userDataDir, `bot-${templateId}`, templateId);
-
-      expect(result.completedNow).toBe(true);
-      expect(result.skills).toHaveLength(templateId === 'cindy' ? 1 : 3);
-      expect(result.skills[0]?.created).toBe(true);
-      expect(await readBotSkill(userDataDir, `bot-${templateId}`, slug)).toMatchObject({
-        name,
-        description: expect.any(String),
-        body: expect.stringContaining(`# ${name}`),
-      });
-      expect(result.skills.some(({ record }) => record.body.includes(templateId === 'cindy' ? '连接' : '文档工具'))).toBe(true);
+  it.each(['cindy', 'dash', 'lizi'] as const)(
+    'does not seed a role-specific capability pack for %s', async (templateId) => {
+      expect(await seedBotTemplateSkills(userDataDir, `bot-${templateId}`, templateId))
+        .toEqual({ completedNow: false, skills: [] });
     },
   );
 
@@ -47,7 +33,7 @@ describe('seedBotTemplateSkills', () => {
     });
 
     const result = await seedBotTemplateSkills(userDataDir, 'bot-lizi', 'lizi');
-    expect(result.skills[0]?.created).toBe(false);
+    expect(result.skills).toEqual([]);
     expect((await readBotSkill(userDataDir, 'bot-lizi', 'deliver-engineering-changes'))?.body).toBe(
       '先读我的团队约定。',
     );
@@ -64,17 +50,17 @@ describe('seedBotTemplateSkills', () => {
     expect(await readBotSkill(userDataDir, 'bot-dash', 'make-executive-decisions')).toBeNull();
   });
 
-  it('adds newly bundled Skills without restoring a legacy Skill the user deleted', async () => {
+  it('preserves legacy deletion markers without moving the shared baseline into personal Skills', async () => {
     const root = botSkillRootDir(userDataDir, 'bot-cindy');
     await fs.mkdir(root, { recursive: true });
     await fs.writeFile(path.join(root, '.template-skills-cindy.seeded'), 'cindy\n');
 
     const result = await seedBotTemplateSkills(userDataDir, 'bot-cindy', 'cindy');
 
-    expect(result.skills).toHaveLength(1);
+    expect(result.skills).toHaveLength(0);
     expect(await readBotSkill(userDataDir, 'bot-cindy', 'everyday-work-coordination')).toBeNull();
     expect(
       await readBotSkill(userDataDir, 'bot-cindy', 'help-with-cindy'),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 });

@@ -164,7 +164,7 @@ describe('companion invitation with SQLite and real skill files', () => {
   });
 
   it.each(['cindy', 'dash', 'lizi'])(
-    'prepares %s from bundled skills without a model request',
+    'prepares %s without a model request or role-specific Skill pack',
     async (templateId) => {
       seed({}, { templateId });
       queueBotInvitation('bot-1');
@@ -172,7 +172,7 @@ describe('companion invitation with SQLite and real skill files', () => {
       expect(h.generate).not.toHaveBeenCalled();
       const folder = await readBotProfileFolder(h.root, 'bot-1');
       expect(folder.identitySource).toContain('性格与聊天习惯');
-      expect((await fs.readdir(path.join(h.root, 'bots', 'bot-1', 'skills'))).length).toBe(templateId === 'cindy' ? 1 : 3);
+      expect((await fs.readdir(path.join(h.root, 'bots', 'bot-1', 'skills'))).length).toBe(0);
     },
   );
 

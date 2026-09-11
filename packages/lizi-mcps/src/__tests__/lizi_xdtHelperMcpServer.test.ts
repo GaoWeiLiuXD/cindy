@@ -633,7 +633,7 @@ describe("cindy_helper MCP server", () => {
 });
 
 describe("direct Bot MCP tools", () => {
-  it.each(["claude-code", "codex"] as const)("omits ghost plugin guidance from find_bot_capabilities on remote %s", async (agentKind) => {
+  it.each(["claude-code", "codex"] as const)("omits ghost plugin guidance from find_teammate_capabilities on remote %s", async (agentKind) => {
     let remoteHostId: string | undefined;
     const server = createXdtHelperMcpServer({
       resolveSurface: async () => "bot",
@@ -655,23 +655,23 @@ describe("direct Bot MCP tools", () => {
     const client = new Client({ name: "remote-bot-capability-desc", version: "0.0.0" });
     await Promise.all([server.connect(st), client.connect(ct)]);
     try {
-      const localTool = (await client.listTools()).tools.find((tool) => tool.name === "find_bot_capabilities");
+      const localTool = (await client.listTools()).tools.find((tool) => tool.name === "find_teammate_capabilities");
       expect(localTool?.description).toContain("ghost_list");
       const localDiscovered = parsePayload(await client.callTool({
         name: "list_tools",
         arguments: { category: "bots" },
       })).tools as Array<{ name: string; description: string }>;
-      expect(localDiscovered.find((tool) => tool.name === "find_bot_capabilities")?.description).toContain("ghost_list");
+      expect(localDiscovered.find((tool) => tool.name === "find_teammate_capabilities")?.description).toContain("ghost_list");
 
       remoteHostId = "ssh-host";
-      const remoteTool = (await client.listTools()).tools.find((tool) => tool.name === "find_bot_capabilities");
+      const remoteTool = (await client.listTools()).tools.find((tool) => tool.name === "find_teammate_capabilities");
       expect(remoteTool?.description).toContain("Skill");
       expect(remoteTool?.description).not.toMatch(/ghost_list|ghost_info|ghost_call/);
       const remoteDiscovered = parsePayload(await client.callTool({
         name: "list_tools",
         arguments: { category: "bots" },
       })).tools as Array<{ name: string; description: string }>;
-      expect(remoteDiscovered.find((tool) => tool.name === "find_bot_capabilities")?.description).not.toMatch(
+      expect(remoteDiscovered.find((tool) => tool.name === "find_teammate_capabilities")?.description).not.toMatch(
         /ghost_list|ghost_info|ghost_call/,
       );
     } finally {
@@ -702,7 +702,7 @@ describe("direct Bot MCP tools", () => {
         name: "list_tools",
         arguments: { category: "bots" },
       })).tools as Array<{ name: string; description: string }>;
-      const find = discovered.find((tool) => tool.name === "find_bot_capabilities");
+      const find = discovered.find((tool) => tool.name === "find_teammate_capabilities");
       expect(find?.description).toContain("Skill");
       expect(find?.description).toContain("ghost_list");
       expect(find?.description).toContain("ghost_info");

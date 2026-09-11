@@ -50,6 +50,7 @@ import {
 import { useResyncAgentIslandSettingsAfterLogin } from '@/hooks/useAgentIslandSettings';
 import {
   getDraftForOwnerPreferenceSync,
+  applyAppDefaultModelSelection,
   subscribeDraft,
   setEffortForModel,
   setFastModeForModel,
@@ -97,7 +98,7 @@ function LoginHandoffHost({ children }: { children: React.ReactNode }) {
   );
 }
 
-function syncNewMakerPrefs() {
+function syncNewMakerPrefs(appDefaultModelRequestId?: string) {
   // 多 renderer 的模块内存彼此独立；跨窗口通知必须从共享持久快照同步，避免旧窗口把
   // 自己的 model / workingDir 等完整旧草稿覆盖进 main 缓存。
   const owner = getDataOwnerGeneration();
@@ -119,6 +120,7 @@ function syncNewMakerPrefs() {
   // 不消费这两项,远程草稿镜像才用)。fire-and-forget。
   const selected = draft.lastByVendor[draft.vendor];
   window.electronAPI.syncNewMakerDraft({
+    ...(appDefaultModelRequestId ? { appDefaultModelRequestId } : {}),
     ownerStamp: { dataOwnerId: owner.dataOwnerId, ownerGeneration: owner.generation },
     selectedRoute: {
       harness: draft.vendor === 'cc' || draft.vendor === 'orca' ? 'claude' : draft.vendor,
@@ -267,7 +269,16 @@ export function App() {
   // 通过 providerModelMemory 同步。写入触发上面的镜像 effect → NEW_MAKER_DRAFT_CHANGED 回流控制端。
   useEffect(() => {
     const offDraft = window.electronAPI.onMakerDraftPrefApply(
-      ({ agent, providerId, modelId, active, effort, fast, thinking, markModelChoice }) => {
+      ({ agent, providerId, modelId, active, effort, fast, thinking, markModelChoice, appDefaultSelection }) => {
+        if (appDefaultSelection) {
+          if (applyAppDefaultModelSelection(appDefaultSelection)) {
+            const route = appDefaultSelection.route;
+            setProviderModelChoice(agent, route.providerId ?? '', route.model, route.effort as Effort);
+            setProviderModelFast(agent, route.providerId ?? '', route.model, route.fastMode);
+            syncNewMakerPrefs(appDefaultSelection.requestId);
+          }
+          return;
+        }
         const vendor = agentKindToVendor(agent);
         if (active) {
           const patch =

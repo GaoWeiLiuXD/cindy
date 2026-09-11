@@ -18,6 +18,8 @@ export function configureBotRuntimeEpochRefreshRequest(
 export function requestBotRuntimeEpochRefresh(
   sessionId: string,
   reason: BotRuntimeEpochRefreshReason,
-): void {
-  requestRefresh?.(sessionId, reason);
+): boolean {
+  if (!requestRefresh) return false;
+  requestRefresh(sessionId, reason);
+  return true;
 }

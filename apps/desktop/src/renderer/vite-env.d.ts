@@ -2400,6 +2400,7 @@ interface ElectronAPI {
   }) => void;
 
   syncNewMakerDraft: (snapshot: {
+    appDefaultModelRequestId?: string;
     ownerStamp: import('../shared/dataOwnerPush').DataOwnerPushStamp;
     selectedRoute?: import('../shared/botModelChain').BotModelRoute;
     lastByVendor: Partial<
@@ -2442,6 +2443,7 @@ interface ElectronAPI {
   /** 被控端本地 main → 自身 renderer:控制端写穿的草稿「模型 effort/fast」pref(调本地 setter)。 */
   onMakerDraftPrefApply: (
     cb: (payload: {
+      appDefaultSelection?: import('../shared/appDefaultModelSelection').AppDefaultModelSelection;
       agent: 'claude-code' | 'codex' | 'pi';
       providerId: string;
       modelId: string;
