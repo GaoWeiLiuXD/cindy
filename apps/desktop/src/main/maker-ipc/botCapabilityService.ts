@@ -1,5 +1,5 @@
 import { inspectAppDefaultModel, changeAppDefaultModel } from './appDefaultModelControl.js';
-import type { BotControlState } from '@cindy/mcps';
+import type { BotCapabilityCallbacks, BotControlState } from '@cindy/mcps';
 import { and, eq } from 'drizzle-orm';
 import { botProfiles, botProfileVersions, botSessionLinks, sessions } from '../localDb/schema.js';
 import { getDbClient } from '../localDb/client/current.js';
@@ -271,22 +271,45 @@ export function createBotCapabilityService(deps: BotCapabilityServiceDeps) {
         return { ok: false as const, errorCode: 'BOT_STATE_UNAVAILABLE', message: '无法读取当前伙伴状态，请稍后重试' };
       }
     },
-    async updateProfile(input: { callerSessionId: string; expectedVersion: number;
-      name?: string; description?: string; identitySource?: string }) {
+    async updateProfile(input: Parameters<NonNullable<BotCapabilityCallbacks['updateProfile']>>[0]) {
       try {
         const ctx = await context(input.callerSessionId);
         if (ctx.version !== input.expectedVersion) throw new Error('Profile changed');
+        let modelChain: BotModelRoute[] | null | undefined;
+        if (input.modelChain === null) modelChain = null;
+        else if (input.modelChain !== undefined) {
+          const { available } = await inspectAppDefaultModel();
+          ctx.assertOwner();
+          if (!input.modelChain.length || input.modelChain.length > 5) throw new Error('Invalid model chain');
+          const seen = new Set<string>();
+          modelChain = input.modelChain.map(selection => {
+            const choice = available.find(item => item.id === selection.id);
+            if (!choice || seen.has(selection.id)
+              || (selection.effort !== undefined && selection.effort !== '' && !choice.efforts.some(effort => effort === selection.effort))
+              || (selection.fastMode === true && !choice.supportsFastMode)) {
+              throw new Error('Model route or settings are unavailable');
+            }
+            seen.add(selection.id);
+            return { ...choice.route,
+              ...(selection.effort !== undefined ? { effort: selection.effort } : {}),
+              ...(selection.fastMode !== undefined ? { fastMode: selection.fastMode } : {}),
+            };
+          });
+        }
         ctx.assertOwner();
         await updateBotProfile({ id: ctx.botId,
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.description !== undefined ? { description: input.description } : {}),
           ...(input.identitySource !== undefined ? { identitySource: input.identitySource } : {}),
+          ...(modelChain !== undefined ? { capabilities: {
+            modelChainOverride: modelChain, modelOverride: null,
+          } } : {}),
         }, input.expectedVersion);
         ctx.assertOwner();
         return { ok: true as const, effective: 'next-turn' as const };
       } catch {
         return { ok: false as const, errorCode: 'BOT_PROFILE_UPDATE_FAILED',
-          message: '伙伴状态或资料已变化，请重新读取后重试' };
+          message: '伙伴资料已变化，或所选模型及档位不可用；请重新读取伙伴状态和可用型号后重试' };
       }
     },
     /** Read the same metadata before a profile exists; this never joins or executes a capability. */

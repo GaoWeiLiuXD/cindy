@@ -30,7 +30,7 @@ export function availableAppDefaultModels(input: {
         availableAgents: input.availableAgents, availableAgentsLoaded: true,
         preferredRoute: route, isModelEnabled: input.enabled });
       return valid.length ? [{ id: JSON.stringify([route.harness, route.providerId, route.model]),
-        route, efforts: model.efforts }] : [];
+        route, efforts: model.efforts, supportsFastMode: model.supportsFastMode === true }] : [];
     }),
   ));
 }

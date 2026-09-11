@@ -124,3 +124,23 @@ it('exposes app default model operations with bound callers and propagates uncon
   expect((await registry.call('set_app_default_model', { id: 'selected', effort: 'medium' })).isError).toBe(true);
   expect(setDefaultModel).toHaveBeenCalledWith({ callerSessionId: 'current-bot', id: 'selected', effort: 'medium' });
 });
+
+
+it('accepts scoped model chains and reset through the existing profile tool without accepting foreign targets', async () => {
+  const registry = new XdtHelperToolRegistry();
+  const updateProfile = vi.fn(async () => ({ ok: true as const, effective: 'next-turn' as const }));
+  registerBotCapabilityTools(registry, {
+    getSessionContext: () => ({ sessionId: 'self', agentKind: 'codex', workingDir: '/w' }),
+    callbacks: { ...fixture().callbacks, updateProfile },
+  });
+  const modelChain = [{ id: 'enabled-route', effort: 'low', fastMode: false }];
+  for (const bad of [{ modelChain: [] }, { modelChain, botId: 'other' }, { modelChain, session_id: 'other' },
+    { modelChain: [{ id: 'enabled-route', providerId: 'invented' }] }]) {
+    expect((await registry.call('update_teammate_profile', { expectedVersion: 2, ...bad })).isError).toBe(true);
+  }
+  expect(updateProfile).not.toHaveBeenCalled();
+  expect((await registry.call('update_teammate_profile', { expectedVersion: 2, modelChain })).isError).not.toBe(true);
+  expect(updateProfile).toHaveBeenLastCalledWith({ callerSessionId: 'self', expectedVersion: 2, modelChain });
+  expect((await registry.call('update_teammate_profile', { expectedVersion: 3, modelChain: null })).isError).not.toBe(true);
+  expect(updateProfile).toHaveBeenLastCalledWith({ callerSessionId: 'self', expectedVersion: 3, modelChain: null });
+});

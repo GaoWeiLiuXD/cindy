@@ -1,4 +1,4 @@
-import { setNewMakerDraftCache } from '../../../maker-host/newMakerDefaultsCache';
+import { getSelectedNewMakerRoute, setNewMakerDraftCache } from '../../../maker-host/newMakerDefaultsCache';
 import { setModelVisibilityMirror } from '../../../maker-host/model-visibility-mirror';
 import Database from 'better-sqlite3';
 import type { ProviderView } from '@cindy/model-providers';
@@ -4342,4 +4342,73 @@ describe('Bot self control uses the same profile authority as settings', () => {
     expect(await service.inspect({ callerSessionId: 'not-a-bot' })).toMatchObject({ ok: false });
     expect((await invoke('local-db:bots:get', 'bot-1')).name).toBe('Renamed');
   });
+});
+
+
+describe('Teammate model selection shares profile persistence and route reconciliation', () => {
+  async function setupModelControl() {
+    const canonical = await invoke('local-db:bots:create-canonical-session', {
+      botId: 'bot-1', expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+    });
+    const model = { ...h.providers[0]!.models.pi![0]!, id: 'enabled-alternate-model' };
+    h.providers[0]!.models.pi!.push(model);
+    model.efforts = ['low', 'high'];
+    model.defaultEnabled = true;
+    return { sessionId: canonical.session.id as string,
+      service: createBotCapabilityService(capabilityDeps),
+      id: JSON.stringify(['pi', 'xd', model.id]), model };
+  }
+
+  it('saves only its own explicit model chain, applies it through the send resolver, and resets to the live default', async () => {
+    const { service, sessionId, id } = await setupModelControl();
+    await invoke('local-db:bots:create', { id: 'bot-2', name: 'Other teammate', avatar: '🐈' });
+    const before = await invoke('local-db:bots:get', 'bot-1');
+    const other = await invoke('local-db:bots:get', 'bot-2');
+    const appDefault = getSelectedNewMakerRoute(h.ownerScopeKey);
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: 1,
+      modelChain: [{ id, effort: 'low', fastMode: false }] })).toMatchObject({ ok: true, effective: 'next-turn' });
+    const after = await invoke('local-db:bots:get', 'bot-1');
+    const chain = await modelSettings.readEffectiveBotModelChain(after.capabilities);
+    expect(chain).toEqual([{ harness: 'pi', providerId: 'xd', model: 'enabled-alternate-model', effort: 'low', fastMode: false }]);
+    expect(after.identitySource).toBe(before.identitySource);
+    expect(after.canonicalSessionId).toBe(sessionId);
+    for (const key of ['skills', 'mcpServers', 'toolsets', 'memory', 'permissions'])
+      expect(after.capabilities[key]).toEqual(before.capabilities[key]);
+    expect(await invoke('local-db:bots:get', 'bot-2')).toEqual(other);
+    expect(getSelectedNewMakerRoute(h.ownerScopeKey)).toEqual(appDefault);
+    const apply = vi.fn();
+    // A fresh reconciler models restart; the saved choice, not an ephemeral override, owns the next send.
+    await createBotModelRouteReconciler({ ownerEpoch: () => h.ownerScopeKey,
+      read: async () => ({ chain, current: { agentKind: 'pi', model: 'grok-4.5', providerId: null, effort: 'high', fastMode: false }, hasRuntimeOverride: false }), apply,
+    })(sessionId);
+    expect(apply).toHaveBeenCalledWith(sessionId, expect.objectContaining({ effort: 'low', model: 'enabled-alternate-model' }), expect.anything());
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: 1, modelChain: null })).toMatchObject({ ok: false });
+    expect(await service.updateProfile({ callerSessionId: sessionId, expectedVersion: 2, modelChain: null })).toMatchObject({ ok: true });
+    const restored = await invoke('local-db:bots:get', 'bot-1');
+    expect(restored.capabilities.modelChainOverride).toBeNull();
+    expect(await modelSettings.readEffectiveBotModelChain(restored.capabilities)).toEqual([appDefault]);
+    const nextDefault = { ...appDefault!, effort: 'low' };
+    setNewMakerDraftCache({ selectedRoute: nextDefault, lastByVendor: {}, effortByModel: {}, fastModeByModel: {} }, h.ownerScopeKey);
+    expect(await modelSettings.readEffectiveBotModelChain(restored.capabilities)).toEqual([nextDefault]);
+  });
+
+  it.each(['disabled', 'disconnected', 'effort', 'fast', 'duplicate', 'unknown', 'owner', 'foreign'] as const)(
+    'rejects %s selection without changing profile or app defaults', async (kind) => {
+      const { service, sessionId, id, model } = await setupModelControl();
+      const before = await invoke('local-db:bots:get', 'bot-1');
+      const appDefault = getSelectedNewMakerRoute(h.ownerScopeKey);
+      const choice = { id, effort: 'low', fastMode: false };
+      if (kind === 'disabled') model.defaultEnabled = false;
+      if (kind === 'disconnected') h.providers[0]!.connected = false;
+      if (kind === 'effort') choice.effort = 'ultra';
+      if (kind === 'fast') choice.fastMode = true;
+      if (kind === 'unknown') choice.id = 'not-a-route';
+      if (kind === 'owner') h.ownerBoundaryPending = true;
+      const result = await service.updateProfile({ callerSessionId: kind === 'foreign' ? 'ordinary-session' : sessionId,
+        expectedVersion: 1, modelChain: kind === 'duplicate' ? [choice, choice] : [choice] });
+      expect(result).toMatchObject({ ok: false });
+      h.ownerBoundaryPending = false;
+      expect(await invoke('local-db:bots:get', 'bot-1')).toEqual(before);
+      expect(getSelectedNewMakerRoute(h.ownerScopeKey)).toEqual(appDefault);
+    });
 });

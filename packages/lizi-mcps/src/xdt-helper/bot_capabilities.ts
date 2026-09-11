@@ -6,7 +6,7 @@ import { errorPayload, okPayload } from "./_payload.js";
 export interface BotCapabilityCallbacks {
   models?(params: { callerSessionId: string }): Promise<ControlResult<{
     current: AppDefaultModelRoute | null;
-    available: { id: string; route: AppDefaultModelRoute; efforts: string[] }[];
+    available: { id: string; route: AppDefaultModelRoute; efforts: string[]; supportsFastMode?: boolean }[];
   }, string>>;
   setDefaultModel?(params: { callerSessionId: string; id: string; effort?: string }): Promise<ControlResult<{
     current: AppDefaultModelRoute;
@@ -19,6 +19,7 @@ export interface BotCapabilityCallbacks {
     name?: string;
     description?: string;
     identitySource?: string;
+    modelChain?: { id: string; effort?: string; fastMode?: boolean }[] | null;
   }): Promise<ControlResult<{ effective: "next-turn" }, string>>;
   list(params: {
     callerSessionId: string;
@@ -65,7 +66,7 @@ export interface BotControlState {
 export const TEAMMATE_CONTROL_GUIDANCE = [
   'Use `get_teammate_state` to inspect your current profile, stable chat, configured model candidates, memory switch and capability references. Candidates and selected references are not proof of the model or tools running this turn; the live runtime and registered tools are authoritative.',
   'The references arrays contain optional external grants, not the shared teammate guide or your personal Skill shelf. Empty references do not mean you have no Skills. Use `list_teammate_skills` to inspect personal Skills; report the preloaded shared guide separately.',
-  'Use `update_teammate_profile` only when the user asks to change your name, introduction or identity; read the current version first and patch only the requested fields. Changes apply next turn without replacing memory, Skills, model settings or chat history.',
+  'Use `update_teammate_profile` when the user asks to change your name, introduction, identity or your own model selection. Read the current version first and patch only the requested fields. For modelChain, first read `get_app_default_model` for enabled route ids and supported effort/Fast settings; supply the complete ordered chain (1–5 routes), preserving existing candidates unless the user asks to replace them. Set modelChain to null to remove your override and follow the application default again. This saves only your profile through the same settings service, persists across restarts, and applies next turn; it never changes the application default, other teammates, personal Skills, memory or chat history. A next-turn save is not proof of the model running this turn.',
   'Use `get_capabilities` for application features and UI guidance. It describes the product, not a permission grant or proof that every feature is available here. Use the matching live tool to act, and verify its result before claiming success.',
 ].join('\n');
 
@@ -152,11 +153,16 @@ export function registerBotCapabilityTools(
       name: z.string().trim().min(1).max(200).optional(),
       description: z.string().max(12000).optional(),
       identitySource: z.string().max(12000).optional(),
+      modelChain: z.array(z.strictObject({
+        id: z.string().min(1).max(2048).describe('Enabled route id from get_app_default_model.'),
+        effort: z.string().max(64).optional(),
+        fastMode: z.boolean().optional(),
+      })).min(1).max(5).nullable().optional().describe('Complete model chain for this teammate; null removes its override and follows the application default.'),
     },
     handler: async (input) => {
       const callerSessionId = deps.getSessionContext().sessionId;
       if (!callerSessionId) return errorPayload("NOT_A_BOT_SESSION", "当前调用未绑定伙伴任务");
-      if (input.name === undefined && input.description === undefined && input.identitySource === undefined)
+      if (input.name === undefined && input.description === undefined && input.identitySource === undefined && input.modelChain === undefined)
         return errorPayload("INVALID_PARAMS", "请选择要修改的资料");
       const result = await deps.callbacks.updateProfile!({ ...input, callerSessionId });
       return result.ok ? okPayload({ effective: result.effective }) : errorPayload(result.errorCode, result.message);
