@@ -7150,28 +7150,7 @@
     "title": "동료",
     "add": "동료 추가",
     "createWizard": {
-      "createFailed": "동료를 만들 수 없습니다. 다시 시도하세요.",
-      "templates": {
-        "cindy": {
-          "title": "Cindy 어시스턴트",
-          "defaultName": "Cindy",
-          "defaultDescription": "바쁜 일상을 정리하고 새로운 아이디어를 듣는 것을 좋아해요. 글쓰기부터 자료, 소소한 일까지 함께 이야기해 봐요."
-        },
-        "dash": {
-          "title": "Dash 회사 CEO",
-          "defaultName": "Dash",
-          "defaultDescription": "좋은 제품과 사업에 호기심이 많아요. 가능성을 깊이 생각하고 함께 결정을 내리는 것을 좋아해요."
-        },
-        "lizi": {
-          "title": "LiZi 엔지니어링 총괄",
-          "defaultName": "LiZi",
-          "defaultDescription": "어려운 문제를 풀고 아이디어를 실제로 만드는 것을 좋아해요. 막히는 일이 있으면 함께 답을 찾아봐요."
-        },
-        "custom": {
-          "title": "사용자 지정"
-        }
-      },
-      "chooseTemplate": "누구를 초대할까요?"
+      "createFailed": "동료를 만들 수 없습니다. 다시 시도하세요."
     },
     "homeFolder": {
       "title": "고급 설정",

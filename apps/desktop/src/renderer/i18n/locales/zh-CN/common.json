@@ -7150,28 +7150,7 @@
     "title": "伙伴",
     "add": "添加伙伴",
     "createWizard": {
-      "createFailed": "无法创建伙伴，请重试。",
-      "templates": {
-        "cindy": {
-          "title": "Cindy 助理",
-          "defaultName": "Cindy",
-          "defaultDescription": "我喜欢把忙乱的日子理顺，也爱听新鲜想法。写作、资料和日常琐事，都可以一起聊聊。"
-        },
-        "dash": {
-          "title": "Dash 公司 CEO",
-          "defaultName": "Dash",
-          "defaultDescription": "我对好产品和好生意充满好奇，聊到有意思的方向会很投入。喜欢把事情想透，再一起做决定。"
-        },
-        "lizi": {
-          "title": "LiZi 技术总监",
-          "defaultName": "LiZi",
-          "defaultDescription": "我喜欢拆解难题，也享受把想法做成作品的过程。遇到棘手的问题，我们就一起找答案。"
-        },
-        "custom": {
-          "title": "自定义"
-        }
-      },
-      "chooseTemplate": "邀请谁"
+      "createFailed": "无法创建伙伴，请重试。"
     },
     "homeFolder": {
       "title": "高级配置",

@@ -4,7 +4,7 @@
  * 不维护第二份资料或决定 canonical Session。
  */
 import { provisionDefaultBot } from '../../maker-ipc/botDefaultProvisioning.js';
-import { BOT_TEMPLATE_PRESET_AVATARS, BOT_TEMPLATE_PRESET_IDENTITIES, CINDY_DEFAULT_IDENTITY } from '../../../shared/botTemplatePreset.js';
+import { BOT_TEMPLATE_PRESET_AVATARS, CINDY_DEFAULT_IDENTITY } from '../../../shared/botTemplatePreset.js';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
@@ -81,7 +81,6 @@ import {
   inferBotTemplatePresetId,
   isBotTemplatePresetId,
 } from '../../../shared/botTemplatePreset.js';
-import { seedBotTemplateSkills } from '../../maker-ipc/botTemplateSkillSeed.js';
 import { createMessage } from './messages.js';
 import { BOT_DELEGATION_CLIENT_ID } from '../../../shared/botCollaboration.js';
 
@@ -216,7 +215,6 @@ export async function createBotCanonicalSession(
     throwIpcError('PRECONDITION_FAILED', 'Bot 数据服务尚未初始化');
   }
   const owner = captureBotOperationOwner();
-  await recoverBotTemplateSkills(input.botId);
   owner.assertCurrent();
   const result = await createBotCanonicalSessionImpl(input);
   owner.assertCurrent();
@@ -558,7 +556,7 @@ async function readProfile(
     failureReason,
     needsAttention,
     status: profile.status,
-    templateId: isBotTemplatePresetId(config.templateId) ? config.templateId : inferBotTemplatePresetId(version?.identitySource ?? '') ?? undefined,
+    templateId: typeof config.templateId === 'string' ? config.templateId : inferBotTemplatePresetId(version?.identitySource ?? '') ?? undefined,
     currentVersion: profile.currentVersion,
     canonicalSessionId: canonicalSessionId ?? undefined,
     /*
@@ -848,84 +846,21 @@ export function broadcastBotProfileChanged(payload: {
   }
 }
 
-/**
- * 模板来源跟着 Profile 持久化。初次落盘若遇到短暂文件错误，伙伴第一次开任务
- * 或后续被唤醒时会再次补装；已存在的用户版本由 seedBotSkillIfMissing 保留。
- */
-async function recoverBotTemplateSkills(botId: string): Promise<void> {
-  if (isAppSessionBoundaryPending()) return;
-  const ownerScopeKey = activeOwnerScopeKey();
-  const userDataDir = ownerScopedUserDataPath();
-  const db = getDbClient().drizzle;
-  try {
-    const [profile] = await db
-      .select({ currentVersion: botProfiles.currentVersion, status: botProfiles.status })
-      .from(botProfiles)
-      .where(eq(botProfiles.id, botId))
-      .limit(1);
-    if (
-      !profile ||
-      profile.status === 'archived' ||
-      isAppSessionBoundaryPending() ||
-      activeOwnerScopeKey() !== ownerScopeKey
-    )
-      return;
-    const [version] = await db
-      .select({
-        capabilitiesJson: botProfileVersions.capabilitiesJson,
-        identitySource: botProfileVersions.identitySource,
-      })
-      .from(botProfileVersions)
-      .where(
-        and(
-          eq(botProfileVersions.botId, botId),
-          eq(botProfileVersions.version, profile.currentVersion),
-        ),
-      )
-      .limit(1);
-    if (isAppSessionBoundaryPending() || activeOwnerScopeKey() !== ownerScopeKey) return;
-    const storedTemplateId = parseJson(version?.capabilitiesJson ?? '{}').templateId;
-    const templateId = isBotTemplatePresetId(storedTemplateId)
-      ? storedTemplateId
-      : inferBotTemplatePresetId(version?.identitySource ?? '');
-    if (!templateId) return;
-    const seeded = await seedBotTemplateSkills(userDataDir, botId, templateId);
-    if (!seeded.completedNow) return;
-    const [canonical] = await db
-      .select({ sessionId: botSessionLinks.sessionId })
-      .from(botSessionLinks)
-      .where(
-        and(
-          eq(botSessionLinks.botId, botId),
-          eq(botSessionLinks.role, 'canonical'),
-          isNull(botSessionLinks.archivedAt),
-        ),
-      )
-      .limit(1);
-    if (canonical && !isAppSessionBoundaryPending() && activeOwnerScopeKey() === ownerScopeKey) {
-      requestBotRuntimeEpochRefresh(canonical.sessionId, 'resource');
-    }
-  } catch (cause) {
-    log.warn('recover bot template skills failed', {
-      botId,
-      error: cause instanceof Error ? cause.name : typeof cause,
-    });
-  }
-}
-
-export async function recoverActiveBotTemplateSkills(): Promise<void> {
+/** Resume persisted invitations without reinstalling retired template capabilities. */
+export async function recoverActiveTeammateInvitations(): Promise<void> {
   if (isAppSessionBoundaryPending()) return;
   const client = tryGetDbClient();
   if (!client) return;
+  const owner = captureBotOperationOwner();
   try {
     const profiles = await client.drizzle
       .select({ id: botProfiles.id })
       .from(botProfiles)
       .where(ne(botProfiles.status, 'archived'));
-    await Promise.all(profiles.map(({ id }) => recoverBotTemplateSkills(id)));
+    owner.assertCurrent();
     for (const { id } of profiles) queueBotInvitation(id);
   } catch (cause) {
-    log.warn('recover active bot template skills failed', {
+    log.warn('recover pending teammate invitations failed', {
       error: cause instanceof Error ? cause.name : typeof cause,
     });
   }
@@ -945,7 +880,8 @@ export async function createBotProfile(raw: unknown) {
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(id) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(id)) {
     throwIpcError('INVALID_PARAMS', 'Bot id must be a lowercase portable directory identifier');
   }
-  const requestedAvatar = readBotAvatar(body.avatar) || BOT_TEMPLATE_PRESET_AVATARS.dash;
+  // Existing bundled artwork remains a valid fallback, independent of the retired role template.
+  const requestedAvatar = readBotAvatar(body.avatar) || 'cindy://avatar/preset/dash';
   // Managed addresses must come from validated image bytes ingested below,
   // never from a renderer or model supplying a URL string alone.
   let avatar = portableBotAvatarOrFallback(requestedAvatar);
@@ -965,7 +901,10 @@ export async function createBotProfile(raw: unknown) {
     : {};
   const userContextSource = readText(body.userContextSource, 'userContextSource', 12000);
   const gender = readBotGender(body.gender);
-  const templateId = body.templateId;
+  // Old clients may still submit retired template ids with a complete profile.
+  // Accept those as ordinary teammates, without installing or reconstructing a template.
+  const retiredTemplate = body.templateId === 'dash' || body.templateId === 'lizi';
+  const templateId = retiredTemplate ? undefined : body.templateId;
   if (draftEntry && templateId !== undefined) throwIpcError('INVALID_PARAMS', '请选择创建伙伴或预设伙伴');
   if (templateId !== undefined && !isBotTemplatePresetId(templateId)) {
     throwIpcError('INVALID_PARAMS', '未知的伙伴模板');
@@ -1065,20 +1004,6 @@ export async function createBotProfile(raw: unknown) {
     creationOwnerBoundary.userDataDir,
   );
   assertCreationOwnerStillCurrent();
-  if (templateId) {
-    try {
-      await seedBotTemplateSkills(creationOwnerBoundary.userDataDir, id, templateId);
-    } catch (cause) {
-      // Profile 已经是数据库里的权威记录；辅助 Skill 安装失败不能制造一个半创建、
-      // 下次也无法恢复的幽灵伙伴。身份正文仍保留完整工作约束，错误留给日志诊断。
-      log.warn('seed bot template skills failed', {
-        botId: id,
-        templateId,
-        error: cause instanceof Error ? cause.name : typeof cause,
-      });
-    }
-    assertCreationOwnerStillCurrent();
-  }
   const profile = await readProfile(client, id);
   assertCreationOwnerStillCurrent();
   broadcastBotProfileChanged({ botId: id, change: 'created' });
@@ -1177,7 +1102,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
     capabilityBaseline: body.capabilityBaseline,
   });
   // Template identity survives renames and cannot be replaced through settings.
-  const retainedTemplate = isBotTemplatePresetId(previous.templateId) ? previous.templateId : inferBotTemplatePresetId(version?.identitySource ?? '');
+  const retainedTemplate = typeof previous.templateId === 'string' ? previous.templateId : inferBotTemplatePresetId(version?.identitySource ?? '');
   if (retainedTemplate) nextConfig.templateId = retainedTemplate;
   else delete nextConfig.templateId;
   // Keep preparation checkpoints outside caller-editable capabilities.
@@ -1336,14 +1261,11 @@ export function registerBotIpc(): void {
       .select({ id: botProfiles.id, status: botProfiles.status })
       .from(botProfiles)
       .orderBy(desc(botProfiles.updatedAt));
-    // 旧版创建的内置伙伴没有 templateId。打开伙伴列表时按未修改的内置身份
-    // 精确识别并补装能力，让升级后无需删除重建；远端读取不触碰本机文件。
+    // Resume persisted invitations only; listing existing teammates never seeds Skills.
     if (!remote) {
-      await Promise.all(
-        profiles
-          .filter(({ status }) => status !== 'archived')
-          .map(async ({ id }) => { await recoverBotTemplateSkills(id); queueBotInvitation(id); }),
-      );
+      for (const { id, status } of profiles) {
+        if (status !== 'archived') queueBotInvitation(id);
+      }
     }
     const results = await Promise.all(
       profiles.map(({ id }) =>
@@ -1360,7 +1282,6 @@ export function registerBotIpc(): void {
     if (!remote) assertTrustedAppRendererEvent(event);
     const client = getDbClient();
     const botId = requireString(rawId, 'botId');
-    if (!remote) await recoverBotTemplateSkills(botId);
     if (!remote) return readProfile(client, botId);
     const profile = await readRemoteBotProfile(client, botId);
     if (!profile) throwIpcError('NOT_FOUND', 'Bot 不存在');

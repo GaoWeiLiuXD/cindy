@@ -16,7 +16,6 @@ import {
 import { getBotLastReadAtMap, pruneBotReadState, seedMissingBotReadState } from './botReadState';
 import type { BotGender } from '../../../shared/botGender';
 import { BOT_FAILURE_REASONS, type BotFailureReason } from '../../../shared/botFailureReason';
-import type { BotTemplatePresetId } from '../../../shared/botTemplatePreset';
 import type { BotCapabilityBaseline } from '../../../shared/botCapabilitySelection';
 import { NEW_BOT_DEFAULT_PERMISSIONS, normalizeBotPermissions } from './botCapabilityDefaults';
 import {
@@ -152,7 +151,7 @@ export interface BotSessionProjection {
 }
 
 export interface BotProfile {
-  templateId?: BotTemplatePresetId;
+  templateId?: string;
   invitation?: BotInvitationProgress;
   id: string;
   name: string;
@@ -489,8 +488,8 @@ export interface CreateBotProfileInput {
   avatarColor?: string;
   skills?: string[];
   capabilities?: Partial<BotCapabilities>;
-  /** 仅用于 main 按可信内置清单安装初始 Skill；自定义伙伴不传。 */
-  templateId?: BotTemplatePresetId;
+  /** Default Cindy identity marker; retired ids are accepted only for old-client compatibility. */
+  templateId?: string;
   /** Localized first message persisted by main together with the initial canonical task. */
   welcomeMessage?: string;
 }
@@ -590,7 +589,7 @@ function normalizeDbProfile(value: unknown): BotProfile | null {
     userContextSource: typeof item.userContextSource === 'string' ? item.userContextSource : '',
     // 落库回读的性别。老档案没有 → 留空 → 界面按名字称呼(与升级前一致)。
     ...(item.gender === 'female' || item.gender === 'male' ? { gender: item.gender } : {}),
-    templateId: ['cindy', 'dash', 'lizi'].includes(String(item.templateId)) ? item.templateId as BotTemplatePresetId : undefined,
+    templateId: typeof item.templateId === 'string' ? item.templateId : undefined,
     avatar: typeof item.avatar === 'string' ? item.avatar : '🤖',
     avatarColor: typeof item.avatarColor === 'string' ? item.avatarColor : 'violet',
     enabled: item.enabled !== false,

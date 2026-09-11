@@ -7150,28 +7150,7 @@
     "title": "仲間",
     "add": "仲間を追加",
     "createWizard": {
-      "createFailed": "仲間を作成できませんでした。もう一度お試しください。",
-      "templates": {
-        "cindy": {
-          "title": "Cindy アシスタント",
-          "defaultName": "Cindy",
-          "defaultDescription": "忙しい毎日を少し整えることと、新しいアイデアを聞くことが好きです。文章も調べものも、日々のちょっとしたことも一緒に考えましょう。"
-        },
-        "dash": {
-          "title": "Dash 会社 CEO",
-          "defaultName": "Dash",
-          "defaultDescription": "よい製品やビジネスに興味津々です。可能性をじっくり話し合って、一緒に決めていくのが好きです。"
-        },
-        "lizi": {
-          "title": "LiZi 技術責任者",
-          "defaultName": "LiZi",
-          "defaultDescription": "難しい問題を解きほぐし、アイデアを形にするのが好きです。困ったときは一緒に答えを探しましょう。"
-        },
-        "custom": {
-          "title": "カスタム"
-        }
-      },
-      "chooseTemplate": "誰を招待しますか"
+      "createFailed": "仲間を作成できませんでした。もう一度お試しください。"
     },
     "homeFolder": {
       "title": "詳細設定",

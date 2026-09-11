@@ -7152,28 +7152,7 @@
     "title": "Teammates",
     "add": "Add teammate",
     "createWizard": {
-      "createFailed": "The teammate could not be created. Try again.",
-      "templates": {
-        "cindy": {
-          "title": "Cindy Assistant",
-          "defaultName": "Cindy",
-          "defaultDescription": "I like bringing a little order to busy days and hearing fresh ideas. Writing, research, everyday odds and ends—let’s work through them together."
-        },
-        "dash": {
-          "title": "Dash, Company CEO",
-          "defaultName": "Dash",
-          "defaultDescription": "I’m curious about good products and good businesses. I enjoy thinking things through, talking about possibilities, and making a clear decision together."
-        },
-        "lizi": {
-          "title": "LiZi, Technical Director",
-          "defaultName": "LiZi",
-          "defaultDescription": "I enjoy taking tricky problems apart and turning ideas into something real. When we hit a snag, we’ll figure it out together."
-        },
-        "custom": {
-          "title": "Custom"
-        }
-      },
-      "chooseTemplate": "Who would you like to invite?"
+      "createFailed": "The teammate could not be created. Try again."
     },
     "homeFolder": {
       "title": "Advanced configuration",

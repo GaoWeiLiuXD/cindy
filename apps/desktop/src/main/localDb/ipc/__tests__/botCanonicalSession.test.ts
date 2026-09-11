@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import type { ProviderView } from '@cindy/model-providers';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -69,7 +69,6 @@ const h = await vi.hoisted(async () => {
   searchConversations: vi.fn(),
   requestRuntimeRefresh: vi.fn(),
   validateCapabilityAdditions: vi.fn(async (_update: BotCapabilityUpdate) => {}),
-  seedTemplateSkills: vi.fn(async () => ({ completedNow: true, skills: [] })),
   toolsetsAvailable: false,
   customMcpConfigs: [] as CustomMcpConfig[],
   mcpProviders: [] as McpProvider[],
@@ -160,9 +159,6 @@ vi.mock('../../conversationSearch.js', () => ({
 }));
 vi.mock('../../../maker-ipc/botRuntimeEpochRefreshSignal.js', () => ({
   requestBotRuntimeEpochRefresh: h.requestRuntimeRefresh,
-}));
-vi.mock('../../../maker-ipc/botTemplateSkillSeed.js', () => ({
-  seedBotTemplateSkills: h.seedTemplateSkills,
 }));
 vi.mock('../../../appSessionState.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../appSessionState.js')>();
@@ -644,11 +640,6 @@ describe('Bot canonical Session lifecycle', () => {
         templateId: 'cindy',
       }),
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
-    expect(h.seedTemplateSkills).not.toHaveBeenCalledWith(
-      expect.anything(),
-      'bot-owner-switch',
-      expect.anything(),
-    );
   });
 
   it.each(['profile', 'skills', 'avatar', 'welcome', 'failed'])('keeps initial invitation %s preparation from racing with profile edits', async (stage) => {
@@ -713,87 +704,57 @@ describe('Bot canonical Session lifecycle', () => {
       .toEqual({ count: 100 });
   });
 
-  it('persists a preset and retries its Skill install before the first task', async () => {
-    h.seedTemplateSkills.mockRejectedValueOnce(new Error('disk busy'));
-    await invoke('local-db:bots:create', {
-      id: 'bot-dash',
-      name: 'Dash',
-      templateId: 'dash',
+  it.each(['dash', 'lizi'])('accepts old %s creation payloads as ordinary teammates', async (templateId) => {
+    const identitySource = `User-edited ${templateId} identity`;
+    const created = await invoke('local-db:bots:create', {
+      id: `legacy-${templateId}`, name: templateId, templateId, identitySource,
+      avatar: `cindy://avatar/preset/${templateId}`,
       capabilities: { toolsetMode: 'allowlist', toolsets: ['docs'] },
     });
-
-    const row = h.sqlite!
-      .prepare('SELECT capabilities_json FROM bot_profile_versions WHERE bot_id = ? AND version = 1')
-      .get('bot-dash') as { capabilities_json: string };
-    expect(JSON.parse(row.capabilities_json)).toMatchObject({
-      templateId: 'dash',
-      toolsets: ['docs'],
-    });
-
-    await invoke('local-db:bots:create-canonical-session', {
-      botId: 'bot-dash',
-      expectedCanonicalSessionId: null,
-      expectedProfileVersion: 1,
-    });
-    expect(h.seedTemplateSkills).toHaveBeenNthCalledWith(1, expect.any(String), 'bot-dash', 'dash');
-    expect(h.seedTemplateSkills).toHaveBeenNthCalledWith(2, expect.any(String), 'bot-dash', 'dash');
+    expect(created).toMatchObject({ identitySource, avatar: `cindy://avatar/preset/${templateId}` });
+    expect(created.templateId).toBeUndefined();
+    const row = h.sqlite!.prepare('SELECT capabilities_json FROM bot_profile_versions WHERE bot_id = ?')
+      .get(`legacy-${templateId}`) as { capabilities_json: string };
+    expect(JSON.parse(row.capabilities_json)).toMatchObject({ toolsets: ['docs'] });
+    expect(JSON.parse(row.capabilities_json).templateId).toBeUndefined();
   });
 
-  it('recovers Skills for an older built-in partner without a stored template id', async () => {
-    await invoke('local-db:bots:create', {
-      id: 'bot-legacy-cindy',
-      name: 'Cindy',
-      identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy,
-      capabilities: { toolsetMode: 'allowlist', toolsets: ['docs'] },
+  it.each(['dash', 'lizi'])('keeps an existing %s profile, home and canonical chat independent of its retired template', async (templateId) => {
+    const id = `existing-${templateId}`;
+    const identitySource = `My customized ${templateId} identity`;
+    await invoke('local-db:bots:create', { id, name: templateId, identitySource,
+      avatar: `cindy://avatar/preset/${templateId}` });
+    // Replay an old persisted profile; the removed template is only historical metadata.
+    const readConfig = () => JSON.parse((h.sqlite!.prepare(
+      'SELECT capabilities_json FROM bot_profile_versions WHERE bot_id = ? ORDER BY version DESC LIMIT 1',
+    ).get(id) as { capabilities_json: string }).capabilities_json);
+    h.sqlite!.prepare('UPDATE bot_profile_versions SET capabilities_json = ? WHERE bot_id = ?')
+      .run(JSON.stringify({ ...readConfig(), templateId }), id);
+    const home = join(h.userDataDir, createHash('sha256').update(h.ownerScopeKey).digest('hex'), 'bots', id);
+    mkdirSync(join(home, 'skills', 'my-workflow'), { recursive: true });
+    writeFileSync(join(home, 'skills', 'my-workflow', 'SKILL.md'), 'My verified workflow');
+    writeFileSync(join(home, 'memories', 'user-preference.md'), 'My stable preference');
+    const soulBefore = readFileSync(join(home, 'SOUL.md'), 'utf8');
+    const canonical = await invoke('local-db:bots:create-canonical-session', {
+      botId: id, expectedCanonicalSessionId: null, expectedProfileVersion: 1,
     });
-    expect(h.seedTemplateSkills).not.toHaveBeenCalledWith(
-      expect.any(String),
-      'bot-legacy-cindy',
-      'cindy',
-    );
-
     await invoke('local-db:bots:list', {});
-
-    expect(h.seedTemplateSkills).toHaveBeenCalledWith(
-      expect.any(String),
-      'bot-legacy-cindy',
-      'cindy',
-    );
+    const loaded = await invoke('local-db:bots:get', id);
+    expect(loaded).toMatchObject({ templateId, identitySource, currentVersion: 1,
+      avatar: `cindy://avatar/preset/${templateId}`, canonicalSessionId: canonical.canonicalSessionId });
+    expect(readFileSync(join(home, 'SOUL.md'), 'utf8')).toBe(soulBefore);
+    expect(readFileSync(join(home, 'skills', 'my-workflow', 'SKILL.md'), 'utf8')).toBe('My verified workflow');
+    expect(readFileSync(join(home, 'memories', 'user-preference.md'), 'utf8')).toBe('My stable preference');
+    const edited = await invoke('local-db:bots:update', { id, name: `${templateId} renamed` });
+    expect(edited).toMatchObject({ templateId, identitySource, canonicalSessionId: canonical.canonicalSessionId });
+    expect(readConfig().templateId).toBe(templateId);
   });
 
-  it('does not infer a template after the partner identity was customized', async () => {
-    await invoke('local-db:bots:create', {
-      id: 'bot-customized-cindy',
-      name: 'Cindy',
-      identitySource: `${BOT_TEMPLATE_PRESET_IDENTITIES.cindy}\n\n# 我的补充`,
-    });
-
-    await invoke('local-db:bots:list', {});
-
-    expect(h.seedTemplateSkills).not.toHaveBeenCalledWith(
-      expect.any(String),
-      'bot-customized-cindy',
-      expect.anything(),
-    );
-  });
-
-  it('refreshes an existing runtime after a delayed preset Skill recovery', async () => {
-    h.seedTemplateSkills
-      .mockRejectedValueOnce(new Error('disk busy'))
-      .mockRejectedValueOnce(new Error('disk still busy'));
-    await invoke('local-db:bots:create', {
-      id: 'bot-lizi',
-      name: 'LiZi',
-      templateId: 'lizi',
-    });
-    const created = await invoke('local-db:bots:create-canonical-session', {
-      botId: 'bot-lizi',
-      expectedCanonicalSessionId: null,
-      expectedProfileVersion: 1,
-    });
-
-    await invoke('local-db:bots:get', 'bot-lizi');
-    expect(h.requestRuntimeRefresh).toHaveBeenCalledWith(created.canonicalSessionId, 'resource');
+  it('still recognizes an unchanged legacy Cindy without rewriting its identity', async () => {
+    await invoke('local-db:bots:create', { id: 'legacy-cindy', name: 'Cindy',
+      identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy });
+    const loaded = await invoke('local-db:bots:get', 'legacy-cindy');
+    expect(loaded).toMatchObject({ templateId: 'cindy', identitySource: BOT_TEMPLATE_PRESET_IDENTITIES.cindy, currentVersion: 1 });
   });
 
   it('rejects an unknown template before creating a profile', async () => {

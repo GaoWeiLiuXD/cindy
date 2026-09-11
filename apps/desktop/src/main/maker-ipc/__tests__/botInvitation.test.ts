@@ -164,14 +164,15 @@ describe('companion invitation with SQLite and real skill files', () => {
   });
 
   it.each(['cindy', 'dash', 'lizi'])(
-    'prepares %s without a model request or role-specific Skill pack',
+    'resumes a saved %s invitation without replacing its identity or installing a template',
     async (templateId) => {
       seed({}, { templateId });
+      sqlite.prepare('UPDATE bot_profile_versions SET identity_source = ?').run('用户已经修改的人设');
       queueBotInvitation('bot-1');
       await vi.waitFor(() => expect(state().stage).toBe('ready'));
       expect(h.generate).not.toHaveBeenCalled();
       const folder = await readBotProfileFolder(h.root, 'bot-1');
-      expect(folder.identitySource).toContain('性格与聊天习惯');
+      expect(folder.identitySource).toBe('用户已经修改的人设');
       expect((await fs.readdir(path.join(h.root, 'bots', 'bot-1', 'skills'))).length).toBe(0);
     },
   );

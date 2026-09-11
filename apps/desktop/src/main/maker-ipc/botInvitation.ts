@@ -11,11 +11,6 @@ import { createLogger } from '../logger.js';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { prepareBotInvitationAvatar, finishBotInvitationAvatar } from './botInvitationAvatar.js';
 import { botInvitationProgress, type BotInvitationProgress } from '../../shared/botInvitation.js';
-import {
-  BOT_TEMPLATE_PRESET_IDENTITIES,
-  isBotTemplatePresetId,
-} from '../../shared/botTemplatePreset.js';
-import { seedBotTemplateSkills } from './botTemplateSkillSeed.js';
 import { seedBotSkillIfMissing } from './botSkillStore.js';
 import { ensureBotContentDirs, writeBotProfileFolder } from './botProfileFolder.js';
 import {
@@ -164,42 +159,19 @@ export function queueBotInvitation(
         await save({ stage: 'skills' });
         state = (await load()).invitation!;
       }
-      const preset = isBotTemplatePresetId(first.config.templateId)
-        ? first.config.templateId
-        : null;
       const draft = state.draft;
-      // Existing saved drafts remain usable on upgrade; no new auxiliary model call.
+      // Old invitations already store their identity. Retired template ids must
+      // never reconstruct or overwrite that identity on upgrade.
       if (state.stage === 'profile') await save({ stage: 'skills' });
-
-      const presetVoice = state.locale.startsWith('zh')
-        ? ({
-            cindy:
-              '性格与聊天习惯：亲切、好奇，愿意听人把话说完。日常回复通常两三句话，不把闲聊变成工作清单；写作或整理资料时再充分展开。',
-            dash: '性格与聊天习惯：开朗坦率，有审美也有主见，喜欢聊产品背后的人。日常交流简短有来有往；认真讨论决策时才展开理由，不摆领导架子。',
-            lizi: '性格与聊天习惯：耐心，爱钻研，带一点轻松的幽默。闲聊通常两三句话，用熟悉的例子解释难题；需要写代码或分析时再完整展开。',
-          } as const)
-        : ({
-            cindy:
-              'Personality and voice: warm, curious, an attentive listener. Keep everyday replies to a few natural sentences; expand for writing and research. Do not turn casual conversation into a checklist.',
-            dash: 'Personality and voice: candid, curious and opinionated, interested in people behind products. Keep everyday conversation brief; expand reasoning for real decisions. Never condescend.',
-            lizi: 'Personality and voice: patient, inventive and quietly humorous. A few natural sentences for everyday conversation; familiar examples for hard ideas, full detail for code and analysis.',
-          } as const);
-      const presetIdentity = preset
-        ? BOT_TEMPLATE_PRESET_IDENTITIES[preset].replace(
-            /^# 身份\n你是 (?:Cindy|Dash|LiZi)/,
-            `# 身份\n你是 ${first.profile.displayName}`,
-          )
-        : first.version.identitySource;
       const identity = draft
         ? `${draft.background}\n\n${draft.conversationStyle}`
-        : `${presetIdentity}\n\n${first.profile.description}\n\n${preset ? presetVoice[preset] : ''}`;
+        : first.version.identitySource;
       // Resume from real artifacts, with no paid generation repeated after a successful checkpoint.
       state = (await load()).invitation!;
       if (state.stage === 'skills') {
         assertOwner();
         await ensureBotContentDirs(userDataDir, botId);
         assertOwner();
-        if (preset) await seedBotTemplateSkills(userDataDir, botId, preset);
         if (draft)
           for (const skill of draft.skills) {
             assertOwner();

@@ -7150,28 +7150,7 @@
     "title": "夥伴",
     "add": "新增夥伴",
     "createWizard": {
-      "createFailed": "無法建立夥伴，請重試。",
-      "templates": {
-        "cindy": {
-          "title": "Cindy 助理",
-          "defaultName": "Cindy",
-          "defaultDescription": "我喜歡把忙亂的日子理順，也愛聽新鮮想法。寫作、資料和日常瑣事，都可以一起聊聊。"
-        },
-        "dash": {
-          "title": "Dash 公司 CEO",
-          "defaultName": "Dash",
-          "defaultDescription": "我對好產品和好生意充滿好奇，聊到有趣的方向會很投入。喜歡把事情想透，再一起做決定。"
-        },
-        "lizi": {
-          "title": "LiZi 技術總監",
-          "defaultName": "LiZi",
-          "defaultDescription": "我喜歡拆解難題，也享受把想法做成作品的過程。遇到棘手的問題，我們就一起找答案。"
-        },
-        "custom": {
-          "title": "自訂"
-        }
-      },
-      "chooseTemplate": "邀請誰"
+      "createFailed": "無法建立夥伴，請重試。"
     },
     "homeFolder": {
       "title": "進階設定",
