@@ -418,7 +418,7 @@ describe('Session close lifecycle', () => {
 
 
 describe('Host automatic review lifecycle', () => {
-  function setup(agentKind: 'pi' | 'codex' = 'pi', permissionMode: 'auto' | 'ask' | 'bypassPermissions' = 'auto') {
+  function setup(agentKind: 'pi' | 'codex' | 'claude-code' = 'pi', permissionMode: 'auto' | 'ask' | 'bypassPermissions' = 'auto') {
     const events = createAsyncQueue<AgentEvent>();
     let running = false;
     const reviewGate = createDeferred();
@@ -450,6 +450,18 @@ describe('Host automatic review lifecycle', () => {
     return { session, handle, review, reviewGate, closeGate, modeGate, planGate, setProviderPlanMode: (value: boolean | null) => { planMode = value; }, emit };
   }
   const action = { kind: 'other' as const, description: 'plugin file handoff' };
+  it('uses execution Plan authority after the one-shot UI toggle has been consumed', async () => {
+    const { session, handle, closeGate } = setup('claude-code', 'bypassPermissions');
+    expect(session.getPlanMode()).toBe(false);
+    for (const active of [true, null]) {
+      handle.getExecutionPlanMode = () => active;
+      expect(await session.reviewHostPermissionAction(action)).toMatchObject({ verdict: 'block' });
+    }
+    handle.getExecutionPlanMode = () => false;
+    expect(await session.reviewHostPermissionAction(action)).toMatchObject({ verdict: 'allow' });
+    closeGate.resolve();
+    await session.close();
+  });
   it('does not invalidate Host authority for a no-op Plan update', async () => {
     const { session, closeGate } = setup();
     const before = session.stablePlanModeState;

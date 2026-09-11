@@ -2164,6 +2164,9 @@ export class ClaudeCodeAgent extends BaseAgent {
             : 'This downstream source was not selected.',
         };
       }
+      if (isPlanToolBlocked(toolName)) {
+        return { behavior: 'deny', message: 'The current Plan turn is read-only.' };
+      }
       if (mutablePermissionMode === 'bypassPermissions' && !forceTurnConfirmation(toolName, input)) {
         return { behavior: 'allow', updatedInput: input };
       }
@@ -2234,6 +2237,9 @@ export class ClaudeCodeAgent extends BaseAgent {
         // cast 破 TS 收窄:TS 不建模 await 期间经 setPermissionMode 闭包的重赋值,会把此处
         // mutablePermissionMode 仍视为 'auto';运行期它确实可能已变,故按 union 类型现读。
         const modeAfterReview = mutablePermissionMode as PermissionMode;
+        if (isPlanToolBlocked(toolName)) {
+          return { behavior: 'deny', message: 'The current Plan turn is read-only.' };
+        }
         if (modeAfterReview === 'bypassPermissions') {
           if (turnPolicyForcePrompt) {
             return { behavior: 'deny', message: 'Permission mode changed; retry within the authorized turn scope.' };
@@ -2295,6 +2301,9 @@ export class ClaudeCodeAgent extends BaseAgent {
         { turnPolicyForcePrompt, directorySensitive: directorySensitivePermission },
       );
       notifyIfAutoReviewConfirmUndelivered(unavailableHandoff, decision);
+      if (isPlanToolBlocked(toolName)) {
+        return { behavior: 'deny', message: 'The current Plan turn is read-only.' };
+      }
       if (decision.kind !== 'permission') {
         log.warn('permission got mismatched decision', { tool: toolName, decKind: decision.kind });
         return { behavior: 'deny', message: 'resolver kind mismatch' };
@@ -2604,6 +2613,12 @@ export class ClaudeCodeAgent extends BaseAgent {
      */
     const currentTurnSdkPermissionMode = (): SdkPermissionMode =>
       planTurnActive ? 'plan' : toSdkPermissionMode(mutablePermissionMode);
+    // Only the current SDK/turn state applies here; arming the next message must
+    // not turn an ordinary in-flight turn into a Plan turn. Keep other modes on
+    // their existing SDK/MCP approval path; Full Access is not a Plan override.
+    const isPlanToolBlocked = (toolName: string): boolean =>
+      mutablePermissionMode === 'bypassPermissions'
+      && (planTurnActive || sdkInPlanMode) && !isReadOnlyClaudeTool(toolName);
     // Fast 模式运行时态:启动取 opts.fastMode 快照,setFastMode 覆盖。buildSettings 每次读最新值;
     // host 只在「该 model 支持 + 走官方供应商」时才传 true(renderer 配置门控),agent 忠实消费。
     let mutableFastMode = opts.fastMode === true;
@@ -3364,6 +3379,8 @@ export class ClaudeCodeAgent extends BaseAgent {
                 return { kind: 'plan_review', behavior: 'deny', reason: 'resolver kind mismatch' };
               }
               if (decision.behavior === 'allow') {
+                planTurnActive = false;
+                sdkInPlanMode = false;
                 appendActiveCapabilitySelectionText(
                   capabilitySelectionAddedByPlanEdit(
                     this.deps.capabilityRouting,
@@ -3412,6 +3429,9 @@ export class ClaudeCodeAgent extends BaseAgent {
               };
             }
             // Auto allow/block do not need UI, including MCP operations.
+            if (isPlanToolBlocked(remoteToolName)) {
+              return { kind: 'permission', behavior: 'deny', reason: 'The current Plan turn is read-only.' };
+            }
             const canReviewRemoteWithoutUi = mutablePermissionMode === 'auto';
             if (!interactionResolver && !canReviewRemoteWithoutUi) {
               if (isReadOnlyClaudeTool(remoteToolName)) {
@@ -3468,6 +3488,9 @@ export class ClaudeCodeAgent extends BaseAgent {
                 'linux',
               );
               const modeAfterReview = mutablePermissionMode as PermissionMode;
+              if (isPlanToolBlocked(remoteToolName)) {
+                return { kind: 'permission', behavior: 'deny', reason: 'The current Plan turn is read-only.' };
+              }
               if (modeAfterReview === 'bypassPermissions') {
                 return remoteTurnPolicyForcePrompt
                   ? { kind: 'permission', behavior: 'deny', reason: 'Permission mode changed; retry within the authorized turn scope.' }
@@ -3523,6 +3546,9 @@ export class ClaudeCodeAgent extends BaseAgent {
               return { kind: 'permission', behavior: 'deny', reason: 'approval_timeout' };
             }
             notifyIfAutoReviewConfirmUndelivered(remoteUnavailableHandoff, decision);
+            if (isPlanToolBlocked(remoteToolName)) {
+              return { kind: 'permission', behavior: 'deny', reason: 'The current Plan turn is read-only.' };
+            }
             if (decision.kind !== 'permission') {
               return { kind: 'permission', behavior: 'deny', reason: 'resolver kind mismatch' };
             }
@@ -6885,6 +6911,10 @@ export class ClaudeCodeAgent extends BaseAgent {
 
       getPlanMode() {
         return mutablePlanMode;
+      },
+
+      getExecutionPlanMode() {
+        return mutablePlanMode || planTurnActive || sdkInPlanMode;
       },
 
       async setExtraDirs(newDirs: string[]) {

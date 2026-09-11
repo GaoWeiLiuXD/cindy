@@ -306,6 +306,9 @@
   也不得跳过 Auto 审阅。审批期间实例、权限或调用归属失效时，旧 allow 不可执行。
   Plan 与操作审批档位正交：Host 副作用须先检查实时 Plan 状态，未知或切换中拒绝；
   Plan 切换代次也参与审批后和落盘前复核，不能以数据库镜像或切回原状态恢复旧授权。
+  一次性 Plan 的 UI 开关在发送后熄灭，不代表当前 Plan 回合结束；授权判定使用 Provider
+  的执行态，不能只读下一轮开关。Claude Code 本地/SSH 的 Full Access 短路同样不能
+  放行当前 Plan 回合里的非只读工具；显式批准计划后才恢复底层操作审批档位。
   这不扩大本轮来源/执行范围、不改变跨主机路径归属，不替用户填写 Setup、OAuth、Secret
   等必要信息，也不改变第 3.1 节的安装／更新策略。自主面板或后台调用不得借用前台会话权限。
   实现与回归见 [Session.reviewHostPermissionAction](../../packages/maker-core/src/session.ts)、

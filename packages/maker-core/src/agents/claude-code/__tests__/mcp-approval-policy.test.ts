@@ -1305,6 +1305,27 @@ describe('fail-closed still precedes the MCP policy', () => {
 });
 
 describe('remote sessions share the same permission semantics', () => {
+  it('remote Full Access respects the active Plan turn until explicit plan approval', async () => {
+    const { handle, onApprovalRequest, seen } = await startRemoteSession(() => 'auto-approve', {
+      permissionMode: 'bypassPermissions',
+      attachResolver: (req) => req.kind === 'plan_review'
+        ? { kind: 'plan_review', behavior: 'allow' } : { kind: 'permission', behavior: 'allow' },
+    });
+    await handle.setPlanMode!(true);
+    await handle.send({ type: 'user', content: 'Plan the change.' });
+    expect(handle.getPlanMode?.()).toBe(false);
+    expect(handle.getExecutionPlanMode?.()).toBe(true);
+    for (const toolName of ['Write', 'Bash', 'mcp__cindy_contacts__call_tool']) {
+      expect(await onApprovalRequest({ requestId: `plan-${toolName}`, kind: 'permission', toolName, input: {} })).toMatchObject({ behavior: 'deny' });
+    }
+    expect(await onApprovalRequest({ requestId: 'plan-read', kind: 'permission', toolName: 'Read', input: {} })).toMatchObject({ behavior: 'allow' });
+    expect(seen).toHaveLength(0);
+    expect(await onApprovalRequest({ requestId: 'plan-exit', kind: 'plan_review', plan: 'Apply the change.' })).toMatchObject({ behavior: 'allow' });
+    expect(handle.getExecutionPlanMode?.()).toBe(false);
+    expect(await onApprovalRequest({ requestId: 'plan-done', kind: 'permission', toolName: 'Write', input: {} })).toMatchObject({ behavior: 'allow' });
+    await handle.close();
+  });
+
   /** 起一个远端会话并拿到 daemon 侧的 approval 回调。 */
   async function startRemoteSession(
     policy: (context: McpToolApprovalContext) => McpToolApprovalPolicy,

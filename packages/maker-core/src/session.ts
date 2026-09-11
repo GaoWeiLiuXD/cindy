@@ -1492,7 +1492,9 @@ export class Session {
   /** Host side effects must not use an unknown or in-flight Plan state. */
   get stablePlanModeState(): { enabled: boolean; generation: number } | null {
     if (this.status !== 'active' || this.terminationStarted || this.planModeChangesInFlight > 0) return null;
-    const enabled = this.capabilities.planMode?.supported ? this.getPlanMode() : false;
+    const enabled = this.capabilities.planMode?.supported
+      ? (this.handle.getExecutionPlanMode ? this.handle.getExecutionPlanMode() : this.getPlanMode())
+      : false;
     return enabled === null ? null : { enabled, generation: this.planModeGeneration };
   }
 

@@ -2122,6 +2122,52 @@ describe('Full Access 插件文件交接', () => {
 
 
 describe('Host Auto review', () => {
+  it.each(['bypassPermissions', 'auto', 'ask'] as const)('%s rejects media reveal and file handoff with unavailable Plan authority', async (permissionMode) => {
+    liveGrantStateMock.mockReturnValue({ permissionMode, remoteHostId: null, isCurrent: () => false });
+    const file = path.join(outsideDir, `plan-${permissionMode}.png`);
+    fs.writeFileSync(file, 'png');
+    const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
+    callCindyMediaMock.mockResolvedValue({ ok: true, url, local_path: file, mime_type: 'image/png' });
+    const deps = makeDeps('claude-code', `plan-${permissionMode}`);
+    expect(await deps.callMedia?.({ action: 'resolve_local_path', url })).toMatchObject({ ok: false, errorCode: 'LOCAL_PATH_REVEAL_DENIED' });
+    expect(await deps.callGhostTool({ ghostId: 'art', tool: 'run', args: {}, attachments: [file] })).toMatchObject({ ok: false });
+    expect(confirmRequestMock).not.toHaveBeenCalled();
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['auto', 'ask'] as const)('%s cannot return media or hand off files after captured authority changes during approval', async (permissionMode) => {
+    const file = path.join(outsideDir, `late-plan-${permissionMode}.png`);
+    fs.writeFileSync(file, 'png');
+    const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
+    callCindyMediaMock.mockResolvedValue({ ok: true, url, local_path: file, mime_type: 'image/png' });
+    for (const kind of ['media', 'handoff']) {
+      let current = true;
+      liveGrantStateMock.mockReturnValue({ permissionMode, remoteHostId: null, isCurrent: () => current,
+        reviewAction: async () => { current = false; return { verdict: 'allow' }; },
+      });
+      confirmRequestMock.mockImplementation(async () => { current = false; return { confirmed: true, allowDirs: false }; });
+      const deps = makeDeps('pi', `late-plan-${permissionMode}-${kind}`);
+      const result = kind === 'media'
+        ? await deps.callMedia?.({ action: 'resolve_local_path', url })
+        : await deps.callGhostTool({ ghostId: 'art', tool: 'run', args: {}, attachments: [file] });
+      expect(result).toMatchObject({ ok: false });
+      expect(result).not.toHaveProperty('local_path');
+    }
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('rechecks media authority at the final path return after the Full Access shortcut', async () => {
+    let current = true;
+    liveGrantStateMock.mockImplementation(() => {
+      queueMicrotask(() => { current = false; });
+      return { permissionMode: 'bypassPermissions', remoteHostId: null, isCurrent: () => current };
+    });
+    const url = `cindy-media://blobs/${'a'.repeat(64)}.png`;
+    callCindyMediaMock.mockResolvedValue({ ok: true, url, local_path: process.execPath, mime_type: 'image/png' });
+    expect(await makeDeps('codex', 'late-full-media').callMedia?.({ action: 'resolve_local_path', url })).toMatchObject({ ok: false, errorCode: 'LOCAL_PATH_REVEAL_DENIED' });
+    expect(confirmRequestMock).not.toHaveBeenCalled();
+  });
+
   it.each(['claude-code', 'codex', 'pi'] as const)('%s media reveal follows Full access and a later switch to Ask', async (agentKind) => {
     let permissionMode = 'bypassPermissions';
     const reviewAction = vi.fn();

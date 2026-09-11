@@ -183,6 +183,8 @@ async function packForgeSource(
 export interface GhostGrantLiveSessionState {
   permissionMode: PermissionMode | null;
   remoteHostId: string | null;
+  /** Includes the captured permission/Plan generations and forbids active or unknown Plan. */
+  isCurrent?: () => boolean;
   reviewAction?: (action: ReviewableAction) => Promise<AutoReviewDecision>;
 }
 
@@ -390,9 +392,14 @@ async function requestGrantConfirm(params: {
   | { ok: true; approvalSource: GhostGrantApprovalSource; allowDirs?: boolean }
   | { ok: false; message: string }
 > {
+  let isCurrent: (() => boolean) | undefined;
+  const expired = () => isCurrent?.() === false;
+  const denied = { ok: false as const, message: 'Task or Plan permissions changed; retry with the current scope.' };
   if (params.sessionId && params.sessionInstanceId && params.getLiveSessionGrantState) {
     try {
       const live = params.getLiveSessionGrantState(params.sessionId, params.sessionInstanceId);
+      isCurrent = live?.isCurrent;
+      if (expired()) return denied;
       // 远程会话的 workingDir 是另一台机器上的路径。即使档位为 Full Access,
       // 也不能据此静默读取本机同名/任意路径;保留原确认边界。
       if (live?.permissionMode === 'bypassPermissions' && !live.remoteHostId) {
@@ -410,6 +417,7 @@ async function requestGrantConfirm(params: {
           lane: params.lane,
           files: params.items.map(({ absPath, size, mimeType, isDirectory }) => ({ absPath, size, mimeType, isDirectory })),
         }, live.remoteHostId ? 'These are files on the controller, NOT the remote task filesystem.' : undefined));
+        if (expired()) return denied;
         if (decision.verdict === 'allow') {
           log.info('ghost grant: AI approved outside-workdir handoff', { ghostId: params.ghostId, lane: params.lane, grantSource: 'auto-review' });
           return { ok: true, approvalSource: 'auto-review' };
@@ -426,6 +434,7 @@ async function requestGrantConfirm(params: {
       });
     }
   }
+  if (expired()) return denied;
   const bridge = getGhostGrantConfirmBridge();
   if (!bridge) {
     return {
@@ -447,6 +456,7 @@ async function requestGrantConfirm(params: {
     lane: params.lane,
     items: params.items,
   });
+  if (expired()) return denied;
   if (decision.confirmed) {
     return { ok: true, approvalSource: 'user', allowDirs: decision.allowDirs };
   }
@@ -470,7 +480,11 @@ async function requestMediaPathRevealConfirm(params: {
   getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'];
   absPath: string;
   mimeType: string;
-}): Promise<{ ok: true } | { ok: false; errorCode: string; message: string }> {
+}): Promise<{ ok: true; isCurrent?: () => boolean } | { ok: false; errorCode: string; message: string }> {
+  let isCurrent: (() => boolean) | undefined;
+  const expired = () => isCurrent?.() === false;
+  const denied = { ok: false as const, errorCode: 'LOCAL_PATH_REVEAL_DENIED',
+    message: 'Task or Plan permissions changed; retry with the current scope.' };
   if (!params.sessionId) {
     return {
       ok: false,
@@ -481,14 +495,17 @@ async function requestMediaPathRevealConfirm(params: {
   if (params.sessionInstanceId && params.getLiveSessionGrantState) {
     try {
       const live = params.getLiveSessionGrantState(params.sessionId, params.sessionInstanceId);
+      isCurrent = live?.isCurrent;
+      if (expired()) return denied;
       if (live?.permissionMode === 'bypassPermissions' && !live.remoteHostId) {
-        return { ok: true };
+        return { ok: true, isCurrent };
       }
       if (live?.permissionMode === 'auto' && live.reviewAction) {
         const decision = await live.reviewAction(toolAutoReviewAction('cindy_media.resolve_local_path', {
           path: params.absPath, mimeType: params.mimeType,
         }, 'Return the controller local path of this managed media to the agent.'));
-        if (decision.verdict === 'allow') return { ok: true };
+        if (expired()) return denied;
+        if (decision.verdict === 'allow') return { ok: true, isCurrent };
         if (decision.verdict === 'block') return {
           ok: false, errorCode: 'LOCAL_PATH_REVEAL_DENIED', message: decision.reason ?? 'Automatic review denied revealing this path.',
         };
@@ -498,6 +515,7 @@ async function requestMediaPathRevealConfirm(params: {
       // must reach the existing confirmation path, never disclose the path.
     }
   }
+  if (expired()) return denied;
   const bridge = getGhostGrantConfirmBridge();
   if (!bridge) {
     return {
@@ -531,7 +549,8 @@ async function requestMediaPathRevealConfirm(params: {
       },
     ],
   });
-  if (decision.confirmed) return { ok: true };
+  if (expired()) return denied;
+  if (decision.confirmed) return { ok: true, isCurrent };
   return {
     ok: false,
     errorCode: 'LOCAL_PATH_REVEAL_DENIED',
@@ -1406,6 +1425,10 @@ export function getCindyGhostsMcpDeps(
           mimeType,
         });
         if (!confirmed.ok) return confirmed;
+        if (confirmed.isCurrent?.() === false) return {
+          ok: false, errorCode: 'LOCAL_PATH_REVEAL_DENIED',
+          message: 'Task or Plan permissions changed; retry with the current scope.',
+        };
       }
       if (request.action !== 'resolve_local_path' && result.ok !== false && sessionId) {
         // Core 结果返回给当前 Agent 前先同步挂到本会话。后续消息落库钩子仍会

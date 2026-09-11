@@ -27478,6 +27478,7 @@ describe('CodexAgent plan mode', () => {
     expect(params.collaborationMode).toEqual({ mode: 'plan', settings: PLAN_SETTINGS });
     // 一次性语义: send 消耗武装态, 勾选自动熄灭(本轮循环由 planCycleActive 继续)。
     expect(handle.getPlanMode?.()).toBe(false);
+    expect(handle.getExecutionPlanMode?.()).toBe(true);
     await handle.close();
 
     // 常规会话逐字节不变: 不携带 collaborationMode 字段。
@@ -28214,6 +28215,7 @@ describe('CodexAgent plan mode', () => {
     // app-server 未接受 plan turn/start 前, thread history 里还没有 Plan Mode marker。
     await handle.send({ type: 'user', content: 'make a plan' });
     expect(handle.getPlanMode?.()).toBe(false);
+    expect(handle.getExecutionPlanMode?.()).toBe(false);
 
     await handle.send({ type: 'user', content: 'just do it' });
     const [, params] = turnStartCalls(host)[1] as [string, Record<string, unknown>];

@@ -13497,6 +13497,10 @@ export class CodexAgent extends BaseAgent {
         return mutablePlanMode;
       },
 
+      getExecutionPlanMode() {
+        return mutablePlanMode || planCycleActive || currentTurnPlanModeActive;
+      },
+
       async setFastMode(enabled: boolean) {
         if (reviewMode) return;
         // 去重以"fast 是否开启"为准: undefined(未覆盖) / null / 'default' 都视为未开,
