@@ -35,6 +35,12 @@ describe('Bot Profile runtime prompt', () => {
     expect(prompt).toContain('You are Research helper');
   });
 
+  it('uses a legacy empty identity’s role without replacing an explicit SOUL', () => {
+    const description = '负责财务分析。';
+    expect(buildBotProfilePrompt({ displayName: 'Finance', identitySource: '  ', description })).toBe(description);
+    expect(buildBotProfilePrompt({ displayName: 'Finance', identitySource: 'User-authored SOUL', description })).toBe('User-authored SOUL');
+  });
+
   it('uses the same persisted default SOUL as the runtime fallback', () => {
     const soul = buildDefaultBotIdentity('Research helper');
     expect(

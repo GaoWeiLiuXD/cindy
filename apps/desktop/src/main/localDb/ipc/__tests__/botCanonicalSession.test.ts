@@ -2560,6 +2560,45 @@ describe('Bot canonical Session lifecycle', () => {
     expect(identity).toContain('intelligent AI assistant running as a Cindy Bot');
   });
 
+  it.each([
+    { identitySource: undefined, description: '负责财务分析，使用用户提供的数据，不编造账目。' },
+    { identitySource: '   ', description: '负责财务分析，使用用户提供的数据，不编造账目。' },
+    { identitySource: undefined, description: '财'.repeat(12000) },
+    { identitySource: '只使用用户明确指定的独立身份。', description: '列表中的简短介绍' },
+  ])('preserves description-only roles through creation and runtime (identity=$identitySource)', async ({ identitySource, description }) => {
+    const created = await invoke('local-db:bots:create', {
+      id: 'finance-role', name: 'Finance', avatar: '🤖', description, identitySource,
+    });
+    const expected = identitySource?.trim() || description;
+    expect(created.identitySource).toBe(expected);
+    const home = join(h.userDataDir, createHash('sha256').update(h.ownerScopeKey).digest('hex'), 'bots', created.id);
+    expect(readFileSync(join(home, 'SOUL.md'), 'utf8').trim()).toBe(expected);
+    const canonical = await invoke('local-db:bots:create-canonical-session', {
+      botId: created.id, expectedCanonicalSessionId: null, expectedProfileVersion: 1,
+    });
+    const opts: MakerSessionCreateOpts = {
+      id: canonical.session.id, agentKind: 'pi', workingDir: canonical.session.workingDir,
+      workspaceKind: 'dialogue', model: canonical.session.model, permissionMode: 'ask',
+    };
+    await hydrateBotProfileRuntime(opts, {}, { persistSnapshot: false });
+    expect(opts.botProfilePrompt).toBe(expected);
+    // The derived identity must still be accepted by the same API, including
+    // maximum-length descriptions copied back by editing/duplication clients.
+    const copy = await invoke('local-db:bots:create', {
+      id: 'finance-role-copy', name: 'Finance copy', avatar: '🤖', description,
+      identitySource: created.identitySource,
+    });
+    expect(copy.identitySource).toBe(expected);
+  });
+
+  it('uses the current description when an identity is explicitly cleared', async () => {
+    const description = '负责核对财务数据和解释预算差异。';
+    const updated = await invoke('local-db:bots:update', {
+      id: 'bot-1', description, identitySource: '   ',
+    });
+    expect(updated.identitySource).toBe(description);
+  });
+
   it('restores the persisted default SOUL when an identity is explicitly cleared', async () => {
     await invoke('local-db:bots:update', {
       id: 'bot-1',

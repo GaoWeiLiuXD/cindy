@@ -265,9 +265,10 @@ function readStringList(value: unknown): string[] {
 export function buildBotProfilePrompt(input: {
   displayName: string;
   identitySource: string;
+  description?: string;
 }): string {
   const displayName = input.displayName.trim();
-  return input.identitySource.trim() || buildDefaultBotIdentity(displayName);
+  return input.identitySource.trim() || buildDefaultBotIdentity(displayName, input.description);
 }
 
 /**
@@ -783,6 +784,7 @@ export async function hydrateBotProfileRuntime(
   opts.botProfilePrompt = buildBotProfilePrompt({
     displayName: profile.displayName,
     identitySource: identity,
+    description: profile.description,
   });
   const helperAvailable = !opts.remoteHostId || opts.agentKind === 'pi'
     || toolsetCatalog.some((item) => item.id === 'xdt_helper' && item.available !== false);

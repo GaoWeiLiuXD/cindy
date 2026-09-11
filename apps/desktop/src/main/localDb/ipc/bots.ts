@@ -921,7 +921,7 @@ export async function createBotProfile(raw: unknown) {
   const avatarImage = decodeBotAvatarImage(body.avatarImageBase64);
   const avatarColor = readText(body.avatarColor, 'avatarColor', 32) || 'violet';
   const identitySource =
-    (draftEntry ? `${draftEntry.draft.background}\n\n${draftEntry.draft.conversationStyle}\n\nCurrent profile:\n${name}\n${description}` : readText(body.identitySource, 'identitySource', 12000)) || buildDefaultBotIdentity(name);
+    (draftEntry ? `${draftEntry.draft.background}\n\n${draftEntry.draft.conversationStyle}\n\nCurrent profile:\n${name}\n${description}` : readText(body.identitySource, 'identitySource', 12000)) || buildDefaultBotIdentity(name, description);
   const skills = draftEntry ? draftEntry.draft.skillRefs : Array.isArray(body.skills)
     ? body.skills.filter((item): item is string => typeof item === 'string').slice(0, 100)
     : [];
@@ -1155,7 +1155,7 @@ export async function updateBotProfile(raw: unknown, expectedVersion?: number,
   const nextIdentitySource =
     body.identitySource !== undefined
       ? readText(body.identitySource, 'identitySource', 12000) ||
-        buildDefaultBotIdentity(patch.displayName ?? current.displayName)
+        buildDefaultBotIdentity(patch.displayName ?? current.displayName, patch.description ?? current.description)
       : (version?.identitySource ?? '');
   const profileContentChanged = botProfileContentChanged({
     previousCapabilities: previous,
