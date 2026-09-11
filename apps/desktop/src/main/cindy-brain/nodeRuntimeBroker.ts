@@ -317,6 +317,8 @@ interface WorkerEntry {
   stderrTotalChars: number;
   /** stderr 也可能把多字节字符切在两个 Buffer 之间,与 stdout 同理需流式解码。 */
   stderrDecoder: StringDecoder;
+  /** 尚可能属于令牌前缀的末段；不写日志或诊断缓存，排空时也不原样释放。 */
+  stderrRedactionPending: string;
   /** stdout 的 UTF-8 字节可能把一个汉字切在两个 chunk 之间，必须流式解码。 */
   stdoutDecoder: StringDecoder;
   stdoutBuffer: string;
@@ -328,7 +330,7 @@ interface WorkerEntry {
   hardKillTimer: NodeJS.Timeout | null;
   mcpInitPromise: Promise<void> | null;
   stopping: boolean;
-  /** 曾发给本 worker 的凭证明文(退出诊断脱敏用;settleExit 后立即清空)。 */
+  /** 曾发给本 worker 的凭证明文(stderr 及退出诊断脱敏用;settleExit 后立即清空)。 */
   exposedSecretValues: Set<string>;
   /** exit 后 stderr drain 用:非 null 表示进程已退出、正在等待管道排空。 */
   exitDrain: {
@@ -1408,6 +1410,7 @@ export class GhostNodeRuntimeBroker {
     }
     entry.pending.clear();
     entry.exposedSecretValues.clear();
+    entry.stderrRedactionPending = '';
     // PID 是启动期已经捕获的只读 fact；停止关键路径前不再调用诊断 getter/logger。
     const stopPid = entry.diagnosticPid;
     let sigtermKillReturned = false;
@@ -1648,6 +1651,7 @@ export class GhostNodeRuntimeBroker {
       stderrSegments: [],
       stderrTotalChars: 0,
       stderrDecoder: new StringDecoder('utf8'),
+      stderrRedactionPending: '',
       stdoutDecoder: new StringDecoder('utf8'),
       stdoutBuffer: '',
       nextId: 1,
@@ -1712,12 +1716,15 @@ export class GhostNodeRuntimeBroker {
     child.onControl?.((message) => this.handleWorkerControl(entry, message));
     child.stdout.on('data', (chunk) => this.handleStdout(entry, chunk));
     child.stderr.on('data', (chunk) => {
-      const decoded = entry.stderrDecoder.write(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+      // stop/排空结算已清掉令牌集合，不能把迟到输出当作无凭据的新进程日志。
+      if (entry.stopping || (this.workers.get(key) !== entry && !entry.exitDrain)) return;
+      const decoded = this.redactStderrChunk(entry,
+        entry.stderrDecoder.write(typeof chunk === 'string' ? Buffer.from(chunk) : chunk));
       if (entry.startupPhase && entry.startupStderr.length < STARTUP_STDERR_CAP) {
         entry.startupStderr = (entry.startupStderr + decoded).slice(0, STARTUP_STDERR_CAP);
       }
       // 按段带时间戳截存,退出时只取回看窗口内的段,不让老日志被新 chunk 携带。
-      entry.stderrSegments.push({ text: decoded, at: this.now() });
+      if (decoded) entry.stderrSegments.push({ text: decoded, at: this.now() });
       entry.stderrTotalChars += decoded.length;
       // 总量控制:保留尾部 EXIT_STDERR_CAP 字符——部分裁剪最老段的头部。
       if (entry.stderrTotalChars > EXIT_STDERR_CAP) {
@@ -2184,14 +2191,14 @@ export class GhostNodeRuntimeBroker {
     this.clearTimer(entry.exitDrain.timer);
     entry.exitDrain = null;
     // flush stderrDecoder 残留字节(多字节字符被切在最后一个 chunk 边界时)
-    const tail = entry.stderrDecoder.end();
+    const tail = this.redactStderrChunk(entry, entry.stderrDecoder.end(), true);
     if (tail) {
       entry.stderrSegments.push({ text: tail, at: this.now() });
       entry.stderrTotalChars += tail.length;
     }
     const ghostId = entry.ghost.manifest.id;
     const exitHint = this.exitStderrHint(entry, exitedAt);
-    const detail = `${error?.message ?? `code=${code}, signal=${signal ?? 'none'}`}${
+    const detail = `${this.redactSecrets(entry, error?.message ?? `code=${code}, signal=${signal ?? 'none'}`)}${
       exitHint ? `:${exitHint}` : ''
     }`;
     for (const pending of entry.pending.values()) {
@@ -2264,6 +2271,24 @@ export class GhostNodeRuntimeBroker {
       if (text.includes(secret)) text = text.replaceAll(secret, '[REDACTED]');
     }
     return text;
+  }
+
+  private redactStderrChunk(entry: WorkerEntry, chunk: string, flush = false): string {
+    const text = this.redactSecrets(entry, entry.stderrRedactionPending + chunk);
+    // 完整令牌先替换；可能跨 chunk 的前缀只留在内存，不能先写出再补救。
+    // 留存长度严格小于该进程已接收的最长凭据，不积累整行日志。
+    let pendingLength = 0;
+    for (const secret of entry.exposedSecretValues) {
+      for (let length = Math.min(secret.length - 1, text.length); length > pendingLength; length--) {
+        if (text.endsWith(secret.slice(0, length))) {
+          pendingLength = length;
+          break;
+        }
+      }
+    }
+    const end = text.length - pendingLength;
+    entry.stderrRedactionPending = flush ? '' : text.slice(end);
+    return text.slice(0, end) + (flush && pendingLength > 0 ? '[REDACTED]' : '');
   }
 
   private scheduleIdleStop(entry: WorkerEntry): void {
