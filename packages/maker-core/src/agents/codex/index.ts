@@ -4841,7 +4841,7 @@ export class CodexAgent extends BaseAgent {
       }
     }
     const readSessionMcpConfig = (): Record<string, unknown> => {
-      const config = host.getSessionMcpConfig(opts.sessionInstanceId);
+      const config = host.getSessionMcpConfig(opts.sessionInstanceId, { vendorOptions: vo });
       if (opts.remoteHostId && opts.botRuntimeProfile?.mcpPolicy
         && typeof config['mcp_servers.cindy_helper.url'] !== 'string') {
         throw new Error('Remote Codex Bot tools are not ready. Retry after the active remote task finishes.');
@@ -9999,6 +9999,7 @@ export class CodexAgent extends BaseAgent {
           0,
         ),
         cachedTokens: realTurnUsage.cacheRead,
+        cacheCreationTokens: realTurnUsage.cacheCreate,
         segments: realTurnUsageSegments,
         // With usage, exclude post-output finalization. Without usage, retain
         // the measured duration metadata (zero output cannot produce a rate).

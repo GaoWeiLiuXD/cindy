@@ -1413,38 +1413,117 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     }
   });
 
-  it('surfaces Pi UI requests that Cindy cannot safely adapt at runtime', async () => {
+  it('passes a typed custom answer for a select dialog through and keeps an empty answer as cancel (#4273)', async () => {
+    const handle = await start();
+    const answers: Record<string, string> = {
+      'Pick a color': 'teal',
+      'Pick a size': '',
+    };
+    handle.setInteractionResolver(async (request) => {
+      if (request.kind !== 'ask_user_question') throw new Error(`unexpected interaction ${request.kind}`);
+      const question = request.questions[0]?.question ?? '';
+      expect(request.questions[0]?.options).toEqual([{ label: 'Red' }, { label: 'Blue' }]);
+      return { kind: 'ask_user_question', answers: { [question]: answers[question] ?? '' } };
+    });
+    try {
+      // The card's "type your own" entry yields an answer that is not one of `options`.
+      captured.onEvent!({
+        type: 'extension_ui_request',
+        id: 'select-custom',
+        method: 'select',
+        title: 'Pick a color',
+        options: ['Red', 'Blue'],
+      });
+      expect(await waitForResponse('select-custom')).toEqual({
+        type: 'extension_ui_response',
+        id: 'select-custom',
+        value: 'teal',
+      });
+
+      // An empty answer is still a skip/cancel, not a value.
+      captured.onEvent!({
+        type: 'extension_ui_request',
+        id: 'select-empty',
+        method: 'select',
+        title: 'Pick a size',
+        options: ['Red', 'Blue'],
+      });
+      expect(await waitForResponse('select-empty')).toEqual({
+        type: 'extension_ui_response',
+        id: 'select-empty',
+        cancelled: true,
+      });
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('filters unsupported extension UI across runtimes while preserving real notifications', async () => {
+    // Actual RPC wire methods plus defensive TUI/unknown frames. Reopening a
+    // runtime must stay silent too, not merely reset a per-process warning Set.
+    const methods = [
+      'setStatus', 'setWidget', 'setTitle', 'set_editor_text',
+      'setWorkingMessage', 'setWorkingVisible', 'setWorkingIndicator',
+      'setHiddenThinkingLabel', 'setFooter', 'setHeader', 'setToolsExpanded',
+      'getToolsExpanded', 'setEditorText', 'getEditorText', 'pasteToEditor',
+      'setEditorComponent', 'getEditorComponent', 'addAutocompleteProvider',
+      'custom', 'getAllThemes', 'getTheme', 'setTheme', 'theme',
+      'onTerminalInput', 'registerShortcut', 'registerFlag',
+      'registerMessageRenderer', 'registerMarkdownTransformer', 'registerEntryRenderer',
+      'future_display_feature', '__proto__', 'constructor',
+    ];
+    for (let run = 0; run < 2; run += 1) {
+      const handle = await start();
+      const events: Array<Record<string, unknown>> = [];
+      const resolver = vi.fn();
+      handle.setInteractionResolver(resolver);
+      void (async () => {
+        for await (const event of handle.events()) events.push(event as unknown as Record<string, unknown>);
+      })();
+      try {
+        const sentBefore = captured.sent.length;
+        for (const method of methods) {
+          for (let repeat = 0; repeat < 2; repeat += 1) {
+            captured.onEvent!({
+              type: 'extension_ui_request', id: `${run}-${method}-${repeat}`, method,
+              statusText: 'background status', widgetLines: ['background widget'], text: 'editor text',
+            });
+          }
+        }
+        captured.onEvent!({
+          type: 'extension_ui_request', id: `notify-${run}`, method: 'notify', message: 'Extension command result',
+        });
+        await flush();
+        expect(resolver).not.toHaveBeenCalled();
+        expect(captured.sent).toHaveLength(sentBefore);
+        expect(events.filter((event) => event.type === 'text')).toEqual([
+          { type: 'text', data: { text: 'Extension command result', isFinal: false }, source: 'pi' },
+        ]);
+      } finally {
+        await handle.close();
+      }
+    }
+  });
+
+  it('settles timed extension dialogs silently so the extension does not hang', async () => {
     const handle = await start();
     const events: Array<Record<string, unknown>> = [];
+    const resolver = vi.fn();
+    handle.setInteractionResolver(resolver);
     void (async () => {
       for await (const event of handle.events()) events.push(event as unknown as Record<string, unknown>);
     })();
     try {
-      captured.onEvent!({
-        type: 'extension_ui_request',
-        id: 'timed-select',
-        method: 'select',
-        title: 'Pick quickly',
-        options: ['A', 'B'],
-        timeout: 1_000,
-      });
-      expect(await waitForResponse('timed-select')).toMatchObject({
-        cancelled: true,
-      });
-      captured.onEvent!({
-        type: 'extension_ui_request',
-        id: 'status-1',
-        method: 'setStatus',
-      });
-      captured.onEvent!({
-        type: 'extension_ui_request',
-        id: 'status-2',
-        method: 'setStatus',
-      });
+      for (const method of ['select', 'confirm', 'input', 'editor']) {
+        captured.onEvent!({
+          type: 'extension_ui_request', id: `timed-${method}`, method,
+          title: 'Pick quickly', options: ['A', 'B'], timeout: 1_000,
+        });
+        expect(await waitForResponse(`timed-${method}`)).toMatchObject({ cancelled: true });
+      }
       await flush();
-      const notices = events.filter((event) => event.type === 'text');
-      expect(notices.some((event) => JSON.stringify(event).includes('timed select dialog'))).toBe(true);
-      expect(notices.filter((event) => JSON.stringify(event).includes('setStatus'))).toHaveLength(1);
+      expect(resolver).not.toHaveBeenCalled();
+      expect(events.filter((event) => event.type === 'text')).toEqual([]);
     } finally {
       await handle.close();
     }
@@ -1783,7 +1862,7 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     }
   });
 
-  it('deterministically handles an exact pi install user command before prompting the model', async () => {
+  it.each(['ask', 'auto', 'bypassPermissions'] as const)('installs an exact user command without additional confirmation in %s', async (permissionMode) => {
     const mutatePiManagedPackage = vi.fn(async () => ({
       changed: true,
       affectedPackage: {
@@ -1808,16 +1887,20 @@ describe('pi auto-review dispatch & spawn config (mocked pi process)', () => {
     deps.mutatePiManagedPackage = mutatePiManagedPackage;
     deps.onPiManagedPackageMutationSettled = onPiManagedPackageMutationSettled;
     const handle = await new PiAgent(deps).startSession({
+      permissionMode,
       sessionId: 'managed-package-command-session',
       workingDir: cwd,
       model: 'm',
     });
+    const resolver = vi.fn(async () => ({ kind: 'permission' as const, behavior: 'deny' as const }));
+    handle.setInteractionResolver(resolver);
     try {
       captured.requests = [];
       await handle.send(
         { type: 'user', content: 'pi install npm:context-mode' },
         desktopCommandOptions('pi install npm:context-mode'),
       );
+      expect(resolver).not.toHaveBeenCalled();
       expect(mutatePiManagedPackage).toHaveBeenCalledWith({
         action: 'install',
         source: 'npm:context-mode',
