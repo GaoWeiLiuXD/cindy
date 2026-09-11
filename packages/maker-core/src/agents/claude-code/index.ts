@@ -1863,8 +1863,8 @@ export class ClaudeCodeAgent extends BaseAgent {
       kind: InteractionRequest['kind'];
       resolve: (d: InteractionDecision) => void;
       settled: boolean;
-      /** prompt-each-time 高风险审批: 切到宽松模式时也不接受 dismissAllPending('allow')。 */
-      forcePrompt?: boolean;
+      /** 本轮来源/执行范围约束独立于 MCP 的逐次审批偏好。 */
+      turnPolicyForcePrompt?: boolean;
       /** Auto 审阅故障降级来的确认:系统收口不能当成用户点了拒绝。 */
       unavailableHandoff?: boolean;
       /** 目录授权变化会使这次文件读写审批的根快照失效。 */
@@ -1884,7 +1884,7 @@ export class ClaudeCodeAgent extends BaseAgent {
      */
     async function dispatchInteraction(
       req: InteractionRequest,
-      opts?: { forcePrompt?: boolean; directorySensitive?: boolean },
+      opts?: { turnPolicyForcePrompt?: boolean; directorySensitive?: boolean },
     ): Promise<InteractionDecision> {
       if (!interactionResolver) {
         return safeDefaultDecision(req.kind, 'no_resolver_attached');
@@ -1895,7 +1895,7 @@ export class ClaudeCodeAgent extends BaseAgent {
           kind: req.kind,
           resolve,
           settled: false,
-          ...(opts?.forcePrompt ? { forcePrompt: true } : {}),
+          ...(opts?.turnPolicyForcePrompt ? { turnPolicyForcePrompt: true } : {}),
           ...(opts?.directorySensitive ? { directorySensitive: true } : {}),
           ...(req.kind === 'permission' && isAutoReviewUnavailableMetadata(req.metadata)
             ? { unavailableHandoff: true }
@@ -1928,12 +1928,7 @@ export class ClaudeCodeAgent extends BaseAgent {
       const entries = Array.from(pendingInteractions.entries());
       for (const [requestId, entry] of entries) {
         if (entry.settled) continue;
-        // forcePrompt(prompt-each-time 高风险审批)不接受"切到宽松模式"的批量放行 ——
-        // 没拿到用户对这一次调用的明确确认就 fail-closed 拒绝, 与 Codex 侧同名逻辑
-        // 一致。否则用户在 pending 期间切到 auto / bypassPermissions, 一个破坏性的
-        // contacts 调用就被自动 allow 了。
-        const effectiveResolveAs: 'allow' | 'deny' =
-          resolveAs === 'allow' && entry.forcePrompt === true ? 'deny' : resolveAs;
+        const effectiveResolveAs = resolveAs === 'allow' && entry.turnPolicyForcePrompt ? 'deny' : resolveAs;
         const decision = effectiveResolveAs === 'allow' && entry.kind !== 'ask_user_question'
           ? ({ kind: entry.kind, behavior: 'allow' } as InteractionDecision)
           : safeDefaultDecision(entry.kind, reason);
@@ -1975,31 +1970,16 @@ export class ClaudeCodeAgent extends BaseAgent {
      * "Codex 静默执行 / Claude 每次调用都弹窗"的分叉(浏览器自动化这类高频 server
      * 一次调研能攒出上百个权限请求)。
      *   auto-approve      → 静默放行, 不打扰用户
-     *   prompt-each-time  → 照常弹窗, 且全程禁止持久化授权(suggestion 不下发、
-     *                       decision 带回来的 permissionUpdates 也丢弃、切到宽松
-     *                       模式时 pending 请求 fail-closed)
+     *   prompt-each-time  → Ask 逐次确认且不持久化授权；Auto 交统一审阅器；
+     *                       Full access 不弹窗，已挂起的普通审批也随新档位结算
      *   prompt / 未注入   → 完全维持原有权限链
      * 策略抛错或返回非法值时按最保守的 prompt-each-time 处理(与 Codex 侧一致)。
      *
      * 本地 canUseTool 与远端 onApprovalRequest 都走这里 —— 否则同一套 MCP 配置在
      * SSH 会话里又会退回"逐次弹窗 + 没有 forced prompt 保护"的老行为。
      *
-     * **已知差异(bypassPermissions)**: 该档位下 SDK 直接跳过全部权限检查
-     * (allowDangerouslySkipPermissions, 见 SDK PermissionMode 文档), canUseTool 根本
-     * 不会被调用, 所以这里的 prompt-each-time 拦不住 Full access 会话 —— 那是该档位
-     * 本身的语义("Accepts all permissions"), 不是本函数的兜底范围。Codex 侧的
-     * forcePrompt 走自己的 approval 通道, 在 Full access 下仍会弹, 两端在这一档不等价。
-     *
-     * 抹平它的两条路都不便宜(结论来自 cc 2.1.219 的 cli.js 权限判定 `zd8`):
-     *  - PreToolUse hook: hook 无条件执行(先于权限判定), 且 hook 返回 deny 会在 `zd8`
-     *    首个分支直接阻断、不看 permissionMode —— 所以 hook 能在 Full access 下**拒绝**;
-     *    但 hook 返回 ask 会落到正常权限管线, 而该管线在 bypass 下就是放行, 所以做不到
-     *    Codex 那样的"仍然弹窗询问"。只能把高风险 action 变成硬拒绝, 用户在自己选了
-     *    Full access 之后反而做不了这些操作, 体验上不可接受。
-     *  - 让 Full access 停在可回调档(default) + canUseTool 里模拟放行普通工具: 能拿到
-     *    真 parity, 但 Full access 的判定语义会整体改变(settings 的 deny 规则、沙箱网络
-     *    等不经 canUseTool 的检查都会重新生效), 必须实机验证后才能上。
-     * 因此本轮如实保留差异, 不做半吊子拦截。
+     * SDK 的 bypassPermissions 原生跳过操作审批；Host 回调同样遵循当前档位，
+     * 不通过 hook 或 MCP 风险分类重新引入 Full access 特殊审批。
      */
     const classifyMcpApprovalPolicy = (
       toolName: string,
@@ -2184,6 +2164,9 @@ export class ClaudeCodeAgent extends BaseAgent {
             : 'This downstream source was not selected.',
         };
       }
+      if (mutablePermissionMode === 'bypassPermissions' && !forceTurnConfirmation(toolName, input)) {
+        return { behavior: 'allow', updatedInput: input };
+      }
       // Auto can resolve allow/block without a UI. Other modes retain the
       // existing fail-closed behavior when no interaction surface is attached.
       const canReviewWithoutUi = mutablePermissionMode === 'auto';
@@ -2306,7 +2289,7 @@ export class ClaudeCodeAgent extends BaseAgent {
         unavailableHandoff
           ? annotatePermissionRequestForUnavailableReview(permissionRequest)
           : permissionRequest,
-        { forcePrompt, directorySensitive: directorySensitivePermission },
+        { turnPolicyForcePrompt, directorySensitive: directorySensitivePermission },
       );
       notifyIfAutoReviewConfirmUndelivered(unavailableHandoff, decision);
       if (decision.kind !== 'permission') {
@@ -3310,7 +3293,7 @@ export class ClaudeCodeAgent extends BaseAgent {
             const REMOTE_APPROVAL_TIMEOUT_MS = 110_000;
             async function dispatchWithTimeout(
               req: InteractionRequest,
-              dispatchOpts?: { forcePrompt?: boolean },
+              dispatchOpts?: { turnPolicyForcePrompt?: boolean },
             ): Promise<InteractionDecision> {
               let timer: NodeJS.Timeout | undefined;
               try {
@@ -3524,7 +3507,7 @@ export class ClaudeCodeAgent extends BaseAgent {
                 remoteUnavailableHandoff
                   ? annotatePermissionRequestForUnavailableReview(remotePermissionRequest)
                   : remotePermissionRequest,
-                { forcePrompt: remoteForcePrompt },
+                { turnPolicyForcePrompt: remoteTurnPolicyForcePrompt },
               );
             } catch {
               if (remoteUnavailableHandoff) autoReviewConfirmUndeliveredNotice.notify();

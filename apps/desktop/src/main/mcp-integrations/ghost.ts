@@ -462,7 +462,7 @@ async function requestGrantConfirm(params: {
 }
 
 /**
- * 媒体仓路径揭示按当前 Auto 审阅或既有人工确认授权；审阅故障回退确认。
+ * 媒体仓路径揭示沿用当前会话权限；远端权限不能授权控制端的本机路径。
  */
 async function requestMediaPathRevealConfirm(params: {
   sessionId: string | null;
@@ -481,6 +481,9 @@ async function requestMediaPathRevealConfirm(params: {
   if (params.sessionInstanceId && params.getLiveSessionGrantState) {
     try {
       const live = params.getLiveSessionGrantState(params.sessionId, params.sessionInstanceId);
+      if (live?.permissionMode === 'bypassPermissions' && !live.remoteHostId) {
+        return { ok: true };
+      }
       if (live?.permissionMode === 'auto' && live.reviewAction) {
         const decision = await live.reviewAction(toolAutoReviewAction('cindy_media.resolve_local_path', {
           path: params.absPath, mimeType: params.mimeType,

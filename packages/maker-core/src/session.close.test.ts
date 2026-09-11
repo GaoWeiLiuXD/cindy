@@ -418,7 +418,7 @@ describe('Session close lifecycle', () => {
 
 
 describe('Host automatic review lifecycle', () => {
-  function setup(agentKind: 'pi' | 'codex' = 'pi') {
+  function setup(agentKind: 'pi' | 'codex' = 'pi', permissionMode: 'auto' | 'ask' | 'bypassPermissions' = 'auto') {
     const events = createAsyncQueue<AgentEvent>();
     let running = false;
     const reviewGate = createDeferred();
@@ -433,7 +433,7 @@ describe('Host automatic review lifecycle', () => {
     } as unknown as AgentSessionHandle;
     const session = new Session({ id: 'host-review', agentKind, workDir: '/repo', handle,
       capabilities: { permissionModes: [{ id: 'ask', displayName: 'Ask' }], setPermissionModeMidSession: { supported: true } } as never,
-      logger: createLogger(), permissionMode: 'auto', turnStallMs: 0,
+      logger: createLogger(), permissionMode, turnStallMs: 0,
     });
     const emit = async (event: AgentEvent) => {
       if (event.type === 'done') running = false;
@@ -446,6 +446,25 @@ describe('Host automatic review lifecycle', () => {
     return { session, review, reviewGate, closeGate, modeGate, emit };
   }
   const action = { kind: 'other' as const, description: 'plugin file handoff' };
+  it.each(['bypassPermissions', 'ask'] as const)('Host operations follow %s without AI review', async (mode) => {
+    const { session, review, closeGate } = setup('pi', mode);
+    expect(await session.reviewHostPermissionAction(action)).toEqual({ verdict: mode === 'ask' ? 'ask' : 'allow' });
+    expect(review).not.toHaveBeenCalled();
+    closeGate.resolve();
+    await session.close();
+    expect(await session.reviewHostPermissionAction(action)).toMatchObject({ verdict: 'block' });
+  });
+  it('does not use Full access while the permission mode is changing', async () => {
+    const { session, modeGate, closeGate } = setup('pi', 'bypassPermissions');
+    const changing = session.setPermissionMode('ask');
+    await vi.waitFor(() => expect(session.stablePermissionModeState).toBeNull());
+    expect(await session.reviewHostPermissionAction(action)).toMatchObject({ verdict: 'block' });
+    modeGate.resolve();
+    await changing;
+    expect(await session.reviewHostPermissionAction(action)).toEqual({ verdict: 'ask' });
+    closeGate.resolve();
+    await session.close();
+  });
   it('returns the reviewer decision while the session is stable', async () => {
     const { session, reviewGate } = setup();
     reviewGate.resolve();

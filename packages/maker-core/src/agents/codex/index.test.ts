@@ -14118,9 +14118,8 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
-  it('still prompts for prompt-each-time inner MCP calls in Full access mode', async () => {
-    // 回归:宽松档曾无条件 accept, 让高风险 inner tool(contacts_delete 等)
-    // 绕过逐次确认；Full access 也必须保留 forcePrompt 护栏。
+  it('Full access overrides prompt-each-time inner MCP approval policy', async () => {
+    // MCP 风险分类不能覆盖用户显式选择的会话权限。
     const agent = new CodexAgent(createDeps({}, {
       getMcpToolApprovalPolicy: () => 'prompt-each-time',
     }));
@@ -14153,13 +14152,13 @@ describe('CodexAgent MCP thread context hooks', () => {
       requestedSchema: {},
     });
 
-    expect(resolver).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({ action: 'decline', content: null, _meta: null });
+    expect(resolver).not.toHaveBeenCalled();
+    expect(result).toEqual({ action: 'accept', content: null, _meta: null });
     await handle.close();
   });
 
-  it('declines pending prompt-each-time approvals when permission mode switches to auto', async () => {
-    // Auto 也不能批量放行 forcePrompt 高风险审批，必须 fail-closed 关闭挂起请求。
+  it.each(['auto', 'bypassPermissions'] as const)('pending MCP approvals follow a switch to %s', async (mode) => {
+    // Full 批准挂起请求；Auto 不能将尚未审阅的旧请求批量批准。
     const agent = new CodexAgent(createDeps({}, {
       getMcpToolApprovalPolicy: () => 'prompt-each-time',
     }));
@@ -14191,14 +14190,14 @@ describe('CodexAgent MCP thread context hooks', () => {
     });
 
     if (!handle.setPermissionMode) throw new Error('expected setPermissionMode');
-    await handle.setPermissionMode('auto');
+    await handle.setPermissionMode(mode);
 
-    await expect(responsePromise).resolves.toEqual({ action: 'decline', content: null, _meta: null });
+    await expect(responsePromise).resolves.toEqual({ action: mode === 'auto' ? 'decline' : 'accept', content: null, _meta: null });
     await expect(nextEvent(iterator)).resolves.toMatchObject({
       type: 'interaction_dismissed',
       data: {
-        reason: 'permission_mode_changed_to_auto',
-        resolvedAs: 'deny',
+        reason: `permission_mode_changed_to_${mode}`,
+        resolvedAs: mode === 'auto' ? 'deny' : 'allow',
       },
     });
     pendingDecision.resolve({ kind: 'permission', behavior: 'allow' });
@@ -16242,7 +16241,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     await handle.close();
   });
 
-  it('keeps host dynamic tool calls behind the existing MCP approval policy', async () => {
+  it.each(['ask', 'bypassPermissions'] as const)('host dynamic tool approvals follow %s', async (permissionMode) => {
     const disclosure = {
       title: 'Allow the Agent to connect to and control this simulator?',
       description:
@@ -16272,20 +16271,21 @@ describe('CodexAgent MCP thread context hooks', () => {
       sessionId: 'session-ios-dynamic-approval',
       model: 'gpt-5.4',
       workingDir: '/repo',
-      permissionMode: 'bypassPermissions',
+      permissionMode,
     });
-    handle.setInteractionResolver(async (request) => {
+    const resolver = vi.fn(async (request: InteractionRequest) => {
       expect(request).toMatchObject({
         kind: 'permission',
-        toolUseId: 'call-ios',
         toolName: 'dynamic:cindy_ios_simulator:call_tool',
+        input: { serverName: 'cindy_ios_simulator', toolName: 'call_tool', toolParams: { name: 'attach_device', args: { udid: 'SIM-1' } } },
         title: disclosure.title,
         description: disclosure.description,
       });
       if (request.kind !== 'permission') throw new Error('expected permission request');
       expect(request.suggestions).toBeUndefined();
-      return { kind: 'permission', behavior: 'deny' };
+      return { kind: 'permission' as const, behavior: 'deny' as const };
     });
+    handle.setInteractionResolver(resolver);
 
     const handlers = host.getThreadHandlers();
     if (!handlers?.dynamicToolCall) throw new Error('expected dynamicToolCall handler');
@@ -16300,16 +16300,20 @@ describe('CodexAgent MCP thread context hooks', () => {
       },
       { requestId: 'request-ios' },
     );
-    expect(result).toEqual({
-      contentItems: [{ type: 'inputText', text: 'Cindy could not approve this tool call: interaction_resolver_error' }],
-      success: false,
-    });
+    expect(result.success).toBe(permissionMode === 'bypassPermissions');
+    expect(result.contentItems).toEqual([{
+      type: 'inputText',
+      text: permissionMode === 'bypassPermissions'
+        ? '{"ok":true}'
+        : 'User denied this tool call via Cindy.',
+    }]);
+    expect(resolver).toHaveBeenCalledTimes(permissionMode === 'ask' ? 1 : 0);
     expect(presentation).toHaveBeenCalledWith({
       serverName: 'cindy_ios_simulator',
       toolName: 'call_tool',
       toolParams: { name: 'attach_device', args: { udid: 'SIM-1' } },
     });
-    expect(callTool).not.toHaveBeenCalled();
+    expect(callTool).toHaveBeenCalledTimes(permissionMode === 'ask' ? 0 : 1);
     await handle.close();
   });
 

@@ -321,6 +321,7 @@ import {
   captureSessionRecycleScope,
   clearSessionContextInDb,
   createSessionRemoteHostIdReader,
+  getSessionFsSnapshot,
   getSessionRowSnapshot,
   getSessionRowSnapshotStrict,
   persistSessionFields,
@@ -9565,6 +9566,31 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
   // 的会话聚焦通道。注入方式与 setGhostAgentTurnRunner 同款倒置,避免
   // cindy-brain 反向依赖 maker-ipc / localDb 形成模块环。
   setGhostLibraryExtraDirSync(syncLibraryReadonlyExtraDir);
+  getGhostFsSlot().setSessionSnapshotResolver(async (sessionId, instanceId) => {
+    const session = getMaker().getSession(sessionId);
+    if (!instanceId || !session || session.instanceId !== instanceId) return null;
+    const permission = session.stablePermissionModeState;
+    if (!permission) return null;
+    const workDir = session.workDir;
+    const isCurrent = () => getMaker().getSession(sessionId) === session
+      && session.workDir === workDir
+      && session.stablePermissionModeState?.generation === permission.generation;
+    const snapshot = await getSessionFsSnapshot(sessionId);
+    if (!snapshot || !isCurrent()) return null;
+    return {
+      ...snapshot,
+      workingDir: workDir,
+      remoteHostId: session.remoteHostId,
+      permissionMode: permission.mode ?? 'ask',
+      isCurrent,
+      reviewAction: async (action) => {
+        const decision = await session.reviewHostPermissionAction(action);
+        return isCurrent()
+          ? decision
+          : { verdict: 'block', reason: 'Task or permissions changed; retry with the current scope.' };
+      },
+    };
+  });
   setGhostWorkspaceSessionService({
     reviewPermissionAction: async (sessionId, instanceId, action) => {
       const session = getMaker().getSession(sessionId);

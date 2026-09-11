@@ -3,7 +3,7 @@
  * 确认记忆 / save 票据透传 / 远程工作区拒绝。全部走注入 deps + os.tmpdir
  * 临时目录(规则 23:凭证与生成物不落仓库工作区),零 Electron。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -54,6 +54,7 @@ function makeHarness(dataRoot: string, overrides: HarnessOverrides = {}) {
       ? {
           ghostId: overrides.callGhostId ?? GHOST_ID,
           sessionId: overrides.callSessionId === undefined ? 'sess-1' : overrides.callSessionId,
+          sessionInstanceId: 'instance-1',
           scriptWorkdir: overrides.callScriptWorkdir ?? null,
           scriptWritePath: overrides.callScriptWritePath ?? null,
           channel: overrides.callChannel ?? (overrides.callSessionId === null ? 'script' as const : 'session' as const),
@@ -89,7 +90,7 @@ describe('workdirWriteVerdict(权限映射表)', () => {
   it('免批模式直写,逐条模式确认,plan 拒,未知模式保守确认', () => {
     expect(workdirWriteVerdict('acceptEdits', false)).toBe('allow');
     expect(workdirWriteVerdict('bypassPermissions', false)).toBe('allow');
-    expect(workdirWriteVerdict('auto', false)).toBe('allow');
+    expect(workdirWriteVerdict('auto', false)).toBe('review');
     expect(workdirWriteVerdict('ask', false)).toBe('confirm');
     expect(workdirWriteVerdict('default', false)).toBe('confirm');
     expect(workdirWriteVerdict('plan', false)).toBe('deny');
@@ -394,6 +395,52 @@ describe('GhostFsSlot', () => {
     expect(await forged.slot.handleFsRequest(GHOST_ID, {
       type: 'fs-request', op: 'write', root: 'workdir', path: 'x.md', content: 'x', callId: 'call-1',
     })).toMatchObject({ ok: false });
+  });
+
+  it.each(['allow', 'block', 'ask', 'unavailable'] as const)('workdir Auto follows review %s for every write', async (verdict) => {
+    const reviewAction = vi.fn(async () => {
+      if (verdict === 'unavailable') throw new Error('review unavailable');
+      return { verdict };
+    });
+    const { slot, confirmCalls } = makeHarness(dataRoot, {
+      session: { workingDir: workdir, permissionMode: 'auto', planModeEnabled: false, remoteHostId: null, reviewAction },
+    });
+    for (let i = 0; i < 2; i++) {
+      expect(await slot.handleFsRequest(GHOST_ID, {
+        type: 'fs-request', op: 'write', root: 'workdir', path: `auto-${i}.txt`, content: 'hello', callId: 'call-1',
+      })).toMatchObject({ ok: verdict !== 'block' });
+      expect(fs.existsSync(path.join(workdir, `auto-${i}.txt`))).toBe(verdict !== 'block');
+    }
+    expect(reviewAction).toHaveBeenCalledTimes(2);
+    expect(reviewAction).toHaveBeenCalledWith(expect.objectContaining({ kind: 'file-write', resolvedWritableRoots: [await fs.promises.realpath(workdir)] }));
+    expect(confirmCalls).toHaveLength(verdict === 'ask' || verdict === 'unavailable' ? 2 : 0);
+  });
+
+  it.each([false, true])('workdir rejects expired live permission even with fs declared (%s)', async (fsCapability) => {
+    let current = true;
+    const { slot, confirmCalls } = makeHarness(dataRoot, {
+      fs: fsCapability,
+      session: { workingDir: workdir, permissionMode: 'auto', planModeEnabled: false, remoteHostId: null,
+        isCurrent: () => current, reviewAction: async () => { current = false; return { verdict: 'allow' }; } },
+    });
+    expect(await slot.handleFsRequest(GHOST_ID, {
+      type: 'fs-request', op: 'write', root: 'workdir', path: 'expired.txt', content: 'hello', callId: 'call-1',
+    })).toMatchObject({ ok: false });
+    expect(fs.existsSync(path.join(workdir, 'expired.txt'))).toBe(false);
+    expect(confirmCalls).toHaveLength(0);
+  });
+
+  it('workdir uses the injected live instance resolver, not the database permission snapshot', async () => {
+    const { slot, confirmCalls } = makeHarness(dataRoot, {
+      session: { workingDir: workdir, permissionMode: 'bypassPermissions', planModeEnabled: false, remoteHostId: null },
+    });
+    const resolve = vi.fn(async () => ({ workingDir: workdir, permissionMode: 'ask', planModeEnabled: false, remoteHostId: null }));
+    slot.setSessionSnapshotResolver(resolve);
+    expect(await slot.handleFsRequest(GHOST_ID, {
+      type: 'fs-request', op: 'write', root: 'workdir', path: 'live.txt', content: 'hello', callId: 'call-1',
+    })).toMatchObject({ ok: true });
+    expect(resolve).toHaveBeenCalledWith('sess-1', 'instance-1');
+    expect(confirmCalls).toHaveLength(1);
   });
 
   it('workdir:read/list/delete 一律拒(仅 write)', async () => {

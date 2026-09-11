@@ -1490,6 +1490,7 @@ export class Session {
   async reviewHostPermissionAction(action: ReviewableAction): Promise<AutoReviewDecision> {
     const permission = this.stablePermissionModeState;
     if (!permission) return { verdict: 'block', reason: 'Session permissions are changing or the task has closed.' };
+    if (permission.mode === 'bypassPermissions') return { verdict: 'allow' };
     if (permission.mode !== 'auto') return { verdict: 'ask' };
     // Host steps can belong to a still-active descendant after the foreground
     // turn finishes. Guard Session authority here; root-turn generation is not

@@ -1684,6 +1684,42 @@ describe('多实例共库的 RT 轮换竞态(invalid_grant 防误删)', () => {
 });
 
 describe('账号清单操作', () => {
+  it('昵称独立保存、可清空，清单重写不覆盖昵称或凭据', () => {
+    const vault = seededVault();
+    const deps = { vault, fetchImpl: vi.fn() as unknown as typeof fetch, openExternal: vi.fn() };
+    const mgr = new GhostOauthAccountManager(deps);
+    const originalManifest = vault.read(GHOST, `${KEY}-accounts`);
+    expect(mgr.renameAccount(GHOST, KEY, 'acc-1', '  公司邮箱  ')).toBe('saved');
+    expect(vault.read(GHOST, `${KEY}-accounts`)).toBe(originalManifest);
+    expect(vault.read(GHOST, `${KEY}-rt-acc-1`)).toBe('rt-seed');
+    mgr.setDefaultAccount(GHOST, KEY, 'acc-1');
+    const reloaded = new GhostOauthAccountManager(deps);
+    expect(reloaded.listAccounts(GHOST, KEY)[0]).toMatchObject({
+      id: 'acc-1', label: 'a@b.com', nickname: '公司邮箱', status: 'connected',
+    });
+    expect(reloaded.renameAccount(GHOST, KEY, 'acc-1', '')).toBe('saved');
+    expect(reloaded.listAccounts(GHOST, KEY)[0]).not.toHaveProperty('nickname');
+    reloaded.renameAccount(GHOST, KEY, 'acc-1', '私人邮箱');
+    reloaded.disconnectAccount(GHOST, KEY, 'acc-1');
+    expect(vault.read(GHOST, `${KEY}-nickname-acc-1`)).toBeNull();
+  });
+
+  it('昵称更新限定在现有账号，拒绝非法输入并报告落库失败', () => {
+    const vault = seededVault();
+    const mgr = new GhostOauthAccountManager({
+      vault, fetchImpl: vi.fn() as unknown as typeof fetch, openExternal: vi.fn(),
+    });
+    const before = [...vault.data];
+    expect(mgr.renameAccount('other-ghost', KEY, 'acc-1', '公司')).toBe('not-found');
+    expect(mgr.renameAccount(GHOST, 'other-key', 'acc-1', '公司')).toBe('not-found');
+    expect(mgr.renameAccount(GHOST, KEY, 'missing', '公司')).toBe('not-found');
+    expect(mgr.renameAccount(GHOST, KEY, 'acc-1', 'x'.repeat(81))).toBe('invalid');
+    expect(mgr.renameAccount(GHOST, KEY, 'acc-1', '公司\n邮箱')).toBe('invalid');
+    expect([...vault.data]).toEqual(before);
+    vault.store = () => false;
+    expect(mgr.renameAccount(GHOST, KEY, 'acc-1', '公司')).toBe('write-failed');
+  });
+
   it('disconnect:摘行 + 清 rt + 默认账号顺延;setDefault 未知账号 → false', async () => {
     const vault = memoryVault({
       [`${KEY}-client-id`]: 'cid',

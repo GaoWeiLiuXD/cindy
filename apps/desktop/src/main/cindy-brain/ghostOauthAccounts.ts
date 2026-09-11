@@ -82,6 +82,8 @@ export type GhostOauthAccountStatus = 'connected' | 'expired';
  */
 export interface GhostOauthAccountView {
   id: string;
+  /** 用户昵称，仅用于展示和选账号，不参与 OAuth 身份合并。 */
+  nickname?: string;
   label: string | null;
   status: GhostOauthAccountStatus;
   isDefault: boolean;
@@ -248,6 +250,9 @@ function refreshTokenKey(secretKey: string, accountId: string): string {
 /** 头像 data URL 的保险库键(派生键纪律见文件头;非机密但与账号同生命周期)。 */
 function avatarKey(secretKey: string, accountId: string): string {
   return `${secretKey}-avatar-${accountId}`;
+}
+function nicknameKey(secretKey: string, accountId: string): string {
+  return `${secretKey}-nickname-${accountId}`;
 }
 function clientIdKey(secretKey: string): string {
   return `${secretKey}-client-id`;
@@ -760,9 +765,31 @@ export class GhostOauthAccountManager {
 
   listAccounts(ghostId: string, secretKey: string, decl?: GhostOauthDecl): GhostOauthAccountView[] {
     const manifest = parseManifest(this.deps.vault.read(ghostId, accountsKey(secretKey)));
-    return manifest.accounts.map((a) =>
-      toView(a, manifest.defaultAccountId, this.readAvatar(ghostId, secretKey, a.id), decl?.scopes),
-    );
+    return manifest.accounts.map((a) => {
+      const nickname = this.deps.vault.read(ghostId, nicknameKey(secretKey, a.id));
+      return {
+        ...toView(a, manifest.defaultAccountId, this.readAvatar(ghostId, secretKey, a.id), decl?.scopes),
+        ...(nickname ? { nickname } : {}),
+      };
+    });
+  }
+
+  /** 独立账号元数据：重连/旧版清单重写不会覆盖昵称，不修改凭据或身份。 */
+  renameAccount(
+    ghostId: string,
+    secretKey: string,
+    accountId: string,
+    nickname: string,
+  ): 'saved' | 'not-found' | 'invalid' | 'write-failed' {
+    if (typeof nickname !== 'string' || nickname.length > 80) return 'invalid';
+    if (Array.from(nickname).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
+      return 'invalid';
+    }
+    const manifest = parseManifest(this.deps.vault.read(ghostId, accountsKey(secretKey)));
+    if (!manifest.accounts.some((a) => a.id === accountId)) return 'not-found';
+    return this.deps.vault.store(ghostId, nicknameKey(secretKey, accountId), nickname.trim())
+      ? 'saved'
+      : 'write-failed';
   }
 
   /** 默认账号相对当前声明缺失的 scope；空数组 = 无需重连或判不准。 */
@@ -822,6 +849,7 @@ export class GhostOauthAccountManager {
     const remaining = manifest.accounts.filter((a) => a.id !== accountId);
     this.deps.vault.remove(ghostId, refreshTokenKey(secretKey, accountId));
     this.deps.vault.remove(ghostId, avatarKey(secretKey, accountId));
+    this.deps.vault.remove(ghostId, nicknameKey(secretKey, accountId));
     this.tokenCache.delete(this.cacheKey(ghostId, secretKey, accountId));
     this.deps.vault.store(
       ghostId,
