@@ -8,6 +8,7 @@ import {
 import { getDbClient } from '../localDb/client/current.js';
 import { botProfiles, botProfileVersions } from '../localDb/schema.js';
 import { createLogger } from '../logger.js';
+import { subscribeNewMakerDefaults } from '../maker-host/newMakerDefaultsCache.js';
 import { UI_ACTION_TRIGGER_PREFIX } from '../../shared/interruptedTurn.js';
 import { prepareBotInvitationAvatar, finishBotInvitationAvatar } from './botInvitationAvatar.js';
 import { botInvitationProgress, type BotInvitationProgress } from '../../shared/botInvitation.js';
@@ -50,9 +51,32 @@ export function setBotInvitationWelcomeDispatch(dispatch: WelcomeDispatch): void
 }
 
 const log = createLogger('botInvitation');
-const pending = new Map<string, () => Promise<void>>();
+type InvitationTask = () => Promise<void | 'waiting-for-model'>;
+const pending = new Map<string, InvitationTask>();
+const waitingForModel = new Map<string, InvitationTask>();
 const running = new Set<string>();
 const MAX_RUNNING = 2;
+let modelRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let unsubscribeDefaults: (() => void) | undefined;
+
+function wakeModelWaiters(): void {
+  clearTimeout(modelRetryTimer);
+  modelRetryTimer = undefined;
+  unsubscribeDefaults?.();
+  unsubscribeDefaults = undefined;
+  for (const [key, task] of waitingForModel) pending.set(key, task);
+  waitingForModel.clear();
+  drainInvitations();
+}
+
+function retainModelWaiter(key: string, task: InvitationTask): void {
+  waitingForModel.set(key, task);
+  unsubscribeDefaults ??= subscribeNewMakerDefaults(wakeModelWaiters);
+  // Connections, visibility and harness readiness can change without a new default
+  // mirror. Recheck only deferred jobs, without occupying a worker or calling AI.
+  modelRetryTimer ??= setTimeout(wakeModelWaiters, 5000);
+  modelRetryTimer.unref();
+}
 
 /** Main owns the queue. Closing a renderer never cancels preparation. */
 export function queueBotInvitation(
@@ -65,7 +89,7 @@ export function queueBotInvitation(
   const userDataDir = ownerScopedUserDataPath();
   const client = getDbClient();
   const key = `${owner}:${botId}`;
-  if (pending.has(key) || running.has(key)) return;
+  if (pending.has(key) || running.has(key) || waitingForModel.has(key)) return;
   const assertOwner = () => {
     if (
       isAppSessionBoundaryPending() ||
@@ -215,7 +239,16 @@ export function queueBotInvitation(
       }
       if (portraitOnly) return;
       const current = await load();
-      if (callbacks.canStartWelcome && !await callbacks.canStartWelcome(current.config)) return;
+      try {
+        if (callbacks.canStartWelcome && !await callbacks.canStartWelcome(current.config)) {
+          assertOwner();
+          return 'waiting-for-model';
+        }
+      } catch (error) {
+        assertOwner();
+        if ((error as { code?: string }).code === 'MODEL_VISIBILITY_NOT_READY') return 'waiting-for-model';
+        throw error;
+      }
       assertOwner();
       const canonical = await callbacks.createCanonicalSession({
         botId,
@@ -255,10 +288,13 @@ function drainInvitations(): void {
     const [key, task] = pending.entries().next().value!;
     pending.delete(key);
     running.add(key);
+    let waiting = false;
     void task()
+      .then(outcome => { waiting = outcome === 'waiting-for-model'; })
       .catch(() => undefined)
       .finally(() => {
         running.delete(key);
+        if (waiting) retainModelWaiter(key, task);
         drainInvitations();
       });
   }

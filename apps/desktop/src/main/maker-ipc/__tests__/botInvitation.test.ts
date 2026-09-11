@@ -33,6 +33,8 @@ import { queueBotInvitation as enqueueBotInvitation, setBotInvitationWelcomeDisp
 import { readBotSkill, seedBotSkillIfMissing } from '../botSkillStore.js';
 import { readBotProfileFolder } from '../botProfileFolder.js';
 import { parseBotInvitationDraft, botInvitationPrompt } from '../botInvitationDraft.js';
+import { getSelectedNewMakerRoute, setNewMakerDraftCache } from '../../maker-host/newMakerDefaultsCache.js';
+import { createIpcError } from '../../../shared/ipc-errors.js';
 
 function queueBotInvitation(botId: string, retry = false): void {
   enqueueBotInvitation(botId, {
@@ -119,6 +121,113 @@ afterEach(async () => {
 });
 
 describe('companion invitation with SQLite and real skill files', () => {
+  it('resumes a waiting welcome on the user default mirror without another roster read', async () => {
+    const mirror = (selectedRoute?: NonNullable<ReturnType<typeof getSelectedNewMakerRoute>>) =>
+      setNewMakerDraftCache({ selectedRoute, lastByVendor: {}, fastModeByModel: {}, effortByModel: {} }, h.owner);
+    mirror();
+    seed({ stage: 'welcome' });
+    const createCanonicalSession = vi.fn(async () => ({ canonicalSessionId: 'chat-1' }));
+    const canStartWelcome = vi.fn(async () => Boolean(getSelectedNewMakerRoute(h.owner)));
+    enqueueBotInvitation('bot-1', { canStartWelcome, createCanonicalSession, broadcastProfileChanged: h.broadcast });
+    await vi.waitFor(() => expect(canStartWelcome).toHaveBeenCalledOnce());
+    expect(state().stage).toBe('welcome');
+    expect(createCanonicalSession).not.toHaveBeenCalled();
+    expect(h.welcome).not.toHaveBeenCalled();
+    const selected = { harness: 'codex' as const, providerId: 'user-provider', model: 'user-selected-model', effort: 'low', fastMode: true };
+    mirror(selected);
+    await vi.waitFor(() => expect(state().stage).toBe('ready'));
+    mirror(selected);
+    expect(getSelectedNewMakerRoute(h.owner)).toEqual(selected);
+    expect(createCanonicalSession).toHaveBeenCalledOnce();
+    expect(h.welcome).toHaveBeenCalledOnce();
+    expect(h.generate).not.toHaveBeenCalled();
+  });
+
+  it.each(['unavailable', 'mirror pending'])('retains %s readiness until it changes without a default notification', async reason => {
+    vi.useFakeTimers();
+    try {
+      seed({ stage: 'welcome' });
+      let ready = false;
+      const canStartWelcome = vi.fn(async () => {
+        if (!ready && reason === 'mirror pending') throw createIpcError('MODEL_VISIBILITY_NOT_READY', 'pending');
+        return ready;
+      });
+      const createCanonicalSession = vi.fn(async () => ({ canonicalSessionId: 'chat-1' }));
+      enqueueBotInvitation('bot-1', { canStartWelcome, createCanonicalSession, broadcastProfileChanged: h.broadcast });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(canStartWelcome).toHaveBeenCalledOnce();
+      expect(state().stage).toBe('welcome');
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(canStartWelcome).toHaveBeenCalledOnce();
+      expect(createCanonicalSession).not.toHaveBeenCalled();
+      ready = true;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(state().stage).toBe('ready');
+      expect(h.welcome).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not lose readiness changes arriving during the asynchronous check', async () => {
+    vi.useFakeTimers();
+    try {
+      seed({ stage: 'welcome' });
+      let finish!: (ready: boolean) => void;
+      const canStartWelcome = vi.fn().mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }))
+        .mockResolvedValue(true);
+      enqueueBotInvitation('bot-1', { canStartWelcome, createCanonicalSession: async () => ({ canonicalSessionId: 'chat-1' }), broadcastProfileChanged: h.broadcast });
+      await vi.advanceTimersByTimeAsync(0);
+      setNewMakerDraftCache({ lastByVendor: {}, fastModeByModel: {}, effortByModel: {} }, h.owner);
+      finish(false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state().stage).toBe('welcome');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(state().stage).toBe('ready');
+      expect(h.welcome).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['owner changed', 'archived'])('drops a model waiter when its profile is %s', async reason => {
+    vi.useFakeTimers();
+    try {
+      seed({ stage: 'welcome' });
+      const createCanonicalSession = vi.fn(async () => ({ canonicalSessionId: 'chat-1' }));
+      const canStartWelcome = vi.fn(async () => false);
+      enqueueBotInvitation('bot-1', { canStartWelcome, createCanonicalSession, broadcastProfileChanged: h.broadcast });
+      await vi.advanceTimersByTimeAsync(0);
+      if (reason === 'owner changed') h.owner = 'owner-b';
+      else sqlite.prepare("UPDATE bot_profiles SET status = 'archived'").run();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(createCanonicalSession).not.toHaveBeenCalled();
+      expect(h.welcome).not.toHaveBeenCalled();
+      expect(state().stage).toBe('welcome');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('releases worker slots while other invitations are waiting for a model', async () => {
+    vi.useFakeTimers();
+    try {
+      seed({ stage: 'welcome' });
+      for (const id of ['bot-2', 'bot-3']) {
+        sqlite.prepare("INSERT INTO bot_profiles (id,status,current_version) VALUES (?,'active',1)").run(id);
+        sqlite.prepare("INSERT INTO bot_profile_versions SELECT ?,?,1,identity_source,capabilities_json,1 FROM bot_profile_versions WHERE bot_id='bot-1'").run(`${id}:v1`, id);
+      }
+      for (const id of ['bot-1', 'bot-2', 'bot-3']) {
+        enqueueBotInvitation(id, { canStartWelcome: async () => id === 'bot-3',
+          createCanonicalSession: async () => ({ canonicalSessionId: 'chat-3' }), broadcastProfileChanged: h.broadcast });
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.welcome).toHaveBeenCalledOnce();
+      expect(h.welcome).toHaveBeenCalledWith(expect.objectContaining({ clientId: 'bot-welcome:bot-3' }));
+      sqlite.prepare("UPDATE bot_profiles SET status='archived' WHERE id != 'bot-3'").run();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(h.welcome).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('keeps cold-start recovery pending until the welcome dispatcher is registered', async () => {
     vi.resetModules();
     const cold = await import('../botInvitation.js');
