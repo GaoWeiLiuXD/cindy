@@ -38,6 +38,7 @@ import { toolAutoReviewAction, type PermissionMode, type ReviewableAction, type 
 import { getLiziMcpSessionContext, type LiziMcpSessionContext } from '@cindy/mcps';
 
 import {
+  GRANT_AUTHORIZATION_CHANGED_MESSAGE,
   GrantPolicyError,
   grantAttachmentsToGhost,
   MAX_GRANT_ATTACHMENTS,
@@ -389,12 +390,12 @@ async function requestGrantConfirm(params: {
   items: GhostGrantFileItem[];
   getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'];
 }): Promise<
-  | { ok: true; approvalSource: GhostGrantApprovalSource; allowDirs?: boolean }
+  | { ok: true; approvalSource: GhostGrantApprovalSource; allowDirs?: boolean; isCurrent?: () => boolean }
   | { ok: false; message: string }
 > {
   let isCurrent: (() => boolean) | undefined;
   const expired = () => isCurrent?.() === false;
-  const denied = { ok: false as const, message: 'Task or Plan permissions changed; retry with the current scope.' };
+  const denied = { ok: false as const, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
   if (params.sessionId && params.sessionInstanceId && params.getLiveSessionGrantState) {
     try {
       const live = params.getLiveSessionGrantState(params.sessionId, params.sessionInstanceId);
@@ -409,7 +410,7 @@ async function requestGrantConfirm(params: {
           count: params.items.length,
           grantSource: 'full-access',
         });
-        return { ok: true, approvalSource: 'full-access' };
+        return { ok: true, approvalSource: 'full-access', isCurrent };
       }
       if (live?.permissionMode === 'auto' && live.reviewAction) {
         const decision = await live.reviewAction(toolAutoReviewAction('plugin_file_handoff', {
@@ -420,7 +421,7 @@ async function requestGrantConfirm(params: {
         if (expired()) return denied;
         if (decision.verdict === 'allow') {
           log.info('ghost grant: AI approved outside-workdir handoff', { ghostId: params.ghostId, lane: params.lane, grantSource: 'auto-review' });
-          return { ok: true, approvalSource: 'auto-review' };
+          return { ok: true, approvalSource: 'auto-review', isCurrent };
         }
         if (decision.verdict === 'block') return { ok: false, message: decision.reason ?? 'Automatic review denied this file handoff.' };
       }
@@ -458,7 +459,7 @@ async function requestGrantConfirm(params: {
   });
   if (expired()) return denied;
   if (decision.confirmed) {
-    return { ok: true, approvalSource: 'user', allowDirs: decision.allowDirs };
+    return { ok: true, approvalSource: 'user', allowDirs: decision.allowDirs, isCurrent };
   }
   return {
     ok: false,
@@ -579,9 +580,10 @@ async function prepareLocalPathAttachments(params: {
   /** 项数上限(普通调用 MAX_GRANT_ATTACHMENTS;grant_only 批量预授权放宽)。 */
   maxCount: number;
 }): Promise<
-  { ok: true; resolved: Map<string, ResolvedGrantSource> } | { ok: false; message: string }
+  { ok: true; resolved: Map<string, ResolvedGrantSource>; isCurrent?: () => boolean } | { ok: false; message: string }
 > {
   const resolved = new Map<string, ResolvedGrantSource>();
+  let isCurrent: (() => boolean) | undefined;
   // 超项数上限时不弹确认,直接交给 grant 流程报标准错(别让用户白点一次)。
   if (params.urls.length > params.maxCount) return { ok: true, resolved };
   const outside: Array<{
@@ -707,6 +709,8 @@ async function prepareLocalPathAttachments(params: {
         getLiveSessionGrantState: params.getLiveSessionGrantState,
       });
       if (!confirm.ok) return confirm;
+      isCurrent = confirm.isCurrent;
+      if (isCurrent?.() === false) return { ok: false, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
       for (const o of needConfirm) {
         // 人工确认记 user;Full Access 自动交接记 tool,不能伪装成用户点击。
         // 两者都带 T1 字节落仓——确认/授权判定时读到的字节就是实际过户
@@ -741,7 +745,7 @@ async function prepareLocalPathAttachments(params: {
       }
     }
   }
-  return { ok: true, resolved };
+  return { ok: true, resolved, isCurrent };
 }
 
 /**
@@ -759,8 +763,8 @@ async function confirmDepositOutsideWorkdir(params: {
   workdirAbs: string | null;
   getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'];
 }): Promise<
-  | { ok: true; userGranted: false }
-  | { ok: true; userGranted: true; approvedRealPath: string }
+  | { ok: true; userGranted: false; isCurrent?: () => boolean }
+  | { ok: true; userGranted: true; approvedRealPath: string; isCurrent?: () => boolean }
   | { ok: false; message: string }
 > {
   if (!path.isAbsolute(params.dirAbs)) return { ok: true, userGranted: false };
@@ -814,6 +818,7 @@ async function confirmDepositOutsideWorkdir(params: {
     getLiveSessionGrantState: params.getLiveSessionGrantState,
   });
   if (!confirm.ok) return confirm;
+  if (confirm.isCurrent?.() === false) return { ok: false, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
   // Full Access 是每次在实时档位上自动裁决,不伪造「用户确认过」的目录
   // 记忆。这样热切回 ask/auto 后,同一路径的新过户会立刻恢复询问。
   if (confirm.approvalSource === 'user' && params.sessionId) {
@@ -826,7 +831,7 @@ async function confirmDepositOutsideWorkdir(params: {
       grantSource: 'user-confirmation',
     });
   }
-  return { ok: true, userGranted: true, approvedRealPath: real };
+  return { ok: true, userGranted: true, approvedRealPath: real, isCurrent: confirm.isCurrent };
 }
 
 type ManagedToolGrantCandidate = {
@@ -851,7 +856,7 @@ async function prepareManagedToolGrantSources(params: {
   sessionInstanceId: string | null;
   getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'];
 }): Promise<
-  { ok: true; resolved: Map<string, ResolvedGrantSource> } | { ok: false; message: string }
+  { ok: true; resolved: Map<string, ResolvedGrantSource>; isCurrent?: () => boolean } | { ok: false; message: string }
 > {
   // Preserve attachmentGrant's standard count error and, importantly, do not
   // read or confirm an over-limit batch before that error is produced.
@@ -969,6 +974,7 @@ async function prepareManagedToolGrantSources(params: {
     getLiveSessionGrantState: params.getLiveSessionGrantState,
   });
   if (!confirm.ok) return confirm;
+  if (confirm.isCurrent?.() === false) return { ok: false, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
 
   const originKind = confirm.approvalSource === 'user' ? 'user' : 'tool';
   const resolved = new Map<string, ResolvedGrantSource>();
@@ -981,7 +987,7 @@ async function prepareManagedToolGrantSources(params: {
     };
     for (const url of candidate.urls) resolved.set(url, source);
   }
-  return { ok: true, resolved };
+  return { ok: true, resolved, isCurrent: confirm.isCurrent };
 }
 
 /**
@@ -998,7 +1004,7 @@ async function grantAttachmentUrls(params: {
   sessionInstanceId: string | null;
   getLiveSessionGrantState?: CindyGhostsHostDeps['getLiveSessionGrantState'];
   maxCount: number;
-}): Promise<{ ok: true; hashes: string[] } | { ok: false; message: string }> {
+}): Promise<{ ok: true; hashes: string[]; isCurrent: () => boolean } | { ok: false; message: string }> {
   const { ghostId } = params;
   const localGrant = await prepareLocalPathAttachments({
     urls: params.urls,
@@ -1010,6 +1016,7 @@ async function grantAttachmentUrls(params: {
     maxCount: params.maxCount,
   });
   if (!localGrant.ok) return localGrant;
+  if (localGrant.isCurrent?.() === false) return { ok: false, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
   const managedToolGrant = await prepareManagedToolGrantSources({
     urls: params.urls,
     ghostId,
@@ -1020,8 +1027,11 @@ async function grantAttachmentUrls(params: {
     getLiveSessionGrantState: params.getLiveSessionGrantState,
   });
   if (!managedToolGrant.ok) return managedToolGrant;
-  return grantAttachmentsToGhost(
+  // 保留两次预处理捕获的授权，不能用后取的快照替换先前代次。
+  const isCurrent = () => localGrant.isCurrent?.() !== false && managedToolGrant.isCurrent?.() !== false;
+  const result = await grantAttachmentsToGhost(
     {
+      isCurrent,
       // 宽容解析:模型可能只有本地路径、缩图副本路径、或把 xdt-image
       // 地址的会话段拼丢(多个会话实测都踩过)——统一归一化。
       // 总仓 blob 形态(聊天附件或当前 Agent 工具结果的受管地址)额外过
@@ -1077,12 +1087,15 @@ async function grantAttachmentUrls(params: {
           refId: p.refId,
           originKind: p.originKind,
         });
+        if (!isCurrent()) throw new GrantPolicyError(GRANT_AUTHORIZATION_CHANGED_MESSAGE);
         return exists ? '' : ledger.addRef(p);
       },
       log,
     },
     { ghostId, urls: params.urls, maxCount: params.maxCount },
   );
+  if (!isCurrent()) return { ok: false, message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
+  return result.ok ? { ...result, isCurrent } : result;
 }
 
 function ghostHasTools(ghost: InstalledGhost): boolean {
@@ -1555,6 +1568,11 @@ export function getCindyGhostsMcpDeps(
       // args.attachments 交给意识。任何一张失败整批拒(ATTACHMENT_INVALID),
       // 不做半成品授权。全链路见 grantAttachmentUrls。
       let mergedArgs = args;
+      // 文件交接的原授权要贯穿后续目录审批、上下文查询和最终派发。
+      const handoffChecks: Array<() => boolean> = [];
+      const handoffExpired = () => handoffChecks.some((isCurrent) => !isCurrent());
+      const handoffDenied = { ok: false as const, errorCode: 'PERMISSION_DENIED' as const,
+        message: GRANT_AUTHORIZATION_CHANGED_MESSAGE };
       // Runtime setup gate: the shared visibility check above runs before any
       // durable attachment grant, directory ticket, sandbox, card call, or dispatch.
       // grant_only never dispatches and intentionally ignores its tool field.
@@ -1702,6 +1720,7 @@ export function getCindyGhostsMcpDeps(
             message: t('newChat.pluginSetup.assessmentReadFailed'),
           };
         }
+        if (!grant.isCurrent()) return handoffDenied;
         log.info('ghost grant-only: batch pre-granted', { ghostId, count: grant.hashes.length });
         return {
           ok: true,
@@ -1729,6 +1748,8 @@ export function getCindyGhostsMcpDeps(
         if (!grant.ok) {
           return { ok: false, errorCode: 'ATTACHMENT_INVALID', message: grant.message };
         }
+        handoffChecks.push(grant.isCurrent);
+        if (handoffExpired()) return handoffDenied;
         mergedArgs = { ...args, attachments: grant.hashes };
       }
       // 目录过户(xd-service 意识化二期):dir 收集文件发一次性票据,元数据
@@ -1736,6 +1757,7 @@ export function getCindyGhostsMcpDeps(
       // networkSlot 凭票读盘代组 multipart。钳制两层策略:workdir 内直通,
       // workdir 外(含无 workdir 语境)经确认卡放行。
       if (dir !== undefined) {
+        if (handoffExpired()) return handoffDenied;
         const dirConfirm = await confirmDepositOutsideWorkdir({
           ghostId,
           sessionId: sessionIdForConfirm,
@@ -1748,6 +1770,8 @@ export function getCindyGhostsMcpDeps(
         if (!dirConfirm.ok) {
           return { ok: false, errorCode: 'DIR_INVALID', message: dirConfirm.message };
         }
+        if (dirConfirm.isCurrent) handoffChecks.push(dirConfirm.isCurrent);
+        if (handoffExpired()) return handoffDenied;
         const deposited = getDirDepositVault().deposit({
           ghostId,
           dirAbs: dirConfirm.userGranted ? dirConfirm.approvedRealPath : dir,
@@ -1764,6 +1788,7 @@ export function getCindyGhostsMcpDeps(
       // args.save_deposit——意识 fetch as:'file' 报票据,主机把响应字节直接
       // 写进该目录,绝对路径与字节不进沙箱。钳制两层策略同 dir。
       if (saveDir !== undefined) {
+        if (handoffExpired()) return handoffDenied;
         const saveConfirm = await confirmDepositOutsideWorkdir({
           ghostId,
           sessionId: sessionIdForConfirm,
@@ -1776,6 +1801,8 @@ export function getCindyGhostsMcpDeps(
         if (!saveConfirm.ok) {
           return { ok: false, errorCode: 'DIR_INVALID', message: saveConfirm.message };
         }
+        if (saveConfirm.isCurrent) handoffChecks.push(saveConfirm.isCurrent);
+        if (handoffExpired()) return handoffDenied;
         const saveDeposited = getSaveDepositVault().deposit({
           ghostId,
           dirAbs: saveConfirm.userGranted ? saveConfirm.approvedRealPath : saveDir,
@@ -1875,6 +1902,7 @@ export function getCindyGhostsMcpDeps(
           message: t('newChat.pluginSetup.assessmentReadFailed'),
         };
       }
+      if (handoffExpired()) return handoffDenied;
       // ── 卡槽③:callId 在这里预铸并登记给卡片服务 ────────────────────
       // 时序契约:register(供片窗开)→ dispatch(意识拿到同一 callId,执行
       // 中可 card-update)→ finalize(问"这单供过卡吗",开晚到宽限窗)→
