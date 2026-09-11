@@ -573,6 +573,8 @@ import {
 } from '../maker-host/pi-package-mutation-grant.js';
 
 import { requireEnum, requireObject, throwIpcError } from '../utils/ipcValidate.js';
+import { applyPersistedCindyMakeMarker } from './cindyMakeSessionStart.js';
+import { CINDY_MAKE_SESSION_SOURCE } from '../../shared/cindyMakeSession.js';
 import { isIpcError, type IpcErrorCode } from '../../shared/ipc-errors.js';
 import { piPackageCommandDiagnostic } from '../maker-host/pi-package-diagnostic.js';
 import {
@@ -6424,6 +6426,7 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
       o.fastMode = runtimeOverride.fastMode;
     }
     await applyPersistedReviewMode(o);
+    await applyPersistedCindyMakeMarker(o, readSessionSource);
     const didInjectOrcaInstructions = o.reviewMode === true ? false : applyOrcaInstructions(o);
     const didInjectProjectContext =
       o.reviewMode === true ? false : await applyProjectContextInjection(o);
@@ -11924,6 +11927,10 @@ export function registerMakerIpc(maker: Maker, options: RegisterMakerIpcOptions)
     // 未知一律 false)。必须在这里现取,不能提前求值缓存——同一个装配好的事务会服务
     // 后续所有 send,来源是逐次调用的属性。
     isMobileClientInvoke: () => isMobileControllerInvoke(),
+    // 个人版制作任务说明:按持久化的 sessions.source 判定,每次 send 现读,不信任
+    // 调用方自报;与手机说明同层(只进 wire 消息)。
+    isCindyMakeSession: async (sessionId) =>
+      (await readSessionSource(sessionId)) === CINDY_MAKE_SESSION_SOURCE,
     applyPendingAgentSwitch: (sessionId) =>
       applyPendingAgentSwitchIfIdle(agentSwitchDeps, sessionId),
     prepareUnhealthySession: (sessionId) =>
