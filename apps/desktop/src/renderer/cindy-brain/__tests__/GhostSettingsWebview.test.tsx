@@ -17,6 +17,7 @@ import { GhostSettingsWebview } from '../GhostSettingsWebview';
 import {
   __resetGhostSettingsHeightCacheForTest,
   loadGhostSettingsHeight,
+  saveGhostSettingsHeight,
 } from '../ghostSettingsHeight';
 
 vi.mock('react-i18next', () => ({
@@ -145,6 +146,28 @@ describe('GhostSettingsWebview layout ownership', () => {
     const ownerBHost = view.container.querySelector<HTMLElement>('[data-ghost-webview]');
     expect(ownerBHost).not.toBeNull();
     expect(ownerBHost?.style.height).toBe('160px');
+  });
+
+  it.each([
+    ['version', false], ['version', true], ['id', false], ['id', true],
+  ] as const)('resets guest state when %s changes in place (cached: %s)', async (field, cached) => {
+    const { ghost, host, view, webview } = renderSettings(undefined, 432);
+    await waitFor(() => expect(host.style.height).toBe('432px'));
+    const updated = {
+      ...ghost,
+      manifest: { ...ghost.manifest, [field]: field === 'version' ? '2.0.0' : 'another-plugin' },
+    };
+    if (cached) {
+      saveGhostSettingsHeight('owner-a', updated.manifest.id, updated.manifest.version, 240);
+    }
+
+    view.rerender(<GhostSettingsWebview ghost={updated} />);
+
+    expect(webview.isConnected).toBe(false);
+    expect(view.container.querySelector('webview')).not.toBe(webview);
+    // 新 guest 尚未 dom-ready，首帧也不能复用旧组件的高度。
+    expect(view.container.querySelector<HTMLElement>('[data-ghost-webview]')?.style.height)
+      .toBe(cached ? '240px' : '160px');
   });
 
   it('reopens a fresh guest with height-only spacing, without replaying or capturing old UI', async () => {

@@ -317,8 +317,6 @@ interface WorkerEntry {
   stderrTotalChars: number;
   /** stderr 也可能把多字节字符切在两个 Buffer 之间,与 stdout 同理需流式解码。 */
   stderrDecoder: StringDecoder;
-  /** 尚可能属于令牌前缀的末段；不写日志或诊断缓存，排空时也不原样释放。 */
-  stderrRedactionPending: string;
   /** stdout 的 UTF-8 字节可能把一个汉字切在两个 chunk 之间，必须流式解码。 */
   stdoutDecoder: StringDecoder;
   stdoutBuffer: string;
@@ -1410,7 +1408,6 @@ export class GhostNodeRuntimeBroker {
     }
     entry.pending.clear();
     entry.exposedSecretValues.clear();
-    entry.stderrRedactionPending = '';
     // PID 是启动期已经捕获的只读 fact；停止关键路径前不再调用诊断 getter/logger。
     const stopPid = entry.diagnosticPid;
     let sigtermKillReturned = false;
@@ -1651,7 +1648,6 @@ export class GhostNodeRuntimeBroker {
       stderrSegments: [],
       stderrTotalChars: 0,
       stderrDecoder: new StringDecoder('utf8'),
-      stderrRedactionPending: '',
       stdoutDecoder: new StringDecoder('utf8'),
       stdoutBuffer: '',
       nextId: 1,
@@ -2191,7 +2187,7 @@ export class GhostNodeRuntimeBroker {
     this.clearTimer(entry.exitDrain.timer);
     entry.exitDrain = null;
     // flush stderrDecoder 残留字节(多字节字符被切在最后一个 chunk 边界时)
-    const tail = this.redactStderrChunk(entry, entry.stderrDecoder.end(), true);
+    const tail = this.redactStderrChunk(entry, entry.stderrDecoder.end());
     if (tail) {
       entry.stderrSegments.push({ text: tail, at: this.now() });
       entry.stderrTotalChars += tail.length;
@@ -2273,22 +2269,11 @@ export class GhostNodeRuntimeBroker {
     return text;
   }
 
-  private redactStderrChunk(entry: WorkerEntry, chunk: string, flush = false): string {
-    const text = this.redactSecrets(entry, entry.stderrRedactionPending + chunk);
-    // 完整令牌先替换；可能跨 chunk 的前缀只留在内存，不能先写出再补救。
-    // 留存长度严格小于该进程已接收的最长凭据，不积累整行日志。
-    let pendingLength = 0;
-    for (const secret of entry.exposedSecretValues) {
-      for (let length = Math.min(secret.length - 1, text.length); length > pendingLength; length--) {
-        if (text.endsWith(secret.slice(0, length))) {
-          pendingLength = length;
-          break;
-        }
-      }
-    }
-    const end = text.length - pendingLength;
-    entry.stderrRedactionPending = flush ? '' : text.slice(end);
-    return text.slice(0, end) + (flush && pendingLength > 0 ? '[REDACTED]' : '');
+  private redactStderrChunk(entry: WorkerEntry, chunk: string): string {
+    // 接收过凭据的 Worker 可能打印截断、分块或编码后的令牌，字符串匹配
+    // 无法保证安全。整个 stderr 不落日志/诊断缓存，仅保留输出发生的标记；
+    // 未注入凭据的 Worker 保留原始诊断，RPC 返回结果不受影响。
+    return chunk && entry.exposedSecretValues.size > 0 ? '[REDACTED]' : chunk;
   }
 
   private scheduleIdleStop(entry: WorkerEntry): void {

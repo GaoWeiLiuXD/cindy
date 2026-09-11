@@ -343,7 +343,7 @@ export function GhostSettingsWebview({
       </div>
       {ghost.enabled ? (
         <SettingsWebviewBody
-          key={ownerKey}
+          key={JSON.stringify([ownerKey, manifest.id, manifest.version])}
           ghost={ghost}
           appearance={appearance}
           dataOwnerId={dataOwnerId}

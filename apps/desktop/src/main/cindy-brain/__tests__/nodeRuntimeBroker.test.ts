@@ -1769,7 +1769,10 @@ describe('nodeRuntimeBroker · 意外死亡诊断(2026-07-26)', () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain('sk-secret-token-12345');
   });
 
-  it.each(['whole', 'split', 'truncated-log', 'partial-at-exit', 'after-stop', 'after-drain'] as const)(
+  it.each([
+    'whole', 'split', 'truncated-log', 'partial-at-exit', 'after-stop', 'after-drain',
+    'partial-newline', 'partial-space', 'partial-single-chunk', 'ordinary-after-injection',
+  ] as const)(
     'OAuth stderr %s 在主日志及退出诊断中都不泄露令牌', async (scenario) => {
       const ghost = fakeGhost();
       ghost.manifest.network = { hosts: ['example.test'], secrets: [{
@@ -1794,6 +1797,10 @@ describe('nodeRuntimeBroker · 意外死亡诊断(2026-07-26)', () => {
         const token = tokens[0];
         if (scenario === 'whole' || scenario === 'truncated-log') {
           child.stderr.write(`${scenario === 'truncated-log' ? 'x'.repeat(4050) : ''}Error: ${token} ${tokens[1]}\n`);
+        } else if (scenario === 'partial-single-chunk') {
+          child.stderr.write(`Error: ${token.slice(0, 18)}\n`);
+        } else if (scenario === 'ordinary-after-injection') {
+          child.stderr.write('ordinary diagnostic after receiving credentials\n');
         } else if (scenario === 'after-drain') {
           child.emit('exit', 1, null);
           // 不发 end，让生产的有界 drain 兜底先结算、清理令牌集合。
@@ -1802,7 +1809,11 @@ describe('nodeRuntimeBroker · 意外死亡诊断(2026-07-26)', () => {
         } else {
           child.stderr.write(`Error: ${token.slice(0, 18)}`);
           if (scenario === 'after-stop') broker.stop('node-ghost');
-          if (scenario !== 'partial-at-exit') child.stderr.write(`${token.slice(18)} ${tokens[1]}\n`);
+          if (scenario === 'partial-newline' || scenario === 'partial-space') {
+            child.stderr.write(scenario === 'partial-newline' ? '\n' : ' ');
+          } else if (scenario !== 'partial-at-exit') {
+            child.stderr.write(`${token.slice(18)} ${tokens[1]}\n`);
+          }
         }
         if (scenario !== 'after-drain') child.emit('exit', 1, null);
         child.stderr.end();
@@ -1817,6 +1828,7 @@ describe('nodeRuntimeBroker · 意外死亡诊断(2026-07-26)', () => {
           expect(stderrText).not.toContain(secret);
         }
         expect(allOutput).not.toContain(token.slice(0, 18));
+        expect(allOutput).not.toContain('ordinary diagnostic after receiving credentials');
         if (scenario !== 'after-stop' && scenario !== 'after-drain') expect(allOutput).toContain('[REDACTED]');
       } finally {
         broker.destroyAll();
