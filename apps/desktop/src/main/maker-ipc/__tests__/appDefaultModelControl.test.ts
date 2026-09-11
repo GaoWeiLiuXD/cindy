@@ -1,3 +1,4 @@
+import type { BotModelRoute } from '../../../shared/botModelChain';
 import type { ProviderView } from '@cindy/model-providers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { changeAppDefaultModel, configureAppDefaultModelSelection, inspectAppDefaultModel } from '../appDefaultModelControl';
@@ -17,7 +18,7 @@ vi.mock('../../appSessionState.js', () => ({
   getActiveDataOwnerPushStamp: () => ({ dataOwnerId: 'owner', ownerGeneration: 1 }),
 }));
 const route = { harness: 'codex' as const, providerId: 'openai', model: 'luna', effort: 'medium', fastMode: false };
-const mirror = (selectedRoute = route, requestId?: string) => setNewMakerDraftCache({ selectedRoute,
+const mirror = (selectedRoute: BotModelRoute = route, requestId?: string) => setNewMakerDraftCache({ selectedRoute,
   lastByVendor: {}, fastModeByModel: {}, effortByModel: {} }, host.owner, requestId);
 const id = JSON.stringify(['codex', 'openai', 'luna']);
 
@@ -25,7 +26,7 @@ beforeEach(() => {
   host.owner = 'owner:1'; host.enabled = true; host.connected = true; host.agents = ['codex'];
   host.providers.mockImplementation(async () => [{ id: 'openai', source: 'builtin', connected: host.connected, agents: ['codex'], routing: { codex: { upstream: 'https://example.invalid', authStrategy: 'oauth-passthrough' } },
     models: { codex: ['luna', 'sol'].map(model => ({ id: model, status: 'active', mode: 'chat', defaultEnabled: true,
-      efforts: ['low', 'medium'], defaultEffort: 'medium' })) } }] as ProviderView[]);
+      efforts: ['low', 'medium'], defaultEffort: 'medium', supportsFastMode: true })) } }] as ProviderView[]);
   mirror();
 });
 afterEach(() => { configureAppDefaultModelSelection(null); vi.useRealTimers(); });
@@ -50,6 +51,27 @@ describe('Bot control of the real Cindy default', () => {
     expect(await changeAppDefaultModel(id, 'low')).toEqual({ current: { ...route, effort: 'low' } });
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ expectedRoute: route,
       ownerStamp: { dataOwnerId: 'owner', ownerGeneration: 1 } }));
+  });
+  it.each(['openai', null])('preserves Fast for an effort-only change with source %s', async providerId => {
+    const current = { ...route, providerId, fastMode: true };
+    mirror(current);
+    const dispatch = vi.fn(selection => mirror(selection.route, selection.requestId));
+    configureAppDefaultModelSelection(dispatch);
+    expect(await changeAppDefaultModel(id, 'low')).toEqual({ current: { ...route, effort: 'low', fastMode: true } });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ expectedRoute: current }));
+  });
+  it('keeps both current effort and Fast when reselecting without extra fields', async () => {
+    mirror({ ...route, effort: 'low', fastMode: true });
+    configureAppDefaultModelSelection(selection => mirror(selection.route, selection.requestId));
+    expect(await changeAppDefaultModel(id)).toEqual({ current: { ...route, effort: 'low', fastMode: true } });
+  });
+  it('does not carry Fast to a route which no longer supports it', async () => {
+    mirror({ ...route, fastMode: true });
+    const providers = await host.providers();
+    providers[0].models.codex[0].supportsFastMode = false;
+    host.providers.mockResolvedValue(providers);
+    configureAppDefaultModelSelection(selection => mirror(selection.route, selection.requestId));
+    expect((await changeAppDefaultModel(id, 'low')).current.fastMode).toBe(false);
   });
   it('does not claim success when an unrelated mirror matches but the renderer never confirms this write', async () => {
     vi.useFakeTimers(); configureAppDefaultModelSelection(() => mirror());

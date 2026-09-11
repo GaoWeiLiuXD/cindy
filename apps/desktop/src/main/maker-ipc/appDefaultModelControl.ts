@@ -17,15 +17,24 @@ export function configureAppDefaultModelSelection(dispatch: typeof dispatchSelec
 
 export function availableAppDefaultModels(input: {
   providers: readonly ProviderView[];
+  currentRoute?: BotModelRoute | null;
   availableAgents: ReadonlySet<'cc' | 'codex' | 'pi'>;
   enabled: NonNullable<Parameters<typeof defaultBotModelChain>[0]['isModelEnabled']>;
 }) {
+  const current = defaultBotModelChain({ providers: input.providers, providersLoading: false,
+    availableAgents: input.availableAgents, availableAgentsLoaded: true,
+    preferredRoute: input.currentRoute ?? undefined, isModelEnabled: input.enabled })[0];
   return input.providers.flatMap(provider => (['claude-code', 'codex', 'pi'] as const).flatMap(agent =>
     (provider.models[agent] ?? []).flatMap(model => {
       const route: BotModelRoute = { harness: agent === 'claude-code' ? 'claude' : agent,
         providerId: provider.id, model: model.id,
         effort: model.defaultEffort && model.efforts.includes(model.defaultEffort) ? model.defaultEffort : '',
         fastMode: false };
+      if (current && current.harness === route.harness && current.providerId === route.providerId
+        && current.model === route.model) {
+        if (model.efforts.some(effort => effort === current.effort)) route.effort = current.effort;
+        route.fastMode = model.supportsFastMode === true && current.fastMode;
+      }
       const valid = defaultBotModelChain({ providers: input.providers, providersLoading: false,
         availableAgents: input.availableAgents, availableAgentsLoaded: true,
         preferredRoute: route, isModelEnabled: input.enabled });
@@ -44,11 +53,12 @@ async function readSelection() {
   await waitForModelVisibilityMirror();
   const providers = await getDesktopProviderService().listProviders({ allowSideEffects: false });
   assertOwner();
-  const available = availableAppDefaultModels({ providers,
+  const current = getSelectedNewMakerRoute(owner) ?? null;
+  const available = availableAppDefaultModels({ providers, currentRoute: current,
     availableAgents: new Set((getMakerIfReady()?.listAvailableAgents() ?? []).map(agent => agent === 'claude-code' ? 'cc' : agent)),
     enabled: (agent, providerId, model) => isModelVisible(getModelVisibilityOverride(agent, providerId, model.id), model.defaultEnabled),
   });
-  return { owner, assertOwner, current: getSelectedNewMakerRoute(owner) ?? null, available };
+  return { owner, assertOwner, current, available };
 }
 
 export async function inspectAppDefaultModel() {

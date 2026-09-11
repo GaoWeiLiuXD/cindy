@@ -805,6 +805,23 @@ describe('Bot canonical Session lifecycle', () => {
     expect((await invoke('local-db:bots:get', created.id)).avatar).toBe(created.avatar);
   });
 
+  it('retains copied image bytes through an independent media ref after the source is deleted', async () => {
+    const { createBotProfile } = await import('../bots');
+    const source = await createBotProfile({ name: 'Original portrait' });
+    const bytes = readFileSync(resolveSafe(source.avatar).absPath);
+    const copy = await createBotProfile({ name: 'Copied portrait', avatar: source.avatar,
+      avatarImageBase64: bytes.toString('base64') });
+    expect(copy.avatar).toBe(source.avatar);
+    expect(h.sqlite!.prepare('SELECT COUNT(*) AS n FROM media_refs WHERE hash = ?')
+      .get(createHash('sha256').update(bytes).digest('hex'))).toEqual({ n: 2 });
+    h.sqlite!.prepare("UPDATE bot_profiles SET status = 'archived' WHERE id = ?").run(source.id);
+    await h.tx!('bots.deleteProfile', { botId: source.id, sessionIds: [], keepTaskHistory: false, at: Date.now() });
+    expect((await invoke('local-db:bots:get', copy.id)).avatar).toBe(source.avatar);
+    expect(readFileSync(resolveSafe(copy.avatar).absPath)).toEqual(bytes);
+    expect(h.sqlite!.prepare('SELECT ref_id FROM media_refs WHERE hash = ?')
+      .all(createHash('sha256').update(bytes).digest('hex'))).toEqual([{ ref_id: copy.id }]);
+  });
+
   it.each(['legacy IPC', 'resource registry'])('provides Cindy on first Mobile entry via %s and shares the receipt after deletion', async entry => {
     const real = await vi.importActual<typeof import('../../../maker-ipc/botDefaultProvisioning')>(
       '../../../maker-ipc/botDefaultProvisioning');

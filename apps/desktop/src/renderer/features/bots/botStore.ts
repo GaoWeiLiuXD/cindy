@@ -1,3 +1,4 @@
+import { isManagedBotAvatarUrl } from '../../../shared/botAvatarValue';
 import { isModelEnabled, getModelVisibilityVersion } from '@/state/modelVisibilityPrefs';
 import { botInvitationProgress, type BotInvitationProgress } from '../../../shared/botInvitation';
 import { useSyncExternalStore } from 'react';
@@ -1094,6 +1095,13 @@ export async function duplicateBotProfile(id: string): Promise<BotProfile> {
   const source = profiles.find((bot) => bot.id === id);
   if (!source) throw new Error('Bot not found');
   if (source.templateId === 'cindy') return source;
+  const owner = getDataOwnerGeneration();
+  // Copy validated bytes through the existing image ingress, never trust a raw media URL.
+  const avatarImage = isManagedBotAvatarUrl(source.avatar)
+    ? await window.electronAPI.readCachedImageAsBase64({ url: source.avatar })
+    : undefined;
+  assertCurrentOwner(owner);
+  if (avatarImage && !avatarImage.base64) throw new Error('Could not read teammate avatar');
   return addBotProfileAndWait({
     name: duplicateBotName(source.name),
     description: source.description,
@@ -1101,6 +1109,7 @@ export async function duplicateBotProfile(id: string): Promise<BotProfile> {
     userContextSource: source.userContextSource,
     ...(source.gender ? { gender: source.gender } : {}),
     avatar: source.avatar,
+    ...(avatarImage ? { avatarImageBase64: avatarImage.base64 } : {}),
     avatarColor: source.avatarColor,
     skills: [...source.skills],
     capabilities: {

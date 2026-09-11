@@ -15,6 +15,7 @@ import {
 } from '../botStore';
 import { getDefaultModelForVendor } from '@/lib/modelDefinitions';
 import { getCachedProvidersSnapshot } from '@/lib/providersSnapshotStore';
+import { getDataOwnerGeneration, setDataOwnerGeneration } from '@/contexts/dataOwnerGeneration';
 import { getPersistedVendorModel } from '@/state/newMakerDraft';
 
 vi.mock('@/state/newMakerDraft', async (importOriginal) => ({
@@ -249,13 +250,13 @@ describe('bot profile store', () => {
     expect(getBotProfiles()).toHaveLength(count);
   });
 
-  it('duplicates identity, capabilities, Skills, and appearance without copying chat ownership', async () => {
+  it.each(['🔎', `cindy-media://blobs/${'a'.repeat(64)}.png`])('duplicates identity and appearance %s without copying chat ownership', async avatar => {
     const source = addBotProfile({
       name: 'Researcher',
       description: 'Find evidence',
       identitySource: '# SOUL\nResearch carefully.',
       userContextSource: '# USER\nChris',
-      avatar: '🔎',
+      avatar,
       avatarColor: 'blue',
       skills: ['web-research'],
       capabilities: { permissions: 'trusted' },
@@ -278,7 +279,7 @@ describe('bot profile store', () => {
     }));
     const storage = new Map<string, string>();
     vi.stubGlobal('window', {
-      electronAPI: { localDb: { bots: { create } } },
+      electronAPI: { localDb: { bots: { create } }, readCachedImageAsBase64: vi.fn(async () => ({ base64: 'iVBORw0KGgo=', mimeType: 'image/png' })) },
       localStorage: {
         getItem: (key: string) => storage.get(key) ?? null,
         setItem: (key: string, value: string) => storage.set(key, value),
@@ -293,7 +294,7 @@ describe('bot profile store', () => {
         description: 'Find evidence',
         identitySource: '# SOUL\nResearch carefully.',
         userContextSource: '# USER\nChris',
-        avatar: '🔎',
+        avatar,
         avatarColor: 'blue',
         skills: ['web-research'],
         hiddenAt: null,
@@ -303,10 +304,33 @@ describe('bot profile store', () => {
       expect(copy.canonicalSessionId).toBeUndefined();
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Researcher-2',
+        ...(avatar.startsWith('cindy-media:') ? { avatarImageBase64: 'iVBORw0KGgo=' } : {}),
         identitySource: '# SOUL\nResearch carefully.',
         capabilities: expect.objectContaining({ permissions: 'trusted' }),
       }));
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(['read failure', 'empty image', 'owner switch'])('does not create an avatar-less duplicate after %s', async failure => {
+    const source = addBotProfile({ name: 'Portrait', description: '', avatar: `cindy-media://blobs/${'b'.repeat(64)}.png` });
+    createdIds.push(source.id);
+    const before = getBotProfiles().length;
+    const owner = getDataOwnerGeneration();
+    const create = vi.fn();
+    vi.stubGlobal('window', { electronAPI: { localDb: { bots: { create } }, readCachedImageAsBase64: async () => {
+      if (failure === 'read failure') throw new Error('missing image');
+      if (failure === 'empty image') return { base64: '', mimeType: 'image/png' };
+      setDataOwnerGeneration('another-account');
+      return { base64: 'iVBORw0KGgo=', mimeType: 'image/png' };
+    } } });
+    try {
+      await expect(duplicateBotProfile(source.id)).rejects.toThrow();
+      expect(create).not.toHaveBeenCalled();
+      expect(getBotProfiles()).toHaveLength(failure === 'owner switch' ? 0 : before);
+    } finally {
+      setDataOwnerGeneration(owner.dataOwnerId, owner.generation);
       vi.unstubAllGlobals();
     }
   });
