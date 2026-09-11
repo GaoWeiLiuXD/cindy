@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { app } from 'electron';
 import { writeBlob } from '../../cindy-media/blobStore.js';
 import { recordBlob, type LedgerDb } from '../../cindy-media/ledger.js';
 import { sniffImageMime } from '../../lightboxMediaActions.js';
@@ -47,4 +49,24 @@ export async function storeTeammateAvatarImage(
   await recordBlob({ hash: written.hash, ext: written.ext, mimeType: written.mimeType, bytes: written.bytes, isCache: false }, db);
   assertCurrent();
   return written;
+}
+
+/** The same bundled gallery used by the picker; no model or renderer is needed. */
+export async function readDefaultTeammatePortrait(index: number): Promise<{ buffer: Buffer; mimeType: string }> {
+  const { default: sharp } = await import('sharp');
+  const root = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources');
+  const image = sharp(path.join(root, 'teammate-portrait-gallery.png'));
+  const { width, height } = await image.metadata();
+  if (!width || !height || width < 4 || height < 4) throw new Error('Invalid teammate portrait gallery');
+  const cell = Math.abs(Math.trunc(index)) % 16;
+  const column = cell % 4;
+  const row = Math.floor(cell / 4);
+  const left = Math.floor(column * width / 4);
+  const top = Math.floor(row * height / 4);
+  const buffer = await image.extract({
+    left, top,
+    width: Math.floor((column + 1) * width / 4) - left,
+    height: Math.floor((row + 1) * height / 4) - top,
+  }).resize(256, 256).png().toBuffer();
+  return { buffer, mimeType: validateBotAvatarBuffer(buffer) };
 }

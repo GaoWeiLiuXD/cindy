@@ -2,7 +2,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Camera, Check, ChevronDown } from 'lucide-react';
-import gallery from '@/assets/bot-presets/portrait-gallery.png';
+import gallery from '../../../../resources/teammate-portrait-gallery.png';
 import { Spinner } from '@/components/ui/spinner';
 import { BOT_AVATAR_MAX_BYTES } from '../../../shared/botAvatarValue';
 

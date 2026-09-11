@@ -3,7 +3,7 @@ import { setModelVisibilityMirror } from '../../../maker-host/model-visibility-m
 import Database from 'better-sqlite3';
 import type { ProviderView } from '@cindy/model-providers';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -58,7 +58,7 @@ const h = await vi.hoisted(async () => {
     h.worktrees = [];
   }),
   isSessionAlive: vi.fn(() => false),
-  remove: vi.fn(async () => undefined),
+  remove: vi.fn(async (_path: import('node:fs').PathLike, _options?: import('node:fs').RmOptions) => undefined),
   ensureGit: vi.fn(async () => undefined),
   closeSession: vi.fn(async () => undefined),
   getSession: vi.fn(() => null as {
@@ -78,7 +78,12 @@ const h = await vi.hoisted(async () => {
 });
 });
 
-vi.mock('node:fs/promises', () => ({ default: { rm: h.remove } }));
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, default: { ...actual, rm: h.remove } };
+});
+// Legacy byte migration has its own real-storage suite.
+vi.mock('../legacyTeammateAvatar.js', () => ({ migrateLegacyTeammateAvatar: async () => false }));
 vi.mock('../../../maker-ipc/botDefaultProvisioning.js', () => ({
   provisionDefaultBot: vi.fn(), markDefaultBotOffered: vi.fn(),
   withDefaultBotProvisioningLock: async (_root: string, assertOwner: () => void, action: () => Promise<unknown>) => {
@@ -89,6 +94,7 @@ vi.mock('../../../maker-ipc/botDefaultProvisioning.js', () => ({
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => h.userDataDir),
+    getAppPath: () => resolve(__dirname, '../../../../..'),
   },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -208,6 +214,8 @@ import { readRemoteBotSessionAccess } from '../botRemoteSessionAccess';
 import { assertRemoteBotInvocationAllowed, projectRemoteSessionResult, projectRemoteBotPush } from '../../../device-link/remoteBotSessionBoundary';
 import { listBotSkillsForSession, saveBotSkillForSession } from '../../../maker-ipc/botSkillService';
 import { resolveBotCanonicalSession } from '../../../maker-ipc/botCanonicalSessionRegistry';
+import { provisionDefaultBot } from '../../../maker-ipc/botDefaultProvisioning';
+import { resolveSafe } from '../../../cindy-media/blobStore';
 
 function testSha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -406,6 +414,7 @@ function createDb(filename = ':memory:'): void {
       updated_at INTEGER NOT NULL
     );
   `);
+  sqlite.exec(readFileSync(resolve(__dirname, '../../../../../drizzle/0070_woozy_harpoon.sql'), 'utf8'));
   h.sqlite = sqlite;
   const rawDb = drizzle(sqlite, {
     schema: {
@@ -450,6 +459,11 @@ beforeEach(async () => {
   resetCustomMcpRegistry();
   registerCustomMcpArrays(h.mcpProviders);
   vi.clearAllMocks();
+  vi.mocked(provisionDefaultBot).mockReset();
+  h.remove.mockImplementation(async (...args) => {
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    await fs.rm(...args);
+  });
   h.handlers.clear();
   h.nextSession = 0;
   h.providers = [{
@@ -775,6 +789,59 @@ describe('Bot canonical Session lifecycle', () => {
     expect(
       h.sqlite!.prepare('SELECT id FROM bot_profiles WHERE id = ?').get('bot-unknown-template'),
     ).toBeUndefined();
+  });
+
+  it('creates a real gallery portrait when the shared tool entry receives only a name', async () => {
+    const { createBotProfile } = await import('../bots');
+    const created = await createBotProfile({ name: 'Name only' });
+    expect(created.avatar).toMatch(/^cindy-media:\/\/blobs\/[a-f0-9]{64}\.png$/);
+    const sharp = (await import('sharp')).default;
+    const stored = readFileSync(resolveSafe(created.avatar).absPath);
+    expect(await sharp(stored).metadata()).toMatchObject({ width: 256, height: 256 });
+    expect(h.sqlite!.prepare('SELECT hash, ref_kind FROM media_refs WHERE ref_id = ?').get(created.id))
+      .toEqual({ hash: createHash('sha256').update(stored).digest('hex'), ref_kind: 'bot-avatar' });
+    const next = await createBotProfile({ name: 'Another name' });
+    expect(next.avatar).not.toBe(created.avatar);
+    expect((await invoke('local-db:bots:get', created.id)).avatar).toBe(created.avatar);
+  });
+
+  it.each(['legacy IPC', 'resource registry'])('provides Cindy on first Mobile entry via %s and shares the receipt after deletion', async entry => {
+    const real = await vi.importActual<typeof import('../../../maker-ipc/botDefaultProvisioning')>(
+      '../../../maker-ipc/botDefaultProvisioning');
+    vi.mocked(provisionDefaultBot).mockImplementation(real.provisionDefaultBot);
+    h.sqlite!.prepare('DELETE FROM bot_profiles').run();
+    // A fresh owner has no receipt, roster or history. No desktop list has run.
+    h.ownerScopeKey = `mobile-first-${entry}:1`;
+    const legacyList = () => runDeviceLinkInvokeContext(
+      { controllerDeviceId: 'mobile-first', channel: 'local-db:bots:list' },
+      () => invoke('local-db:bots:list', undefined),
+    );
+    const { registerBotRemoteResourceProvider } = await import('../botRemoteResourceProvider');
+    const { remoteResourceRegistry } = await import('../../../device-link/remoteResourceRegistry');
+    registerBotRemoteResourceProvider();
+    const mobileList = entry === 'legacy IPC' ? legacyList : async () => {
+      const result = await remoteResourceRegistry.list({ controllerDeviceId: 'mobile-first' }, {
+        client: { protocolVersion: 1, primitives: ['markdown'] }, collectionId: 'teammates',
+      });
+      return result.items.map(item => ({ id: item.ref.id, name: item.display.title }));
+    };
+    const first = await mobileList();
+    expect(first).toEqual([expect.objectContaining({ id: 'cindy-default', name: 'Cindy' })]);
+    expect(first[0]).not.toHaveProperty('identitySource');
+    await invoke('local-db:bots:list', undefined);
+    expect(h.sqlite!.prepare('SELECT COUNT(*) AS n FROM bot_profiles').get()).toEqual({ n: 1 });
+    // Removing even all history cannot undo the account's one-time receipt.
+    h.sqlite!.prepare('DELETE FROM bot_profiles').run();
+    await expect(mobileList()).resolves.toEqual([]);
+    await expect(invoke('local-db:bots:list', undefined)).resolves.toEqual([]);
+  });
+
+  it('rejects a remote list when its owner changes during provisioning', async () => {
+    vi.mocked(provisionDefaultBot).mockImplementationOnce(async () => { h.ownerScopeKey = 'other:2'; });
+    await expect(runDeviceLinkInvokeContext(
+      { controllerDeviceId: 'mobile-first', channel: 'local-db:bots:list' },
+      () => invoke('local-db:bots:list', undefined),
+    )).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
   });
 
   it('allows device-link to read Bot projections without weakening local renderer trust', async () => {

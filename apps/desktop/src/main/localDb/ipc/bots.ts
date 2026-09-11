@@ -76,7 +76,7 @@ import {
 } from '../../../shared/botAvatarValue.js';
 import { migrateLegacyTeammateAvatar } from './legacyTeammateAvatar.js';
 import { MAKER_PUSH } from '../../maker-ipc/channels.js';
-import { decodeBotAvatarImage, validateBotAvatarBuffer, storeTeammateAvatarImage } from './botAvatarSelection.js';
+import { decodeBotAvatarImage, validateBotAvatarBuffer, storeTeammateAvatarImage, readDefaultTeammatePortrait } from './botAvatarSelection.js';
 import {
   inferBotTemplatePresetId,
   isBotTemplatePresetId,
@@ -762,9 +762,34 @@ async function readBotRemoteResourceSource(
   };
 }
 
+/** Desktop, device-link and resource discovery share the same owner-bound receipt. */
+async function provisionDefaultBotForList(
+  client: ReturnType<typeof getDbClient>,
+  owner: ReturnType<typeof captureBotOperationOwner>,
+): Promise<void> {
+  try {
+    await provisionDefaultBot({
+      ownerRoot: owner.userDataDir, assertOwner: owner.assertCurrent,
+      hasBotHistory: async () => {
+        const profiles = await client.drizzle.select({ id: botProfiles.id }).from(botProfiles).limit(1);
+        if (profiles.length) return true;
+        const history = await client.drizzle.select({ id: sessions.id }).from(sessions).where(eq(sessions.source, 'bot')).limit(1);
+        return history.length > 0;
+      },
+      create: () => createBotProfile({ id: 'cindy-default', name: 'Cindy', templateId: 'cindy',
+        avatar: BOT_TEMPLATE_PRESET_AVATARS.cindy, identitySource: CINDY_DEFAULT_IDENTITY,
+        prepareInvitation: true }),
+    });
+  } catch (error) {
+    log.warn('initial companion deferred', { error: error instanceof Error ? error.name : typeof error });
+  }
+  owner.assertCurrent();
+}
+
 export async function listBotRemoteResourceSources(): Promise<BotRemoteResourceSource[]> {
   const owner = captureBotOperationOwner();
   const client = getDbClient();
+  await provisionDefaultBotForList(client, owner);
   const profiles = await client.drizzle.select({ id: botProfiles.id }).from(botProfiles)
     .where(isNull(botProfiles.hiddenAt)).orderBy(desc(botProfiles.updatedAt));
   owner.assertCurrent();
@@ -888,8 +913,8 @@ export async function createBotProfile(raw: unknown) {
   if (!/^[a-z0-9][a-z0-9_-]*$/.test(id) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(id)) {
     throwIpcError('INVALID_PARAMS', 'Bot id must be a lowercase portable directory identifier');
   }
-  // Existing bundled artwork remains a valid fallback, independent of the retired role template.
-  const requestedAvatar = readBotAvatar(body.avatar) || 'cindy://avatar/preset/dash';
+  // Retired sentinels are accepted only when explicitly supplied by an older client.
+  const requestedAvatar = readBotAvatar(body.avatar);
   // Managed addresses must come from validated image bytes ingested below,
   // never from a renderer or model supplying a URL string alone.
   let avatar = portableBotAvatarOrFallback(requestedAvatar);
@@ -968,8 +993,9 @@ export async function createBotProfile(raw: unknown) {
   if (existingIds.some((profile) => botProfileDir(creationOwnerBoundary.userDataDir, profile.id).toLowerCase() === newHome)) {
     throwIpcError('ALREADY_EXISTS', 'Bot home already belongs to another profile');
   }
-  if (avatarImage) {
-    const written = await storeTeammateAvatarImage(avatarImage, db, assertCreationOwnerStillCurrent);
+  const selectedImage = avatarImage ?? (!requestedAvatar ? await readDefaultTeammatePortrait(existingIds.length) : null);
+  if (selectedImage) {
+    const written = await storeTeammateAvatarImage(selectedImage, db, assertCreationOwnerStillCurrent);
     avatar = written.url;
     botAvatarRef = { id: randomUUID(), hash: written.hash, createdAt: now };
   }
@@ -1239,26 +1265,8 @@ export function registerBotIpc(): void {
     if (!remote) assertTrustedAppRendererEvent(event);
     const client = tryGetDbClient();
     if (!client) return [];
-    if (!remote) {
-      const owner = captureBotOperationOwner();
-      try {
-        await provisionDefaultBot({
-          ownerRoot: ownerScopedUserDataPath(), assertOwner: owner.assertCurrent,
-          hasBotHistory: async () => {
-            const profiles = await client.drizzle.select({ id: botProfiles.id }).from(botProfiles).limit(1);
-            if (profiles.length) return true;
-            const history = await client.drizzle.select({ id: sessions.id }).from(sessions).where(eq(sessions.source, 'bot')).limit(1);
-            return history.length > 0;
-          },
-          create: () => createBotProfile({ id: 'cindy-default', name: 'Cindy', templateId: 'cindy',
-            avatar: BOT_TEMPLATE_PRESET_AVATARS.cindy, identitySource: CINDY_DEFAULT_IDENTITY,
-            prepareInvitation: true }),
-        });
-      } catch (error) {
-        log.warn('initial companion deferred', { error: error instanceof Error ? error.name : typeof error });
-      }
-      owner.assertCurrent();
-    }
+    const owner = captureBotOperationOwner();
+    await provisionDefaultBotForList(client, owner);
     const db = client.drizzle;
     // Unread accounting is opt-in: the read position lives in the renderer, so
     // a caller that has none (device-link, first boot) simply gets zeros.
