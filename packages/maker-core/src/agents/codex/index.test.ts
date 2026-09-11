@@ -8669,7 +8669,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     const startParams = startHost.request.mock.calls.find(
       ([method]) => method === Method.ThreadStart,
     )?.[1] as { config?: Record<string, unknown> };
-    expect(startHost.getSessionMcpConfig).toHaveBeenCalledWith('instance-start');
+    expect(startHost.getSessionMcpConfig).toHaveBeenCalledWith('instance-start', expect.objectContaining({ vendorOptions: expect.any(Object) }));
     expect(startParams.config).toMatchObject(buildConfig('instance-start'));
 
     const resumeAgent = new CodexAgent(createDeps());
@@ -8686,7 +8686,7 @@ describe('CodexAgent MCP thread context hooks', () => {
     const resumeParams = resumeHost.request.mock.calls.find(
       ([method]) => method === Method.ThreadResume,
     )?.[1] as { config?: Record<string, unknown> };
-    expect(resumeHost.getSessionMcpConfig).toHaveBeenCalledWith('instance-resume');
+    expect(resumeHost.getSessionMcpConfig).toHaveBeenCalledWith('instance-resume', expect.objectContaining({ vendorOptions: expect.any(Object) }));
     expect(resumeParams.config).toMatchObject(buildConfig('instance-resume'));
     expect(resumeParams.config).not.toEqual(startParams.config);
 
@@ -18282,6 +18282,7 @@ describe('CodexAgent MCP thread context hooks', () => {
       completionTokens: 11,
       reasoningTokens: 5,
       cachedTokens: 15_000,
+      cacheCreationTokens: cacheWriteInputTokens ?? 0,
       segments: [
         {
           inputTokens: 50_000 - (cacheWriteInputTokens ?? 0),
