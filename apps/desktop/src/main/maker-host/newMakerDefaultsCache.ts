@@ -34,6 +34,8 @@ interface VendorPrefsSnapshot {
 }
 
 export interface NewMakerDraftSnapshot {
+  /** Model picker preferences captured in the same owner-fenced envelope. */
+  providerModelMemory?: ProviderModelMemorySnapshot;
   selectedRoute?: BotModelRoute;
   lastByVendor: Partial<Record<VendorKey, VendorPrefsSnapshot>>;
   /** 每个 vendor 是否由用户在 New Maker picker 明确选过模型；旧 renderer 缺省不提供。 */
@@ -101,6 +103,7 @@ export function syncNewMakerDraftCache(
   if (!record(p.lastByVendor) || !record(p.fastModeByModel) || !record(p.effortByModel)) return false;
   setNewMakerDraftCache({
     selectedRoute: normalizeBotModelChain([p.selectedRoute])[0],
+    ...(record(p.providerModelMemory) ? { providerModelMemory: p.providerModelMemory } : {}),
     lastByVendor: p.lastByVendor!,
     ...(record(p.modelChosenByVendor) ? { modelChosenByVendor: p.modelChosenByVendor } : {}),
     fastModeByModel: p.fastModeByModel!,
@@ -253,4 +256,17 @@ export function getRemoteNewMakerDefaultsByVendor(): {
 /** Read only the active owner’s current selection; never reuse another account’s mirror. */
 export function getSelectedNewMakerRoute(ownerScope: string): BotModelRoute | undefined {
   return selectedRouteOwner === ownerScope ? cache?.selectedRoute : undefined;
+}
+
+/** Same snapshot as the selected route; never consume the unfenced legacy preference cache. */
+export function getNewMakerModelTuning(ownerScope: string, agent: 'claude-code' | 'codex' | 'pi',
+  providerId: string, model: string): { effort?: string; fastMode?: boolean } {
+  if (selectedRouteOwner !== ownerScope || !cache) return {};
+  const memory = cache.providerModelMemory;
+  const provider = memory?.[`${agent}:${providerId}`];
+  const legacy = memory?.[`${agent}:*`];
+  const effort = provider?.effortByModel?.[model] ?? legacy?.effortByModel?.[model] ?? cache.effortByModel[model];
+  const fastMode = provider?.fastByModel?.[model] ?? legacy?.fastByModel?.[model] ?? cache.fastModeByModel[model];
+  return { ...(typeof effort === 'string' ? { effort } : {}),
+    ...(typeof fastMode === 'boolean' ? { fastMode } : {}) };
 }

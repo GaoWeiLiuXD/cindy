@@ -104,6 +104,8 @@ function syncNewMakerPrefs(appDefaultModelRequestId?: string) {
   const owner = getDataOwnerGeneration();
   const draft = getDraftForOwnerPreferenceSync(owner.dataOwnerId);
   if (!draft) return;
+  const providerModelMemory = snapshotForSeed(owner.dataOwnerId);
+  if (!providerModelMemory) return;
   const cc = draft.lastByVendor.cc;
   window.electronAPI.syncDesktopCcPrefs({
     model: cc.model,
@@ -156,6 +158,7 @@ function syncNewMakerPrefs(appDefaultModelRequestId?: string) {
     },
     fastModeByModel: draft.fastModeByModel,
     effortByModel: draft.effortByModel,
+    providerModelMemory,
     // worktree 勾选记忆(vendor 无关根字段):远程草稿(手机 / 桌面控制端)播种用。
     worktreeEnabled: draft.worktreeEnabled,
   });
@@ -259,7 +262,10 @@ export function App() {
   // 全局 effort/fast 预设(旧 newMakerDraft.effortByModel 已不再写非选中行,故必须单独镜像这一层)。
   // 启动推一次 + 变化增量推,fire-and-forget;无控制者订阅时 main 端转发近似 no-op。
   useEffect(() => {
-    const sync = () => window.electronAPI.syncProviderModelMemory(snapshotForSeed());
+    const sync = () => {
+      window.electronAPI.syncProviderModelMemory(snapshotForSeed());
+      syncNewMakerPrefs();
+    };
     sync();
     return subscribeProviderModelMemory(sync);
   }, []);

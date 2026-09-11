@@ -7,7 +7,7 @@ import { activeOwnerScopeKey, getActiveDataOwnerPushStamp, isAppSessionBoundaryP
 import { getDesktopProviderService } from '../maker-host/createDesktopProviderService.js';
 import { getMakerIfReady } from '../maker-host/index.js';
 import { getModelVisibilityOverride, waitForModelVisibilityMirror } from '../maker-host/model-visibility-mirror.js';
-import { getSelectedNewMakerRoute, subscribeNewMakerDefaults } from '../maker-host/newMakerDefaultsCache.js';
+import { getNewMakerModelTuning, getSelectedNewMakerRoute, subscribeNewMakerDefaults } from '../maker-host/newMakerDefaultsCache.js';
 
 /** A narrow bridge to the existing renderer-owned default, never a second settings file. */
 let dispatchSelection: ((selection: AppDefaultModelSelection) => void) | null = null;
@@ -18,6 +18,7 @@ export function configureAppDefaultModelSelection(dispatch: typeof dispatchSelec
 export function availableAppDefaultModels(input: {
   providers: readonly ProviderView[];
   currentRoute?: BotModelRoute | null;
+  tuning?: (agent: 'claude-code' | 'codex' | 'pi', providerId: string, model: string) => { effort?: string; fastMode?: boolean };
   availableAgents: ReadonlySet<'cc' | 'codex' | 'pi'>;
   enabled: NonNullable<Parameters<typeof defaultBotModelChain>[0]['isModelEnabled']>;
 }) {
@@ -26,6 +27,7 @@ export function availableAppDefaultModels(input: {
     preferredRoute: input.currentRoute ?? undefined, isModelEnabled: input.enabled })[0];
   return input.providers.flatMap(provider => (['claude-code', 'codex', 'pi'] as const).flatMap(agent =>
     (provider.models[agent] ?? []).flatMap(model => {
+      const remembered = input.tuning?.(agent, provider.id, model.id);
       const route: BotModelRoute = { harness: agent === 'claude-code' ? 'claude' : agent,
         providerId: provider.id, model: model.id,
         effort: model.defaultEffort && model.efforts.includes(model.defaultEffort) ? model.defaultEffort : '',
@@ -35,6 +37,10 @@ export function availableAppDefaultModels(input: {
         if (model.efforts.some(effort => effort === current.effort)) route.effort = current.effort;
         route.fastMode = model.supportsFastMode === true && current.fastMode;
       }
+      // The picker preference is authoritative for a remembered target, including false Fast.
+      if (remembered?.effort !== undefined) route.effort = model.efforts.some(effort => effort === remembered.effort)
+        ? remembered.effort : (model.defaultEffort && model.efforts.includes(model.defaultEffort) ? model.defaultEffort : '');
+      if (remembered?.fastMode !== undefined) route.fastMode = model.supportsFastMode === true && remembered.fastMode;
       const valid = defaultBotModelChain({ providers: input.providers, providersLoading: false,
         availableAgents: input.availableAgents, availableAgentsLoaded: true,
         preferredRoute: route, isModelEnabled: input.enabled });
@@ -55,6 +61,7 @@ async function readSelection() {
   assertOwner();
   const current = getSelectedNewMakerRoute(owner) ?? null;
   const available = availableAppDefaultModels({ providers, currentRoute: current,
+    tuning: (agent, providerId, model) => getNewMakerModelTuning(owner, agent, providerId, model),
     availableAgents: new Set((getMakerIfReady()?.listAvailableAgents() ?? []).map(agent => agent === 'claude-code' ? 'cc' : agent)),
     enabled: (agent, providerId, model) => isModelVisible(getModelVisibilityOverride(agent, providerId, model.id), model.defaultEnabled),
   });

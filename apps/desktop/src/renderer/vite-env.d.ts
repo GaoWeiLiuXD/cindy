@@ -2414,6 +2414,10 @@ interface ElectronAPI {
     modelChosenByVendor: Partial<Record<'cc' | 'codex' | 'pi', boolean>>;
     fastModeByModel: Record<string, boolean>;
     effortByModel: Record<string, string>;
+    providerModelMemory?: Record<string, {
+      effortByModel: Record<string, string>;
+      fastByModel: Record<string, boolean>;
+    }>;
     /** 「新建会话默认启用 worktree」勾选记忆(vendor 无关根字段,远程草稿播种用)。 */
     worktreeEnabled: boolean;
   }) => void;
