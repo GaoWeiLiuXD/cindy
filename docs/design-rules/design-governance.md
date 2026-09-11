@@ -334,7 +334,7 @@ DS-4/4b 尚有公开附件交接与完整设置页/部分状态证据缺口，DS
 | DS-6 | 完整设置表单、第二消费者与普通确认复用；按真实需求补 FormField / loading，附使用说明、真实状态证据与独立贡献者首轮试用 | 有意可见 | [#4135](https://github.com/makecindy/cindy/pull/4135) 已合入（head `62472f559c` / merge `6559d2610a`）；已实现 FormField / loading、两个消费者和指定普通确认；用户测试版手动审核通过。工程验证、G2 与公开附件分别见[证据索引](../design-evidence/2026-09-08/ds6-forms.md)，不把 PR 交付等同目标全部验收 |
 | DS-7 | 复用守卫，成熟写法先报告/反例/历史回放后阻断；增量发现 Mobile 入口；未成熟范围继续报告 | CI 门禁 | 已合并 [#4215](https://github.com/makecindy/cindy/pull/4215)：成熟颜色增量接 verify，Mobile 入口纳入同一台账；[历史证据](../design-evidence/2026-09-10/ds7-guards.md) 的版本边界见 §8。DS-7 当次双审豁免不延续至后续批次 |
 | DS-8 | Desktop 颜色、排版、间距、圆角/尺寸与动效的 DTCG → 生成 → 生产链；旧主题兼容，结束影子阶段 | 零视觉接管 | 已合并 [#4268](https://github.com/makecindy/cindy/pull/4268)，merge `2e74488d21`；人工及平台证据缺口继续登记 |
-| DS-9 | 统一桌面聊天、代码与附件；核跨入口继承；按正式决定整理桌面授权呈现 | 有意可见 | 实现、自查与用户视觉验收通过（09-11），进入 PR 交付、待合并；视觉基线 `f8aaae334f`，提交前同步主干至 `f9ce362377`，保留 #4283 伙伴设置与 Cindy Make 完成卡；[实现与验收记录](../design-evidence/2026-09-11/ds9-desktop-core.md) |
+| DS-9 | 统一桌面聊天、代码与附件；核跨入口继承；按正式决定整理桌面授权呈现 | 有意可见 | [#4300](https://github.com/makecindy/cindy/pull/4300) 草稿已提交，待 CI/合并；实现、自查与用户视觉验收通过（09-11）；视觉基线 `f8aaae334f`，提交前同步主干至 `f9ce362377`，保留 #4283 伙伴设置与 Cindy Make 完成卡；[实现与验收记录](../design-evidence/2026-09-11/ds9-desktop-core.md) |
 | DS-10 | 扩大成熟范围检查、维护交接，完成 Desktop G1—G4 验收 | CI 门禁 | 待 DS-9；遵循 §8，复用已有守卫；最终验收不额外拆批 |
 | Mobile 后续（未编号） | 接同一数值源，保留平台适配；独立裁决授权呈现，验证 iOS/Android | 按实际变化分类 | 新重构方案就绪后另行启动；沿用 fingerprint 冷更规则与既有兼容检查 |
 

@@ -63,3 +63,16 @@
 - Token `check:generated`、设计 inventory、颜色增量（`--worktree --base-ref f9ce362377`）、endpoints、i18n、brand terminology、glossary、迁移校验、scheduler guard、mobile scope 均通过；`git diff --check` 通过。
 - 日志统一为仓外 `附件/DS-9/submit-*.log`；提交文件与 SHA-256 由 `submit-candidate-manifest.json` 绑定。只有 DS-9 的 31 个文件入本次提交，原有未跟踪目录不纳入。
 - 本机 pr-autopilot 自动推送/盯梢部署仍引用其他用户目录，未使用该部署，也未生成虚构的审查共识、签名或注册成功回执。本次按已有明确授权走仓库原生 PR 流程；GitHub 检查结论以 PR 为准。截图仍待按治理 §6 人工上传 PR 附件，不声称公开证据已齐。
+
+## PR 冲突与首轮 CI 跟进（2026-09-12）
+
+草稿 [#4300](https://github.com/makecindy/cindy/pull/4300) 的首版 `c0830addf4` 已通过 verify-checks、Desktop Git integration 与 DCO，但全量 Linux/Windows 单测发现两项此前相关测试未选中的静态守卫失败；不得把提交前 related 通过解释成云端全绿。
+
+- `typographyDiscipline`：DS-9 把既有代码字号变量和紧凑派生写法移到 `chatChrome.ts`，精确签名表仍指向原消费者。本次迁移相同签名到实际定义处，删除原文件过期登记并收紧剩余次数；不增加新字号、目录豁免或放宽扫描。
+- `workGroupBlockInteraction`：旧断言在活动行文件中查找已抽出的动效字面量。本次导入真实样式常量，核活动行与共享动效同值、三角槽实际包含动效，并继续检查 duration/easing/reduced-motion。其它交互/几何断言保留。修复前两项失败可复现，修复后 2 文件 / 11 用例通过。
+- Windows 首轮另有 Pi package lock 20 秒超时与浏览器 dialog 等待失败；对应 2 个测试文件在本机复跑 267 用例通过，未修改后端逻辑或放宽超时，Windows 结论仍以新 CI 为准。
+- 同步主干 `98c2d8968617a5343de2d8fac912cc969775efa9`，唯一文本冲突位于 `design-inventory.md` 的生成区。主干人工决策区与共同基线一致，保留 DS-9 人工区后执行 `pnpm design:inventory`，按合并后源码重建统计；49 surfaces，未手选过期计数，也未覆盖主干新入口。
+- 首轮扩大后的本机测试另发现区域环境不匹配：本地 `.env` 指定 `VITE_CINDY_AUTH_REGION=cn`，两组既有 Global 路径测试出现 9 个失败。显式设置 `VITE_CINDY_AUTH_REGION=global` 后，两文件 47 用例通过；不改本地配置文件、凭证或被测后端逻辑。
+- 本轮产品呈现代码不变；使用带 DCO 的合并提交更新现有 PR，免本地双审的用户要求继续生效。截图公开与未测平台缺口保留。跟进日志存仓外 `附件/DS-9/followup-*.log`，原 CI 失败日志保留供追溯。
+
+本轮最终提交前验证通过：`VITE_CINDY_AUTH_REGION=global pnpm test:unit:related` 退出 0，因主干共享包变化自动扩大为 Desktop 全量（149.3s）、Mobile 全量（22.9s）及相关共享包；runner 529 pass / 1 存量 skip。Desktop / Mobile / Token typecheck、Token 生成新鲜度、inventory、颜色增量、文档合同与 diff 检查均通过。明确使用 Global 测试身份仅限命令环境，不写回本地 `.env`。云端后续检查仍以 PR 最新 head 为准。
