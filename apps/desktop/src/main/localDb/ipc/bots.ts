@@ -73,10 +73,9 @@ import {
   isSupportedBotAvatarValue,
   portableBotAvatarOrFallback,
 } from '../../../shared/botAvatarValue.js';
+import { migrateLegacyTeammateAvatar } from './legacyTeammateAvatar.js';
 import { MAKER_PUSH } from '../../maker-ipc/channels.js';
-import { writeBlob } from '../../cindy-media/blobStore.js';
-import { recordBlob } from '../../cindy-media/ledger.js';
-import { decodeBotAvatarImage, validateBotAvatarBuffer } from './botAvatarSelection.js';
+import { decodeBotAvatarImage, validateBotAvatarBuffer, storeTeammateAvatarImage } from './botAvatarSelection.js';
 import {
   inferBotTemplatePresetId,
   isBotTemplatePresetId,
@@ -473,8 +472,12 @@ async function readProfile(
 ) {
   const owner = captureBotOperationOwner();
   const db = client.drizzle;
-  const [profile] = await db.select().from(botProfiles).where(eq(botProfiles.id, botId)).limit(1);
+  let [profile] = await db.select().from(botProfiles).where(eq(botProfiles.id, botId)).limit(1);
   if (!profile) throwIpcError('NOT_FOUND', 'Bot 不存在');
+  if (await migrateLegacyTeammateAvatar(client, profile, owner.assertCurrent)) {
+    [profile] = await db.select().from(botProfiles).where(eq(botProfiles.id, botId)).limit(1);
+    if (!profile) throwIpcError('NOT_FOUND', 'Bot 不存在');
+  }
   const canonicalResolution = await reconcileCanonicalLink(botId, client);
   const canonicalSessionId = canonicalResolution.canonicalSessionId;
   const links = await db
@@ -663,6 +666,10 @@ async function readProfile(
 async function readRemoteBotProfile(client: ReturnType<typeof getDbClient>, botId: string) {
   const owner = captureBotOperationOwner();
   const db = client.drizzle;
+  const [stored] = await db.select().from(botProfiles).where(eq(botProfiles.id, botId)).limit(1);
+  if (!stored) throwIpcError('NOT_FOUND', 'Bot 不存在');
+  if (!isBotVisibleRemotely(stored)) return null;
+  await migrateLegacyTeammateAvatar(client, stored, owner.assertCurrent);
   const [profile] = await db
     .select({
       id: botProfiles.id,
@@ -961,10 +968,7 @@ export async function createBotProfile(raw: unknown) {
     throwIpcError('ALREADY_EXISTS', 'Bot home already belongs to another profile');
   }
   if (avatarImage) {
-    const written = await writeBlob(avatarImage);
-    assertCreationOwnerStillCurrent();
-    await recordBlob({ hash: written.hash, ext: written.ext, mimeType: written.mimeType, bytes: written.bytes, isCache: false }, db);
-    assertCreationOwnerStillCurrent();
+    const written = await storeTeammateAvatarImage(avatarImage, db, assertCreationOwnerStillCurrent);
     avatar = written.url;
     botAvatarRef = { id: randomUUID(), hash: written.hash, createdAt: now };
   }
@@ -1345,17 +1349,7 @@ export function registerBotIpc(): void {
     // reference move together in one SQLite transaction. If the transaction
     // loses a race, the unreferenced content-addressed blob is recycler-safe.
     ownerBoundary.assertCurrent();
-    const written = await writeBlob({ buffer, mimeType });
-    await recordBlob(
-      {
-        hash: written.hash,
-        ext: written.ext,
-        mimeType: written.mimeType,
-        bytes: written.bytes,
-        isCache: false,
-      },
-      db,
-    );
+    const written = await storeTeammateAvatarImage({ buffer, mimeType }, db, ownerBoundary.assertCurrent);
     const now = Date.now();
     await client.tx('bots.updateProfile', {
       id: botId,

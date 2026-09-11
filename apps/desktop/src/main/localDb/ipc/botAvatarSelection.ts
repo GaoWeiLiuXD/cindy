@@ -1,3 +1,5 @@
+import { writeBlob } from '../../cindy-media/blobStore.js';
+import { recordBlob, type LedgerDb } from '../../cindy-media/ledger.js';
 import { sniffImageMime } from '../../lightboxMediaActions.js';
 import { throwIpcError } from '../../utils/ipcValidate.js';
 
@@ -31,4 +33,18 @@ export function decodeBotAvatarImage(value: unknown): { buffer: Buffer; mimeType
   }
   const buffer = Buffer.from(value, 'base64');
   return { buffer, mimeType: validateBotAvatarBuffer(buffer) };
+}
+
+/** Shared upload/migration ingress; the caller atomically attaches the returned blob to the profile. */
+export async function storeTeammateAvatarImage(
+  image: { buffer: Buffer; mimeType: string },
+  db: LedgerDb,
+  assertCurrent: () => void,
+) {
+  assertCurrent();
+  const written = await writeBlob({ buffer: image.buffer, mimeType: validateBotAvatarBuffer(image.buffer) });
+  assertCurrent();
+  await recordBlob({ hash: written.hash, ext: written.ext, mimeType: written.mimeType, bytes: written.bytes, isCache: false }, db);
+  assertCurrent();
+  return written;
 }

@@ -234,19 +234,25 @@ function botsUpdateProfile(db: Database.Database, args: unknown): { currentVersi
     throw new Error('botAvatarRef requires an avatar address');
   }
   return db.transaction(() => {
-    const current = db.prepare('SELECT current_version AS currentVersion, display_name AS displayName FROM bot_profiles WHERE id = ?')
-      .get(id) as { currentVersion: number; displayName: string } | undefined;
+    const current = db.prepare('SELECT current_version AS currentVersion, display_name AS displayName, avatar FROM bot_profiles WHERE id = ?')
+      .get(id) as { currentVersion: number; displayName: string; avatar: string } | undefined;
     if (!current) throw Object.assign(new Error('Bot 不存在'), { code: 'NOT_FOUND' });
     if (current.currentVersion !== expectedVersion) {
       throw Object.assign(new Error('Bot Profile 已被另一处更新，请刷新后重试'), { code: 'PRECONDITION_FAILED' });
+    }
+    if (p.expectedAvatar !== undefined && current.avatar !== expectString(p.expectedAvatar, 'expectedAvatar')) {
+      throw Object.assign(new Error('Teammate avatar changed during update'), { code: 'PRECONDITION_FAILED' });
     }
     if (p.displayName !== undefined && normalizeBotName(expectString(p.displayName, 'displayName')) !== normalizeBotName(current.displayName)) {
       const name = normalizeBotName(expectString(p.displayName, 'displayName'));
       const others = db.prepare("SELECT display_name AS name FROM bot_profiles WHERE id != ? AND status != 'archived'").all(id) as Array<{ name: string }>;
       if (others.some(row => normalizeBotName(row.name) === name)) throw Object.assign(new Error('A companion with this name already exists'), { code: 'ALREADY_EXISTS' });
     }
-    const fields = ['updated_at = ?'];
-    const values: unknown[] = [now];
+    if (p.preserveUpdatedAt !== undefined && typeof p.preserveUpdatedAt !== 'boolean') {
+      throw new Error('preserveUpdatedAt must be a boolean');
+    }
+    const fields = p.preserveUpdatedAt === true ? ['updated_at = updated_at'] : ['updated_at = ?'];
+    const values: unknown[] = p.preserveUpdatedAt === true ? [] : [now];
     for (const [key, column] of [
       ['displayName', 'display_name'], ['description', 'description'], ['avatar', 'avatar'],
       ['avatarColor', 'avatar_color'], ['status', 'status'],

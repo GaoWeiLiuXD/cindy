@@ -804,6 +804,8 @@ function extraResourcesForTarget(targetPlatform: string): string[] {
   const base = [
     'resources/icon.png',
     'resources/cindy-source.json',
+    // Input bytes for upgrading retired preset avatars to ordinary managed images.
+    'resources/legacy-teammate-avatars',
     'resources/tools',
     'drizzle',
     'resources/cc-manager',
