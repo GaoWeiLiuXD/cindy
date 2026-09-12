@@ -5,9 +5,9 @@
  * 与 chatImageView.test.ts 的图片键盘用例对位,但不 mock VideoLightbox:
  * 真实组件的 onClose 排在 200ms fade-out 的 setTimeout 之后(见
  * VideoLightbox.handleClose),同步调用 onClose 的 mock 覆盖不到这条时序。
- * 断言顺序刻意是「Esc 关闭瞬间焦点还在 lightbox → 200ms 后回到触发器」,
- * 锁住"键盘打开 + 延迟关闭 + 关闭后焦点恢复"这条无障碍路径,防止弹窗
- * 关闭时序或触发器挂载逻辑调整时静默退化。
+ * 用例覆盖:键盘打开、焦点进入 lightbox(FocusScope)并圈禁 Tab、Esc 延迟
+ * 关闭后焦点回到预览触发器——锁住整条无障碍路径,防止弹窗关闭时序或触发
+ * 器挂载逻辑调整时静默退化。
  */
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -31,7 +31,7 @@ describe('ChatVideoView 键盘交互(真实 VideoLightbox)', () => {
     __resetMediaBusForTests();
   });
 
-  it.each(['Enter', ' '])('键盘 %s 打开视频预览,Esc 延迟关闭后焦点回到触发器', async (key) => {
+  it.each(['Enter', ' '])('键盘 %s 打开视频预览:焦点进入 lightbox 并圈禁,Esc 延迟关闭后回到触发器', async (key) => {
     render(
       React.createElement(ChatVideoView, {
         src: 'xdt-video://control/clip.mp4',
@@ -49,14 +49,25 @@ describe('ChatVideoView 键盘交互(真实 VideoLightbox)', () => {
     const backdrop = screen.getByRole('button', { name: 'chat.lightbox.close' });
     const lightboxVideo = document.body.querySelector('video[controls]');
     expect(lightboxVideo).not.toBeNull();
-    expect(lightboxVideo?.getAttribute('src')).toBe('xdt-video://control/clip.mp4');
+    const videoEl = lightboxVideo as HTMLVideoElement;
+    expect(videoEl.getAttribute('src')).toBe('xdt-video://control/clip.mp4');
 
-    // 焦点先挪进 lightbox 再用 Esc 关闭,焦点恢复的断言才有区分度。
-    backdrop.focus();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    // 延迟关闭契约:onClose 排在 200ms fade-out 之后,此刻尚未执行,焦点
-    // 仍在 lightbox 上——同步 onClose 的 mock 走不到这一步。
+    // 焦点进入 lightbox:打开后 FocusScope 把焦点给 <video>(Space 暂停 /
+    // 方向键 seek 立即可用),不再留在被遮罩挡住的预览触发器上。
+    expect(document.activeElement).toBe(videoEl);
+    expect(document.activeElement).not.toBe(trigger);
+
+    // Tab 圈禁:焦点在 lightbox 内首尾循环(overlay DOM 顺序 backdrop 在前、
+    // video 在后),不漏到背后的聊天控件。
+    fireEvent.keyDown(videoEl, { key: 'Tab' });
     expect(document.activeElement).toBe(backdrop);
+    fireEvent.keyDown(backdrop, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(videoEl);
+
+    // Esc 关闭(onClose 排在 200ms 渐隐后,此刻焦点仍在 lightbox 内——同步
+    // onClose 的 mock 走不到这一步)。
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(document.activeElement).not.toBe(trigger);
 
     await waitFor(() => expect(document.activeElement).toBe(trigger));
     // 关闭完成后 lightbox 卸载,预览触发器仍在原位。
