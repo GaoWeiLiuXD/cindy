@@ -95,6 +95,27 @@ describe('Session close lifecycle', () => {
     expect(close).toHaveBeenCalledTimes(2);
   });
 
+  it('publishes idle retirement failure without turning recovery into product output', async () => {
+    const { session, handle, seen } = liveTurn();
+    const recovered: AgentEvent[] = [];
+    session.onRuntimeRecovery((event) => recovered.push(event));
+    vi.mocked(handle.close).mockRejectedValueOnce(new Error('process exit unconfirmed'));
+    const recovery: AgentEvent = { type: 'text', source: 'pi', data: {
+      text: 'partial: restart-cindy-to-refresh-packages', isFinal: true,
+    } };
+
+    await expect(session.closeAfterCurrentTurn({ failureEvent: () => recovery }))
+      .rejects.toThrow('process exit unconfirmed');
+    expect(session.getStatus()).toBe('error');
+    expect(recovered).toEqual([{ ...recovery, runtimeRecovery: true,
+      sessionInstanceId: session.instanceId, sessionTurnGeneration: session.getTurnGeneration() }]);
+    expect(seen).toEqual([]);
+    expect(handle.send).not.toHaveBeenCalled();
+    await session.close();
+    expect(session.getStatus()).toBe('closed');
+    expect(recovered).toHaveLength(1);
+  });
+
   it('keeps a failed tool caller alive until its reply and product terminal are consumed', async () => {
     const { session, handle, queue, seen, idle } = liveTurn();
     await session.send('update and report', { turnAttemptToken: 7 });

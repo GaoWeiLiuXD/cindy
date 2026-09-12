@@ -1357,19 +1357,19 @@ export class Session {
   /** Retire this runtime at its product terminal boundary, without replaying work. */
   async closeAfterCurrentTurn(opts?: { failureEvent?: () => AgentEvent }): Promise<'closed' | 'deferred'> {
     this.retirementRequested = true;
+    if (!this.retirementFailureEvent && opts?.failureEvent) {
+      const createEvent = opts.failureEvent;
+      const generation = this.turnGeneration;
+      this.retirementFailureEvent = () => ({
+        ...createEvent(),
+        runtimeRecovery: true,
+        sessionInstanceId: this.instanceId,
+        sessionTurnGeneration: generation,
+      });
+    }
     if (this.hasUnsettledTurn() || this.sendReservation !== null
       || this.hostTurnLeases.size > 0
       || this.retirementContinuationGeneration === this.turnGeneration) {
-      if (!this.retirementFailureEvent && opts?.failureEvent) {
-        const createEvent = opts.failureEvent;
-        const generation = this.turnGeneration;
-        this.retirementFailureEvent = () => ({
-          ...createEvent(),
-          runtimeRecovery: true,
-          sessionInstanceId: this.instanceId,
-          sessionTurnGeneration: generation,
-        });
-      }
       return 'deferred';
     }
     await this.close();
