@@ -187,7 +187,10 @@ export interface AgentEvent {
   sessionTurnGeneration?: number;
   /** Session.instanceId of the incarnation that dequeued this event. Host-only. */
   sessionInstanceId?: string;
-  /** Host-only recovery notice, independent of the already completed product turn. */
+  /**
+   * Host-only recovery notice, independent of the already completed product turn.
+   * Session delivers it on `onRuntimeRecovery`, never on product `onEvent`.
+   */
   runtimeRecovery?: true;
   /**
    * Provider-owned claim attached synchronously to a `done` boundary when that

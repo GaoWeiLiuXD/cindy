@@ -30,7 +30,18 @@ export async function invalidateLocalPiPackageRuntimesForObservedChange(
   origin: PiPackagesChangeOrigin,
 ): Promise<PiPackageRuntimeInvalidationResult | null> {
   if (origin !== 'external-runtime') return null;
-  return invalidateLocalPiPackageRuntimes(maker);
+  // Cross-process token edges do not name install vs disable. Positive
+  // Settings mutations defer until the product terminal; default the same
+  // here so a busy Pi is not torn down mid-turn. Idle runtimes still close
+  // immediately inside closeAfterCurrentTurn.
+  return invalidateLocalPiPackageRuntimes(maker, {
+    afterCurrentTurn: true,
+    failureEvent: () => ({
+      type: 'text',
+      source: 'pi',
+      data: { isFinal: true, text: 'restart-cindy-to-refresh-packages' },
+    }),
+  });
 }
 
 interface PiPackageRuntimeSnapshotEntry {

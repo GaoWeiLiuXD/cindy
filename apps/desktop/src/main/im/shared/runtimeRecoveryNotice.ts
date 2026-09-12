@@ -23,7 +23,7 @@ export function bindRuntimeRecoveryNotice(
     offStatus();
     if (owners.get(session)?.cleanup === cleanup) owners.delete(session);
   };
-  const offEvent = session.onEvent((event) => {
+  const offEvent = session.onRuntimeRecovery((event) => {
     if (!event.runtimeRecovery || event.sessionInstanceId !== session.instanceId
       || !generations.has(event.sessionTurnGeneration ?? -1) || event.type !== 'text') return;
     cleanup(); // Claim once before invoking any asynchronous channel operation.

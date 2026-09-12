@@ -422,6 +422,7 @@ export class Session {
   /** Host-owned logical turn leases that outlive a vendor's transient idle edge. */
   private readonly hostTurnLeases = new Set<Promise<void>>();
   private readonly eventListeners = new Set<SessionEventListener>();
+  private readonly runtimeRecoveryListeners = new Set<SessionEventListener>();
   private readonly statusListeners = new Set<SessionStatusListener>();
   private interactionListener: InteractionRequestListener | null = null;
   private turnLifecycleObserver: SessionTurnLifecycleObserver | null = null;
@@ -1438,8 +1439,9 @@ export class Session {
       this.retirementFailureEvent = undefined;
       if (failureEvent) {
         // The provider queue is already fenced. Dispatch the Host's recovery
-        // receipt before clearing listeners, without changing a successful turn.
-        try { this.fanOutEvent(failureEvent()); } catch (notificationError) {
+        // receipt on the dedicated channel before clearing listeners, without
+        // changing a successful turn or re-entering product listeners.
+        try { this.dispatchRuntimeRecovery(failureEvent()); } catch (notificationError) {
           this.logger.warn('runtime retirement recovery receipt failed', { error: String(notificationError) });
         }
       }
@@ -1451,6 +1453,7 @@ export class Session {
       this.currentTurnAttemptToken = null;
       this.turnControlState = null;
       this.eventListeners.clear();
+      this.runtimeRecoveryListeners.clear();
       this.interactionListener = null;
       if (closeSucceeded) {
         this.setStatus('closed');
@@ -1505,6 +1508,7 @@ export class Session {
       this.turnControlState = null;
       this.clearTerminalErrorDrain();
       this.eventListeners.clear();
+      this.runtimeRecoveryListeners.clear();
       this.interactionListener = null;
       if (detachSucceeded) {
         this.setStatus('closed');
@@ -2063,6 +2067,15 @@ export class Session {
     return () => this.eventListeners.delete(listener);
   }
 
+  /**
+   * Host-only post-terminal recovery. Persistent product listeners (Orca, Learn,
+   * Goal, IM turn text) must not observe these as a new turn.
+   */
+  onRuntimeRecovery(listener: SessionEventListener): () => void {
+    this.runtimeRecoveryListeners.add(listener);
+    return () => this.runtimeRecoveryListeners.delete(listener);
+  }
+
   onStatusChange(listener: SessionStatusListener): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
@@ -2457,11 +2470,30 @@ export class Session {
     return attributed(waitStartGeneration);
   }
 
+  private dispatchRuntimeRecovery(event: AgentEvent): void {
+    if (event.sessionInstanceId === undefined) {
+      event.sessionInstanceId = this.instanceId;
+    }
+    if (event.sessionTurnGeneration === undefined) {
+      event.sessionTurnGeneration = this.turnGeneration;
+    }
+    const listenerEvent = redactEventForListeners(event);
+    for (const listener of this.runtimeRecoveryListeners) {
+      try { listener(listenerEvent); } catch (e) {
+        this.logger.error('runtime recovery listener threw', { error: String(e) });
+      }
+    }
+  }
+
   private fanOutEvent(
     event: AgentEvent,
     observedGeneration = this.turnGeneration,
     queuedGeneration = observedGeneration,
   ): void {
+    if (event.runtimeRecovery) {
+      this.dispatchRuntimeRecovery(event);
+      return;
+    }
     const isBackgroundEvent = event.turnScope === 'background';
     if (!isBackgroundEvent) this.lastEventAt = Date.now();
     this.lastEventType = event.type;
@@ -3033,6 +3065,7 @@ export class Session {
     this.turnControlState = null;
     this.setStatus('closed');
     this.eventListeners.clear();
+    this.runtimeRecoveryListeners.clear();
     this.statusListeners.clear();
     this.interactionListener = null;
   }

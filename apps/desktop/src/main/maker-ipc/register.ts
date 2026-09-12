@@ -4514,11 +4514,14 @@ export function wireSessionToIpc(session: ReturnType<Maker['getSession']>): void
 
   // 转发事件到所有 window。interaction_dismissed 单独走专用 channel,
   // 让 renderer chat store 不必扫所有 vendor-raw 找它。
-  registration.disposers.push(
-    session.onEvent((event: AgentEvent) => {
-      handleSessionEvent(sessionEventDependencies, session, event);
-    }),
-  );
+  // Host recovery is a dedicated Session channel so Orca/Learn product
+  // listeners never treat it as turn text; Desktop persist/broadcast still
+  // consumes the localized notice.
+  const emitWiredSessionEvent = (event: AgentEvent) => {
+    handleSessionEvent(sessionEventDependencies, session, event);
+  };
+  registration.disposers.push(session.onEvent(emitWiredSessionEvent));
+  registration.disposers.push(session.onRuntimeRecovery(emitWiredSessionEvent));
   sessionBindings.attachStatusListener(registration);
 
   // 注入 interaction listener (permission/ask/plan 三合一,renderer 按 kind 弹不同 UI)

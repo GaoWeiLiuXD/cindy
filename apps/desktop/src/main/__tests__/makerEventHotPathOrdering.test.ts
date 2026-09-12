@@ -78,6 +78,7 @@ describe('maker:event hot path ordering', () => {
     expect(wireSessionSource).toMatch(
       /registration\.disposers\.push\(\s*session\.onEvent\(\(event: AgentEvent\) => \{/,
     );
+    expect(wireSessionSource).toContain('session.onRuntimeRecovery(emitWiredSessionEvent)');
     expectOrder(
       wireSessionSource,
       'sessionBindings.attachStatusListener(registration);',

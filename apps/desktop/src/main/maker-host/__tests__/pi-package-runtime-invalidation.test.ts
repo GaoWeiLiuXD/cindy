@@ -56,13 +56,15 @@ function live(id: string, closeGate: Promise<void> = Promise.resolve()) {
   const instance = new Session({ id, agentKind: 'pi', workDir: '/repo', handle,
     capabilities: {} as never, logger, turnStallMs: 0 });
   const seen: AgentEvent[] = [];
+  const recovered: AgentEvent[] = [];
   instance.onEvent((event) => seen.push(event));
+  instance.onRuntimeRecovery((event) => recovered.push(event));
   const finish = (result: string) => {
     running = false;
     emit({ type: 'text', source: 'pi', data: { text: result } });
     emit({ type: 'done', source: 'pi', data: { status: 'completed', result } });
   };
-  return { instance, handle, close, emit, seen, finish };
+  return { instance, handle, close, emit, seen, recovered, finish };
 }
 
 describe('Pi package runtime invalidation', () => {
@@ -246,10 +248,11 @@ describe('Pi package runtime invalidation', () => {
     await vi.waitFor(() => expect(caller.instance.getStatus()).toBe('closed'));
     sibling.finish('build saved');
     await vi.waitFor(() => expect(sibling.instance.getStatus()).toBe('error'));
-    expect(sibling.seen.map(event => event.type)).toEqual(['text', 'done', 'text']);
+    expect(sibling.seen.map(event => event.type)).toEqual(['text', 'done']);
     expect(sibling.seen[1].data).toMatchObject({ status: 'completed', result: 'build saved' });
-    expect(sibling.seen[2].data).toMatchObject({ text: expect.stringContaining('restart-cindy-to-refresh-packages') });
-    expect(sibling.seen[2].data).toMatchObject({ isFinal: true, text: expect.stringContaining('partial') });
+    expect(sibling.recovered).toHaveLength(1);
+    expect(sibling.recovered[0].data).toMatchObject({ text: expect.stringContaining('restart-cindy-to-refresh-packages') });
+    expect(sibling.recovered[0].data).toMatchObject({ isFinal: true, text: expect.stringContaining('partial') });
     expect(caller.seen.map(event => event.type)).toEqual(['text', 'done']);
     expect(caller.handle.send).toHaveBeenCalledOnce();
     expect(sibling.handle.send).toHaveBeenCalledOnce();
@@ -289,13 +292,46 @@ describe('Pi package runtime invalidation', () => {
       invalidateLocalPiPackageRuntimesForObservedChange(maker, 'external-runtime'),
     ).resolves.toEqual({
       requestedSessionIds: ['local-pi'],
+      deferredSessionIds: [],
       failedSessionIds: [],
     });
     expect(getSessionMeta).toHaveBeenCalledTimes(3);
     expect(advanceGeneration.mock.invocationCallOrder[0]).toBeLessThan(
       listActiveSessions.mock.invocationCallOrder[0]!,
     );
-    expect(closeSessionIfCurrent).toHaveBeenCalledWith(sessions[0], 'requested');
+    expect(closeSessionIfCurrent).toHaveBeenCalledWith(
+      sessions[0],
+      'runtime-refresh',
+      expect.objectContaining({ afterCurrentTurn: true }),
+    );
+  });
+
+  it('defers busy local Pi runtimes for cross-process package changes', async () => {
+    const busy = live('busy');
+    const idle = live('idle');
+    const maker: InvalidationMaker = {
+      advanceLocalPiPackageRuntimeGeneration: vi.fn(),
+      listActiveSessions: () => [busy.instance, idle.instance],
+      getSessionMeta: vi.fn(async (id: string) => ({
+        id, agentKind: 'pi' as const, workDir: '/repo', model: 'm', title: id, createdAt: 1, updatedAt: 1,
+      })),
+      closeSessionIfCurrent: async (instance, _reason, opts) => opts?.afterCurrentTurn
+        ? instance.closeAfterCurrentTurn(opts) : (await instance.close(), 'closed'),
+    };
+    await busy.instance.send('keep working');
+    await expect(
+      invalidateLocalPiPackageRuntimesForObservedChange(maker, 'external-runtime'),
+    ).resolves.toEqual({
+      requestedSessionIds: ['busy', 'idle'],
+      deferredSessionIds: ['busy'],
+      failedSessionIds: [],
+    });
+    expect(idle.close).toHaveBeenCalledOnce();
+    expect(busy.close).not.toHaveBeenCalled();
+    busy.finish('result delivered');
+    await vi.waitFor(() => expect(busy.instance.getStatus()).toBe('closed'));
+    expect(busy.seen.some((event) => event.type === 'done')).toBe(true);
+    expect(busy.handle.send).toHaveBeenCalledOnce();
   });
 
   it('does not close a replacement runtime published during metadata lookup', async () => {

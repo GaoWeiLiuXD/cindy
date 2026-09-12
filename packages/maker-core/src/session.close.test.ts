@@ -71,6 +71,8 @@ describe('Session close lifecycle', () => {
 
   it('publishes deferred retirement failure before listeners are cleared, retaining successful work', async () => {
     const { session, handle, queue, seen, idle } = liveTurn();
+    const recovered: AgentEvent[] = [];
+    session.onRuntimeRecovery((event) => recovered.push(event));
     const close = vi.mocked(handle.close);
     close.mockRejectedValueOnce(new Error('process exit unconfirmed'));
     const recovery: AgentEvent = { type: 'text', source: 'pi', data: { text: 'partial: restart-cindy-to-refresh-packages' } };
@@ -79,10 +81,10 @@ describe('Session close lifecycle', () => {
     idle();
     queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'saved result' } });
     await vi.waitFor(() => expect(session.getStatus()).toBe('error'));
-    expect(seen.map(event => event.type)).toEqual(['done', 'text']);
+    expect(seen.map(event => event.type)).toEqual(['done']);
     expect(seen[0]?.data).toMatchObject({ status: 'completed', result: 'saved result' });
-    expect(seen[1]).toEqual({ ...recovery, runtimeRecovery: true,
-      sessionInstanceId: session.instanceId, sessionTurnGeneration: session.getTurnGeneration() });
+    expect(recovered).toEqual([{ ...recovery, runtimeRecovery: true,
+      sessionInstanceId: session.instanceId, sessionTurnGeneration: session.getTurnGeneration() }]);
     expect(handle.send).toHaveBeenCalledOnce();
     await session.close();
     expect(session.getStatus()).toBe('closed');
