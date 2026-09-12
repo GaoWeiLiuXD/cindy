@@ -7611,7 +7611,7 @@ export class PiAgent extends BaseAgent {
         action: 'launch' | 'terminate' | 'status',
         runId: string,
       ) => Promise<boolean>;
-      emitExtensionNotification: (message: string, event?: PiRpcEvent) => void;
+      emitExtensionNotification: (message: string, event?: PiRpcEvent) => AgentEvent;
       /**
        * 把一张挂起的权限卡登记进会话级表,返回注销函数。档位切换 / 关闭会话时由
        * `dismissAllPendingPrompts` 强制 settle,避免放宽档位后调用仍卡在失效的卡上。
