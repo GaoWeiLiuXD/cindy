@@ -2054,7 +2054,6 @@ export function createTurnRunner(
 
   function handleEventFor(localSessionId: string, userId: string) {
     return (event: AgentEvent) => {
-      if (event.runtimeRecovery) return; // Independent channel notice, never next-turn prose.
       const state = sessionStates.get(localSessionId);
       if (!state) return;
       const turn = state.queue[0];

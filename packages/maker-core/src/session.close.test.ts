@@ -75,14 +75,18 @@ describe('Session close lifecycle', () => {
     session.onRuntimeRecovery((event) => recovered.push(event));
     const close = vi.mocked(handle.close);
     close.mockRejectedValueOnce(new Error('process exit unconfirmed'));
-    const recovery: AgentEvent = { type: 'text', source: 'pi', data: { text: 'partial: restart-cindy-to-refresh-packages' } };
+    const recovery: AgentEvent = { type: 'text', source: 'pi', data: {
+      text: 'partial: restart-cindy-to-refresh-packages', isFinal: true,
+    } };
     await session.send('work');
     await session.closeAfterCurrentTurn({ failureEvent: () => recovery });
     idle();
+    queue.push({ type: 'text', source: 'pi', data: { text: 'saved result', isFinal: true } });
     queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'saved result' } });
     await vi.waitFor(() => expect(session.getStatus()).toBe('error'));
-    expect(seen.map(event => event.type)).toEqual(['done']);
-    expect(seen[0]?.data).toMatchObject({ status: 'completed', result: 'saved result' });
+    expect(seen.map(event => event.type)).toEqual(['text', 'done']);
+    expect(seen[0]?.data).toEqual({ text: 'saved result', isFinal: true });
+    expect(seen[1]?.data).toMatchObject({ status: 'completed', result: 'saved result' });
     expect(recovered).toEqual([{ ...recovery, runtimeRecovery: true,
       sessionInstanceId: session.instanceId, sessionTurnGeneration: session.getTurnGeneration() }]);
     expect(handle.send).toHaveBeenCalledOnce();

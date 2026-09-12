@@ -1,12 +1,5 @@
 # Pi 长工具生命周期：#3916 受控取证
 
-本报告保留独立 transport 工作（初始提交 `d8bd012f1`、PR #4182 及后续审查）的
-取证与验证范围。#4182 已合入主干；统一 Pi 生命周期 P0 PR #4186 同步保留其
-退出确认加固，组合验证以 #4186 正文为准。P0 早期提交修复过下文记录的
-`maker.shutdown.test.ts` 泛型 resolver 类型错误；同步 #4178 后采用主干的
-`Promise<void>` 夹具，当前该文件相对主干无差异，不把基线类型错误归因于 transport。
-下文的「本单」及独立验证结果指该 transport 工作，不代表组合 P0 PR 的全部改动。
-
 ## 结论与范围
 
 已在代码级复现并修复一条确定的退出通知缺陷：**Pi 已退出，但工具后代继承
@@ -44,11 +37,6 @@ fixture 不调用模型、不运行真实打包，不读取个人凭证；生成
 
 失败路径：fixture 确认 prompt、发 `agent_start` 和 `tool_execution_start`，随后
 启动继承输出管道的轻量后代并 `exit(23)`。测试直接检查 Pi PID 已不存在、后代 PID 仍存活。
-组合 PR 首轮 Windows CI 在后代存活断言处出现 `ESRCH`。fixture 因此显式设置
-`detached: true`，并等后代通过 IPC 报告就绪后才让 Pi 退出，仍保留 stdout/stderr
-继承、后代存活和无新 prompt 的断言。[Node 文档](https://nodejs.org/api/child_process.html#optionsdetached)
-说明 Windows 下 detached 可让子进程在父进程退出后继续运行；这项调整仅建立受控复现
-的前提，不改变生产进程配置，也不证明原 Windows 打包现场的根因。
 
 修复前，最初 4 个用例中 3 个对照通过，继承管道用例在 2 秒内始终没有 terminal error，
 断言失败。修复后同一路径约 0.3 秒收到包含退出码 23 的 terminal error，Session 自动
@@ -95,14 +83,10 @@ lizi-mcps、maker-core related 与 orca-workflow 的无模型单测均通过。�
 单 worker 复查 27/27 通过，第二轮完整门禁也未再出现。未放宽断言或改插件基座，
 该偶发失败的根因尚未确定。
 
-独立 transport 取证时，额外 `tsc --noEmit` 发现 `maker.shutdown.test.ts:91` 的
-`TS2322`：泛型 resolve 的可选参数签名与 Promise resolver 不匹配。以 CompilerHost
-从当时 Git HEAD 读取所有已改文件、排除新增 fixture 后，原基线复现同一个错误；
-独立提交 `d8bd012f1` 未修改该文件。组合 P0 PR #4186 早期修复过 resolver 签名，
-后续同步 #4178 时采用主干的 `Promise<void>` 夹具，当前该文件不再属于 PR diff。早期修复
-通过 `pnpm --filter @cindy/maker-core run build`（`tsc --noEmit`）。该包没有
-`typecheck` script，规定的 `run --if-present typecheck` 跳过；类型通过的证据来自
-上述实际执行的 build，不来自跳过的命令。
+额外 `tsc --noEmit` 发现 `maker.shutdown.test.ts:91` 的 `TS2322`：泛型 resolve 的
+可选参数签名与 Promise resolver 不匹配。以 CompilerHost 从 Git HEAD 读取所有已改文件、
+排除新增 fixture 后，原基线复现同一个错误；本单没有改该文件。包当前没有 `typecheck`
+script，规定的 `run --if-present typecheck` 跳过，不把跳过称作类型检查通过。
 
 缓存/模型指标：未修改 system 前缀、工具 schema、模型路由或 usage 计算。
 正常 fixture 的 10 input / 3 output 在 done 中原样保留；热路径只增加一个 closed
@@ -143,7 +127,3 @@ Windows 后续运行 b1c442b4e 已通过后代存活等行为断言，但 afterE
 再删除目录，文件系统残留锁采用有界异步重试，避免阻塞事件循环；不吞掉清理失败。
 同轮 shard 1 的 Windows mutex 探测与飞书 Unicode 校验超时未改动相关源码，
 前一提交的同 shard 曾通过，尚无基线复现证据；由新 CI 复查，不认定已确定为偶发。
-
-组合 P0 同步 #4182 后，保留自己已有的后代 IPC 就绪握手及无新 prompt 断言，
-并采用主干更严格的 ESRCH 退出确认与有界异步目录清理；后代 detached 的测试配置
-不影响生产 Pi spawn 配置。关闭失败的恢复回执由 P0 的 Session 生命周期处理。

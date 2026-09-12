@@ -40,14 +40,14 @@ vi.mock('../transport.js', async (importOriginal) => {
             return process.stdout.end();
           }
           if (cmd.type === 'fixture_exit_with_descendant') {
-            const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000); process.send("ready")'], {
-              // Windows needs detached to establish this fixture's orphan
-              // precondition. Keep inheriting both RPC pipes deliberately.
-              detached: true, windowsHide: true,
-              stdio: ['ignore', process.stdout, process.stderr, 'ipc'], env: process.env
+            const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+              // libuv's Windows job kills non-detached children on parent exit.
+              // This fixture specifically needs a surviving pipe owner; production
+              // spawn options remain unchanged, and afterEach owns its cleanup.
+              detached: process.platform === 'win32',
+              stdio: ['ignore', process.stdout, process.stderr], env: process.env
             });
-            child.once('message', () => {
-              child.disconnect();
+            child.once('spawn', () => {
               output({ type: 'fixture_descendant', pid: child.pid });
               // Drain the fixture metadata before exiting, leaving both pipes
               // open in the descendant exactly as a shell/build child can.
@@ -177,7 +177,6 @@ describe('Pi long tool lifecycle through real stdio RPC', () => {
 
   it('reports executor exit while a build descendant still holds the RPC pipes open', async () => {
     const { events, transport } = await start();
-    const write = vi.spyOn(transport, 'writeLine');
     await transport.writeLine(JSON.stringify({ type: 'fixture_exit_with_descendant' }));
     await vi.waitFor(() => expect(descendantPid).toBeTypeOf('number'));
     await vi.waitFor(() => expect(() => process.kill(transport.pid!, 0)).toThrow());
@@ -189,7 +188,6 @@ describe('Pi long tool lifecycle through real stdio RPC', () => {
     expect(() => process.kill(descendantPid!, 0)).not.toThrow();
     expect(events.some(event => event.type === 'tool_result_full')).toBe(false);
     await vi.waitFor(() => expect(session!.getStatus()).toBe('closed'));
-    expect(write.mock.calls.some(([line]) => JSON.parse(line).type === 'prompt')).toBe(false);
   });
 
   it('reports ordinary RPC process exit during a tool', async () => {

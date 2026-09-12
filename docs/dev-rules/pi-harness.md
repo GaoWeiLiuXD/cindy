@@ -254,6 +254,8 @@ Pi CLI 管理入口、内核自更新与旧工具兼容的执行边界见
   挂起的 abort 不得阻止已结算工作的待退役 runtime 关闭，迟到返回不得复活旧实例。
   延迟退役的实际关闭若失败，应在该实例的监听器清理前补发 `partial` 与
   `restart-cindy-to-refresh-packages` 恢复回执；不改判此前成功结果，不自动重放工作。
+  恢复回执只走 Session 的 `onRuntimeRecovery`，不得进入产品 `onEvent` 正文流；
+  Desktop 与 IM 显式订阅，Goal／Learn／Orca 等消费者不逐个追加过滤。
   IM 已在 done 退订时，恢复回执须走独立渠道通知，不能把 post-terminal text fan-out
   当作已交付。通知保留准确实例和包退役发起 generation，渠道发送与送达确认分开；
   不借通知重开已完成 turn。官方 Telegram 复用协商后的 msg.op；旧 hook、Slack／X

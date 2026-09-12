@@ -687,19 +687,11 @@ describe('接管陈旧锁', () => {
       return result;
     }) as typeof fsp.rename);
     try {
-      // Count is the real bound: three successful takeovers must stop the loop.
-      // The wall-clock check only proves we did not wait out waitMs. Each
-      // takeover publishes a reclaim gate (fsync + hard-link); Windows CI has
-      // been observed at ~1.6s for three takeovers, so a 1s ceiling races the
-      // runner rather than the lock policy. Warm the current-process
-      // identity first — production does not charge that probe to waitMs.
-      await __testing.getProcessIdentity(process.pid);
-      const waitMs = 8_000;
       const started = performance.now();
       await expect(
-        withCrossProcessLock(lock, { label: 'churn', waitMs }, async (s) => s),
+        withCrossProcessLock(lock, { label: 'churn', waitMs: 2_000 }, async (s) => s),
       ).resolves.toEqual({ held: false, reason: 'busy' });
-      expect(performance.now() - started).toBeLessThan(4_000);
+      expect(performance.now() - started).toBeLessThan(1_000);
       expect(takeovers).toBe(3);
     } finally {
       spy.mockRestore();

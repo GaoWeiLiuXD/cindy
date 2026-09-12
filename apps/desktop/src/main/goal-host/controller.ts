@@ -1765,9 +1765,6 @@ export class GoalController {
 
   private onEvent(sessionId: string, event: AgentEvent): void {
     if (this.disposed) return;
-    // Host-only recovery notice after deferred Pi retirement. Independent of the
-    // product turn: never treat it as Goal assistant text / verdict input.
-    if (event.runtimeRecovery) return;
     let turn = this.turns.get(sessionId);
     if (!turn) {
       turn = freshTurn();
