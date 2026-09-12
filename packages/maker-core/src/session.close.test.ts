@@ -163,12 +163,29 @@ describe('Session close lifecycle', () => {
     expect(await session.closeAfterCurrentTurn()).toBe('deferred');
     expect(await session.closeIfIdle()).toBe(false);
     expect(handle.close).not.toHaveBeenCalled();
-    await session.send('continue'); // Host owns the existing bounded budget.
+    await session.sendHostTurnContinuation('continue'); // Host owns the existing bounded budget.
     idle();
     queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'delivered' } });
     await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
     expect(handle.send).toHaveBeenCalledTimes(2);
     expect(seen.at(-1)?.data).toMatchObject({ result: 'delivered' });
+  });
+
+  it('rejects a non-Host send while a retiring silent-stop claim is live', async () => {
+    const { session, handle, queue, seen, idle } = liveTurn();
+    await session.send('work');
+    await session.closeAfterCurrentTurn();
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    await expect(session.send('user follow-up')).rejects.toThrow(/closing/);
+    expect(handle.send).toHaveBeenCalledOnce();
+    expect(handle.close).not.toHaveBeenCalled();
+    await session.sendHostTurnContinuation('continue');
+    idle();
+    queue.push({ type: 'done', source: 'pi', data: { status: 'completed', result: 'delivered' } });
+    await vi.waitFor(() => expect(session.getStatus()).toBe('closed'));
+    expect(handle.send).toHaveBeenCalledTimes(2);
   });
 
   it('does not retire at a provider boundary with an outstanding continuation claim', async () => {
@@ -247,7 +264,7 @@ describe('Session close lifecycle', () => {
     idle();
     queue.push({ type: 'done', source: 'pi', data: { status: 'completed', silentStop: true } });
     await vi.waitFor(() => expect(seen).toHaveLength(1));
-    await session.send('continue');
+    await session.sendHostTurnContinuation('continue');
     session.settleHostTurnContinuation(generation);
     expect(handle.close).not.toHaveBeenCalled();
     idle();

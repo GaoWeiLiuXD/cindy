@@ -2101,6 +2101,38 @@ describe('GoalController', () => {
     expect((await h.storage.get('s1'))?.tokensUsed).toBe(777);
   });
 
+  it('does not let a post-terminal runtimeRecovery receipt replace Goal verdict text', async () => {
+    await startGoal(h);
+    const active = await h.storage.get('s1');
+    let releaseGet!: (state: GoalState | null) => void;
+    const blockedGet = new Promise<GoalState | null>((resolve) => {
+      releaseGet = resolve;
+    });
+    vi.spyOn(h.storage, 'get').mockReturnValueOnce(blockedGet);
+
+    h.session.emit({ type: 'tool_use', data: { name: 'Bash' } } as never);
+    h.session.emit({
+      type: 'text',
+      data: { text: '```json\n{"goal_status":"complete","reason":"green"}\n```', isFinal: true },
+    } as never);
+    h.session.emit({ type: 'done', data: {}, turnOrigin: { kind: 'goal' } } as never);
+    h.session.emit({
+      type: 'text',
+      source: 'pi',
+      runtimeRecovery: true,
+      data: {
+        isFinal: true,
+        text: '[Cindy Pi package runtime convergence receipt]\n```json\n{"runtimeConvergence":"partial","recoveryAction":"restart-cindy-to-refresh-packages"}\n```',
+      },
+    } as never);
+
+    releaseGet(active);
+    await vi.waitFor(() => expect(h.completions).toHaveLength(1));
+    expect(await h.storage.get('s1')).toBeNull();
+    expect(h.completions[0]?.summary.reason).toBe('green');
+    expect(h.session.sends).toHaveLength(1);
+  });
+
   it('on complete: persists a completion record, clears the row, emits null, no continuation', async () => {
     await startGoal(h);
     h.session.emitGoalTurn({ toolUse: true, verdictJson: '```json\n{"goal_status":"complete","reason":"green"}\n```', tokens: 42 });

@@ -349,7 +349,7 @@ describe('shared-process session turn lease', () => {
     finish();
     await vi.waitFor(() => expect(seen).toHaveLength(1));
     expect(handle.close).not.toHaveBeenCalled();
-    if (successor) await runtime.send('already authorized continuation');
+    if (successor) await runtime.sendHostTurnContinuation('already authorized continuation');
     fail = true;
     await expect(tracker.markTurnEndedAndCheckIdle('source-1', 'turn',
       () => runtime.settleHostTurnContinuation(generation))).rejects.toThrow(`injected lease ${stage} failure`);

@@ -143,7 +143,7 @@ describe('maker:event hot path ordering', () => {
     expectOrder(
       continuation,
       'productTurnWallClockTracker.preserveForContinuation(session.id);',
-      'const sendResult = await session.send(',
+      'const sendResult = await session.sendHostTurnContinuation(',
     );
   });
 

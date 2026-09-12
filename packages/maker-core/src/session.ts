@@ -699,6 +699,26 @@ export class Session {
   }
 
   async send(message: UserMessage | string, opts?: SessionSendOptions): Promise<SessionSendResult> {
+    return this.dispatchSend(message, opts, false);
+  }
+
+  /**
+   * Host-owned silent-stop continuation. This is the only send admitted while a
+   * retiring runtime has claimed the current generation; ordinary `send()` stays
+   * rejected so queued/user work cannot run on the snapshot being retired.
+   */
+  async sendHostTurnContinuation(
+    message: UserMessage | string,
+    opts?: SessionSendOptions,
+  ): Promise<SessionSendResult> {
+    return this.dispatchSend(message, opts, true);
+  }
+
+  private async dispatchSend(
+    message: UserMessage | string,
+    opts: SessionSendOptions | undefined,
+    allowRetirementContinuation: boolean,
+  ): Promise<SessionSendResult> {
     const {
       afterTurnReserved,
       beforeProviderStart,
@@ -741,8 +761,12 @@ export class Session {
       : message;
     this.logger.debug('send', summarizeUserMessage(msg));
     this.ensureActive();
+    // A silent-stop claim keeps this generation alive for Host continuation only.
+    // Any other sender (user, queue, Goal, IM) must not start new work on a
+    // runtime that is already marked to retire after the current product turn.
     if (this.retirementRequested
-      && this.retirementContinuationGeneration !== this.turnGeneration) {
+      && (this.retirementContinuationGeneration !== this.turnGeneration
+        || !allowRetirementContinuation)) {
       throw new Error(`Session ${this.id} is closing`);
     }
     if (this.terminalErrorDrainGeneration !== null) {
@@ -2893,7 +2917,15 @@ export class Session {
       });
       return;
     }
-    if (!this.isTurnRunning() && !this.hasUnsettledTurn()) return;
+    if (!this.isTurnRunning() && !this.hasUnsettledTurn()) {
+      // Watchdog may already have synthesized the missing terminal, which clears
+      // turnControlState. If abort() never returns, status stays aborting and a
+      // naive idle check would no-op — bypassing bounded recovery. Keep that
+      // in-flight abort as evidence this diagnosed generation must close.
+      if (this.status !== 'aborting' || this.abortRecoveryScheduledFor !== stalledGeneration) {
+        return;
+      }
+    }
     this.logger.error(
       'turn still running after abort — closing session so the next send can rebuild it',
       { trigger: ctx.trigger, graceMs: ctx.graceMs },
