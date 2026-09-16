@@ -619,9 +619,9 @@ export function createTurnRunner(
         maker.getSession(event.sessionId) === state.makerSession
       ) return;
       // Runtime refresh preserves the task and its queued input, including refreshes
-      // applied at turn end outside the send lock. The next dispatch rebinds under it.
+      // applied repeatedly before dispatch rebinds the cached runtime under the send lock.
       if (
-        state?.makerSession === event.session && event.reason === 'runtime-refresh' &&
+        state && event.reason === 'runtime-refresh' &&
         deps.acquirePendingAgentSwitch
       ) return;
       const suppression = agentSwitchCloseSuppressed.get(event.sessionId);

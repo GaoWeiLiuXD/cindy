@@ -1643,9 +1643,16 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     }
   });
 
-  it.each(['runtime-refresh', 'requested', 'unexpected'] as const)(
-    'handles a %s close outside switch acquisition without losing the close semantics',
-    async (reason) => {
+  it.each([
+    { reason: 'runtime-refresh', precedingRefresh: false },
+    { reason: 'requested', precedingRefresh: false },
+    { reason: 'unexpected', precedingRefresh: false },
+    { reason: 'runtime-refresh', precedingRefresh: true },
+    { reason: 'requested', precedingRefresh: true },
+    { reason: 'unexpected', precedingRefresh: true },
+  ] as const)(
+    'handles $reason outside switch acquisition with precedingRefresh=$precedingRefresh',
+    async ({ reason, precedingRefresh }) => {
       vi.useFakeTimers();
       const oldSession = createSessionHarness(async () => ({ accepted: true }));
       const replacement = createSessionHarness(async () => ({ accepted: true }));
@@ -1678,10 +1685,20 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
         }
         expect(acquirePendingAgentSwitch).not.toHaveBeenCalled();
         oldSession.isTurnRunning.mockReturnValue(false);
+        const intermediate = createSessionHarness(async () => ({ accepted: true }));
+        if (precedingRefresh) {
+          live = undefined;
+          emitMakerEvent({
+            type: 'session:closed', sessionId: 'feishu-session',
+            session: oldSession.session, reason: 'runtime-refresh',
+          });
+          live = intermediate.session;
+          expect(localRunner.getMakerSessionById('feishu-session')).toBe(intermediate.session);
+        }
         live = undefined;
         emitMakerEvent({
           type: 'session:closed', sessionId: 'feishu-session',
-          session: oldSession.session, reason,
+          session: precedingRefresh ? intermediate.session : oldSession.session, reason,
         });
         // Model-card effort/permission actions must not target the retired runtime.
         expect(localRunner.getMakerSessionById('feishu-session')).toBeNull();
@@ -1691,6 +1708,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
         );
         await vi.advanceTimersByTimeAsync(600);
         expect(oldSession.send).not.toHaveBeenCalled();
+        expect(intermediate.send).not.toHaveBeenCalled();
         if (reason !== 'runtime-refresh') {
           expect(replacement.send).not.toHaveBeenCalled();
           expect(localRunner.getMakerSessionById('feishu-session')).toBeNull();
