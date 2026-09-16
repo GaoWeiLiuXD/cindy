@@ -1744,6 +1744,72 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     },
   );
 
+  it.each([
+    { operation: 'stop', queued: true },
+    { operation: 'stop', queued: false },
+    { operation: 'dispose', queued: true },
+    { operation: 'dispose', queued: false },
+  ] as const)(
+    '$operation targets the current runtime after refresh with queued=$queued',
+    async ({ operation, queued }) => {
+      vi.useFakeTimers();
+      const oldSession = createSessionHarness(async () => ({ accepted: true }));
+      const replacement = createSessionHarness(async () => ({ accepted: true }));
+      oldSession.isTurnRunning.mockReturnValue(queued);
+      replacement.isTurnRunning.mockReturnValue(true);
+      let live: Session | undefined = oldSession.session;
+      mocks.getMaker.mockReturnValue({
+        createSession: vi.fn(async () => oldSession.session),
+        getSession: vi.fn(() => live),
+        on: vi.fn((listener: (event: MakerEvent) => void) => {
+          makerEventListeners.push(listener);
+          return () => {
+            makerEventListeners = makerEventListeners.filter((candidate) => candidate !== listener);
+          };
+        }),
+      });
+      const localRunner = createTurnRunner(fakeAdapter, fakeRepo, fakeCards, {
+        acquirePendingAgentSwitch: vi.fn(async () => vi.fn()),
+      });
+      try {
+        await localRunner.runAgentTurn({
+          botContextId: 'cli_test_bot', userId: 'ou_user',
+          userMessageId: 'queued-control', text: 'queued input', attachments: [],
+        });
+        if (!queued) {
+          oldSession.emit({ type: 'done', data: {} });
+          await vi.advanceTimersByTimeAsync(600);
+          oldSession.send.mockClear();
+        }
+        oldSession.isTurnRunning.mockReturnValue(false);
+        live = undefined;
+        emitMakerEvent({
+          type: 'session:closed', sessionId: 'feishu-session',
+          session: oldSession.session, reason: 'runtime-refresh',
+        });
+        live = replacement.session;
+        if (operation === 'stop') {
+          expect(await localRunner.stopActiveTurn({
+            botContextId: 'cli_test_bot', userId: 'ou_user',
+          })).toEqual({ stopped: true, droppedQueued: queued ? 1 : 0 });
+          expect(replacement.abort).toHaveBeenCalledOnce();
+        } else {
+          await localRunner.disposeOneSession('feishu-session');
+          expect(replacement.session.close).toHaveBeenCalledOnce();
+          expect(localRunner.getMakerSessionById('feishu-session')).toBeNull();
+        }
+        expect(oldSession.abort).not.toHaveBeenCalled();
+        expect(oldSession.session.close).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(600);
+        expect(oldSession.send).not.toHaveBeenCalled();
+        expect(replacement.send).not.toHaveBeenCalled();
+      } finally {
+        await localRunner.disposeAllSessions();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('does not suppress a concurrent close of the replacement session', async () => {
     const oldSession = createSessionHarness(async () => ({ accepted: true }));
     const switchedSession = createSessionHarness(async () => ({ accepted: true }));

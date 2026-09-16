@@ -3589,6 +3589,7 @@ export function createTurnRunner(
       : await resolveExistingRouteTarget(botContextId, userId, scopeKey);
     const state = target ? sessionStates.get(target.row.id) : undefined;
     if (!state) return { stopped: false, droppedQueued: 0 };
+    const current = getMaker().getSession(state.makerSession.id);
     if (args.notificationSessionId) {
       const matches = (turn: TurnState) => turn.userId === userId && turn.scopeKey === scopeKey;
       const removed = state.sendQueue.filter((item) => matches(item.turn));
@@ -3601,11 +3602,11 @@ export function createTurnRunner(
       if (!active || !matches(active)) return { stopped: removed.length > 0, droppedQueued: removed.length };
       noteSilentStopSessionReset(state.makerSession.id);
       active.terminalKind = 'aborted';
-      await state.makerSession.abort();
+      await current?.abort();
       return { stopped: true, droppedQueued: removed.length };
     }
     const running =
-      state.queue.length > 0 || state.sendQueue.length > 0 || state.makerSession.isTurnRunning();
+      state.queue.length > 0 || state.sendQueue.length > 0 || current?.isTurnRunning();
     if (!running) return { stopped: false, droppedQueued: 0 };
     const droppedQueued = state.sendQueue.length;
     // 先清排队再 abort — abort 触发的 done/error 会走 maybeDispatchNextQueued,
@@ -3617,7 +3618,7 @@ export function createTurnRunner(
     // 重置后守卫判 superseded → settle('skip') → 挂起 turn 经现有订阅按 done 收口。
     noteSilentStopSessionReset(state.makerSession.id);
     if (state.queue[0]) state.queue[0].terminalKind = 'aborted';
-    await state.makerSession.abort();
+    await current?.abort();
     log.info(
       `!stop aborted turn for session=...${state.makerSession.id.slice(-8)} droppedQueued=${droppedQueued}`,
     );
@@ -3636,7 +3637,7 @@ export function createTurnRunner(
     cleanupSessionState(state);
     settleDetachDrain(state, 'cancelled');
     try {
-      await state.makerSession.close();
+      await getMaker().getSession(sessionId)?.close();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`disposeOneSession close failed (non-fatal): ${msg}`);
