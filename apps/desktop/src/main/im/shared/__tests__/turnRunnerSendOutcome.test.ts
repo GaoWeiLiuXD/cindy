@@ -1210,7 +1210,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     }
   });
 
-  it('applies a deferred switch and sends the first queued IM message through the refreshed session', async () => {
+  it.each(['agent-switch', 'runtime-refresh'] as const)('preserves queued IM input across a %s close during send', async (reason) => {
     const order: string[] = [];
     const turnPermissionPolicy: TurnPermissionPolicy = {
       origin: { kind: 'im', channel: 'wechat' },
@@ -1257,7 +1257,7 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
         type: 'session:closed',
         sessionId: 'feishu-session',
         session: oldSession.session,
-        reason: 'agent-switch',
+        reason,
       });
       return releaseAgentSwitchLock;
     });
@@ -1641,6 +1641,84 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       localRunner.disposeAllSessions();
     }
   });
+
+  it.each(['runtime-refresh', 'requested', 'unexpected'] as const)(
+    'handles a %s close outside switch acquisition without losing the close semantics',
+    async (reason) => {
+      vi.useFakeTimers();
+      const oldSession = createSessionHarness(async () => ({ accepted: true }));
+      const replacement = createSessionHarness(async () => ({ accepted: true }));
+      oldSession.isTurnRunning.mockReturnValue(true);
+      let live: Session | undefined = oldSession.session;
+      const maker = {
+        createSession: vi.fn(async () => oldSession.session),
+        getSession: vi.fn(() => live),
+        on: vi.fn((listener: (event: MakerEvent) => void) => {
+          makerEventListeners.push(listener);
+          return () => {
+            makerEventListeners = makerEventListeners.filter((candidate) => candidate !== listener);
+          };
+        }),
+      };
+      mocks.getMaker.mockReturnValue(maker);
+      const acquirePendingAgentSwitch = vi.fn(async () => vi.fn());
+      const localRunner = createTurnRunner(fakeAdapter, fakeRepo, fakeCards, {
+        acquirePendingAgentSwitch,
+      });
+      const firstComplete = vi.fn();
+      const secondComplete = vi.fn();
+      try {
+        for (const [index, onTurnComplete] of [firstComplete, secondComplete].entries()) {
+          await localRunner.runAgentTurn({
+            botContextId: 'cli_test_bot', userId: 'ou_user',
+            userMessageId: `queued-${index}`, text: `message-${index}`, attachments: [],
+            onTurnComplete,
+          });
+        }
+        expect(acquirePendingAgentSwitch).not.toHaveBeenCalled();
+        oldSession.isTurnRunning.mockReturnValue(false);
+        live = undefined;
+        emitMakerEvent({
+          type: 'session:closed', sessionId: 'feishu-session',
+          session: oldSession.session, reason,
+        });
+        live = replacement.session;
+        await vi.advanceTimersByTimeAsync(600);
+        expect(oldSession.send).not.toHaveBeenCalled();
+        if (reason !== 'runtime-refresh') {
+          expect(replacement.send).not.toHaveBeenCalled();
+          expect(localRunner.getMakerSessionById('feishu-session')).toBeNull();
+          expect(mocks.persistUserMessage).not.toHaveBeenCalled();
+          expect(mocks.feishuIm.removeMessageReaction).toHaveBeenCalledTimes(2);
+          return;
+        }
+        expect(replacement.send).toHaveBeenCalledTimes(1);
+        expect(firstComplete).not.toHaveBeenCalled();
+        expect(secondComplete).not.toHaveBeenCalled();
+        expect(localRunner.getMakerSessionById('feishu-session')).toBe(replacement.session);
+        // An old instance's late close cannot cancel the replacement or queued input.
+        emitMakerEvent({
+          type: 'session:closed', sessionId: 'feishu-session',
+          session: oldSession.session, reason: 'unexpected',
+        });
+        replacement.emit({ type: 'done', data: {} });
+        await vi.advanceTimersByTimeAsync(600);
+        expect(replacement.send).toHaveBeenCalledTimes(2);
+        expect(firstComplete).toHaveBeenCalledOnce();
+        expect(secondComplete).not.toHaveBeenCalled();
+        expect(replacement.send.mock.calls.map(([message]) => message)).toEqual([
+          expect.objectContaining({ content: 'message-0' }),
+          expect.objectContaining({ content: 'message-1' }),
+        ]);
+        replacement.emit({ type: 'done', data: {} });
+        await vi.advanceTimersByTimeAsync(600);
+        expect(secondComplete).toHaveBeenCalledOnce();
+      } finally {
+        localRunner.disposeAllSessions();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('does not suppress a concurrent close of the replacement session', async () => {
     const oldSession = createSessionHarness(async () => ({ accepted: true }));

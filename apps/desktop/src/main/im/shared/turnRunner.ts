@@ -612,6 +612,18 @@ export function createTurnRunner(
     subscribedMaker = maker;
     unsubscribeMakerEvents = maker.on((event) => {
       if (event.type !== 'session:closed') return;
+      const state = sessionStates.get(event.sessionId);
+      // A retired instance must not clear a replacement already wired to this task.
+      if (
+        state && state.makerSession !== event.session &&
+        maker.getSession(event.sessionId) === state.makerSession
+      ) return;
+      // Runtime refresh preserves the task and its queued input, including refreshes
+      // applied at turn end outside the send lock. The next dispatch rebinds under it.
+      if (
+        state?.makerSession === event.session && event.reason === 'runtime-refresh' &&
+        deps.acquirePendingAgentSwitch
+      ) return;
       const suppression = agentSwitchCloseSuppressed.get(event.sessionId);
       if (suppression?.expectedSession === event.session && event.reason === 'agent-switch') return;
       forgetClosedSession(event.sessionId, 'maker session closed');
