@@ -1137,6 +1137,17 @@ export function createTurnRunner(
       // resolveEffectiveTurnPolicy。不挂时走与 DM 轮次相同的无策略路径。
       const effectiveTurnPolicy = await resolveEffectiveTurnPolicy(item);
 
+      // Stop can arrive while this turn waits for the switch/send lock, before
+      // Maker owns it. Its abort cannot cancel that pre-dispatch input for us.
+      if (item.turn.terminalKind === 'aborted') {
+        const index = state.queue.indexOf(item.turn);
+        if (index >= 0) state.queue.splice(index, 1);
+        await completeTurnCallbackAfterAck(item.turn);
+        settleTurnTerminal(item.turn);
+        if (!finishDeferredDetachIfIdle(state)) armDispatchRetry(state, userId);
+        return { kind: 'rejected', reason: 'aborted' };
+      }
+
       const sendResult = await state.makerSession.send(outgoingMessage as typeof item.userMessage, {
         planMode: false,
         // The channel adapter and routing state live in Main. A symbol-keyed

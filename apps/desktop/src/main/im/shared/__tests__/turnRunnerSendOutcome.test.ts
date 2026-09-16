@@ -1810,6 +1810,70 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     },
   );
 
+  it('cancels stopped input waiting for the send lock during a runtime refresh', async () => {
+    const oldSession = createSessionHarness(async () => ({ accepted: true }));
+    const replacement = createSessionHarness(async () => ({ accepted: true }));
+    let live: Session | undefined = oldSession.session;
+    const lockEntered = deferred<void>();
+    const releaseRefresh = deferred<void>();
+    const releaseLock = vi.fn();
+    mocks.getMaker.mockReturnValue({
+      createSession: vi.fn(async () => oldSession.session),
+      getSession: vi.fn(() => live),
+      on: vi.fn((listener: (event: MakerEvent) => void) => {
+        makerEventListeners.push(listener);
+        return () => {
+          makerEventListeners = makerEventListeners.filter((candidate) => candidate !== listener);
+        };
+      }),
+    });
+    const acquirePendingAgentSwitch = vi.fn(async () => releaseLock);
+    acquirePendingAgentSwitch.mockImplementationOnce(async () => {
+      live = undefined;
+      emitMakerEvent({
+        type: 'session:closed', sessionId: 'feishu-session',
+        session: oldSession.session, reason: 'runtime-refresh',
+      });
+      lockEntered.resolve(undefined);
+      await releaseRefresh.promise;
+      return releaseLock;
+    });
+    const localRunner = createTurnRunner(fakeAdapter, fakeRepo, fakeCards, {
+      acquirePendingAgentSwitch,
+    });
+    const complete = vi.fn();
+    try {
+      const first = localRunner.runAgentTurn({
+        botContextId: 'cli_test_bot', userId: 'ou_user',
+        userMessageId: 'stop-before-send', text: 'cancel me', attachments: [],
+        onTurnComplete: complete,
+      });
+      await lockEntered.promise;
+      expect(await localRunner.stopActiveTurn({
+        botContextId: 'cli_test_bot', userId: 'ou_user',
+      })).toEqual({ stopped: true, droppedQueued: 0 });
+      live = replacement.session;
+      releaseRefresh.resolve(undefined);
+      await first;
+      expect(oldSession.send).not.toHaveBeenCalled();
+      expect(replacement.send).not.toHaveBeenCalled();
+      expect(mocks.persistUserMessage).not.toHaveBeenCalled();
+      expect(complete).toHaveBeenCalledOnce();
+      expect(releaseLock).toHaveBeenCalledOnce();
+      await localRunner.runAgentTurn({
+        botContextId: 'cli_test_bot', userId: 'ou_user',
+        userMessageId: 'after-stop', text: 'fresh input', attachments: [],
+      });
+      expect(replacement.send).toHaveBeenCalledOnce();
+      expect(replacement.send).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'fresh input' }), expect.anything(),
+      );
+    } finally {
+      releaseRefresh.resolve(undefined);
+      await localRunner.disposeAllSessions();
+    }
+  });
+
   it('does not suppress a concurrent close of the replacement session', async () => {
     const oldSession = createSessionHarness(async () => ({ accepted: true }));
     const switchedSession = createSessionHarness(async () => ({ accepted: true }));
