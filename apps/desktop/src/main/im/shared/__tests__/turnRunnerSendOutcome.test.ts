@@ -341,6 +341,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 
 function createMakerHarness(session: Session) {
   return {
+    getSession: vi.fn(() => session),
     createSession: vi.fn(async () => session),
     on: vi.fn((listener: (event: MakerEvent) => void) => {
       makerEventListeners.push(listener);
@@ -1682,7 +1683,12 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
           type: 'session:closed', sessionId: 'feishu-session',
           session: oldSession.session, reason,
         });
+        // Model-card effort/permission actions must not target the retired runtime.
+        expect(localRunner.getMakerSessionById('feishu-session')).toBeNull();
         live = replacement.session;
+        expect(localRunner.getMakerSessionById('feishu-session')).toBe(
+          reason === 'runtime-refresh' ? replacement.session : null,
+        );
         await vi.advanceTimersByTimeAsync(600);
         expect(oldSession.send).not.toHaveBeenCalled();
         if (reason !== 'runtime-refresh') {
