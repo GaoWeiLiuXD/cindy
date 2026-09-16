@@ -20,9 +20,19 @@ describe('Ghost account-boundary teardown ordering', () => {
     const end = bootstrap.indexOf('\n}\n', start);
     const body = bootstrap.slice(start, end);
 
-    const interrupt = body.indexOf('interruptGhostCallsForAccountBoundary));');
-    const wait = body.indexOf('waitForGhostMutations));');
-    const suspend = body.indexOf('suspendAllGhosts);');
+    // Match the calls and arguments, allowing formatter-added newlines/trailing commas.
+    const interrupt = body.search(
+      /withAuthBoundaryTimeout\(\s*'interrupt Ghost calls',\s*interruptGhostCallsForAccountBoundary\s*,?\s*\)/,
+    );
+    const wait = body.search(
+      /withAuthBoundaryTimeout\(\s*'wait for Ghost mutations',\s*waitForGhostMutations\s*,?\s*\)/,
+    );
+    const suspend = body.search(/await run\(\s*'suspendAllGhosts',\s*suspendAllGhosts\s*,?\s*\)/);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(wait).toBeGreaterThan(-1);
+    expect(suspend).toBeGreaterThan(-1);
 
     expect(interrupt).toBeGreaterThan(-1);
     expect(interrupt).toBeLessThan(wait);

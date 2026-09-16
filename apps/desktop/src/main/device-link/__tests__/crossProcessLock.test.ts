@@ -670,9 +670,15 @@ describe('接管陈旧锁', () => {
     expect(fs.existsSync(lock)).toBe(true);
   });
 
-  it('bounds repeated successful stale takeovers by time and count', async () => {
+  it.each([
+    { limit: 'count', elapsedPerTakeover: 100, expectedTakeovers: 3 },
+    { limit: 'deadline', elapsedPerTakeover: 1_000, expectedTakeovers: 2 },
+  ])('bounds repeated successful stale takeovers by $limit', async ({ elapsedPerTakeover, expectedTakeovers }) => {
     const lock = path.join(dir, 'lock');
     await writeStaleStrictLock(lock);
+    // Control the production deadline clock; filesystem latency is not the contract.
+    let now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const originalRename = fsp.rename;
     let takeovers = 0;
     const spy = vi.spyOn(fsp, 'rename').mockImplementation((async (
@@ -682,19 +688,19 @@ describe('接管陈旧锁', () => {
       const result = await (originalRename as (...args: unknown[]) => Promise<unknown>)(from, to);
       if (from === lock && typeof to === 'string' && to.startsWith(`${lock}.reclaim-`)) {
         takeovers += 1;
+        now += elapsedPerTakeover;
         await writeStaleStrictLock(lock);
       }
       return result;
     }) as typeof fsp.rename);
     try {
-      const started = performance.now();
       await expect(
         withCrossProcessLock(lock, { label: 'churn', waitMs: 2_000 }, async (s) => s),
       ).resolves.toEqual({ held: false, reason: 'busy' });
-      expect(performance.now() - started).toBeLessThan(1_000);
-      expect(takeovers).toBe(3);
+      expect(takeovers).toBe(expectedTakeovers);
     } finally {
       spy.mockRestore();
+      clock.mockRestore();
     }
   });
 
