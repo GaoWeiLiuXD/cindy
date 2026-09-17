@@ -732,6 +732,13 @@ BORDER_BG → border-default，TEXT_PRIMARY/SECONDARY/TERTIARY → 对应 text �
 接管前 globals.css 已明确：默认代码字体使用系统等宽字体（macOS 的 SF Mono 不以该字体名暴露给网页，实际命中 Menlo；Windows 命中 Consolas），CJK 显式回退 PingFang / 微软雅黑。JetBrains Mono 已降级为可选预设、不再是默认。DS-8 将这条依据保存在 reference/foundations.json 的 app-font-code-default.$description，字体家族、顺序和用户选字体逻辑均不变。DESIGN.md §3 的 JetBrains Mono 排版样本是历史设计样本，不能据此把默认代码字体改回 JetBrains Mono；当前默认来源为该 DTCG token，运行期字体选择仍由原适配器负责。
 
 
+## 2026-09-16 · Settings placeholder and Cindy Make task list
+
+- 用户指出设置中的 placeholder 看起来与普通文字相同，要求降低其显著程度。CINDY Light/Dark
+  的 `text-placeholder` 改为沿用 DESIGN §4 的空输入色阶（Light `#C4C4C4` / Dark `#525252`），
+  不再复用三级文字；修改 DTCG 正本并生成内置主题，同时更新独立预期。其它文字色阶不变。
+- 这是根据用户反馈完成的实现决定，不代表用户已经对最终视觉签字验收。
+
 ## 2026-09-11 · DS-9 Desktop 范围与授权呈现
 
 - **决定人：用户/设计师。** 用户将本期余项合为 DS-9（桌面聊天、跨入口、桌面授权）与 DS-10（成熟保护、维护、最终验收），Mobile 以后独立做；内部工序不另编号或拆批。
@@ -739,3 +746,15 @@ BORDER_BG → border-default，TEXT_PRIMARY/SECONDARY/TERTIARY → 对应 text �
 - Desktop Allow once 沿用 perm-allow 局部色为主，其余为次；没有可信风险字段，不从命令名或 autoReviewUnavailable 推断高风险；保留输入区内的位置、信息顺序与密度。已有胶囊按钮、键帽 4px 决定直接实施，不重投票。授权含义、默认、顺序、快捷键、提交与恢复行为不变，Mobile 对应视觉决定后续独立处理。
 - 同批聊天按 DESIGN §5 / §14 复用现有数值链、消息与活动行呈现，补图标 Tip、键盘可见焦点、代码与附件操作一致性；业务状态仍由原组件持有。
 - 用户授权交付到本地实现与视觉测试环境，并明确免本地双审；此记录不表示提交、合并或最终人工视觉已验收。实施证据见 `docs/design-evidence/2026-09-11/ds9-desktop-core.md`。
+
+## 2026-09-15 — DS-11 复核收尾，以 Cindy 皮肤效果为准
+
+- 决定人：用户在本次实施指令中授权全部已确认修复、逐项前后审核，并指定 Cindy Light / Dark 效果优先于相冲突的外观描述；不是旧主题兼容或业务权限的豁免。
+- 保留：字号公开别名、已裁决标题角色/控件尺寸、历史无单位行高、CINDY/U2 原色与用户局部覆盖。FormField hint 消费 text-secondary-mid，Cindy 两模式默认色与原 hint 相同。
+- 修订：标准 Button 固定高度垂直居中；普通确认默认 Cancel；选择即安装的 InstallTargetPicker 初始 Cancel、闲时 Esc/遮罩可关闭、安装忙碌期阻止重复与关闭；MarketCard 标题登记为卡内容内的无框文字入口，焦点指示独立，不改变整卡/管理动作。
+- 用量页补 36px 任意日期输入，与图表共用 day 筛选；保留已登记数据标记形状及密度。
+- 实施、验证与用户逐项视觉验收分别记录；代码修复和截图自审不记为用户已批准最终结果。
+
+DS-11 补充分类：实际文字或动作换行的 Toast 外框按 §5 内容容器取 12px；短通知仍为 pill。依据同日用户明确要求以 Cindy 实际 UI 效果为先，消除长通知被撑成大椭圆的效果；颜色与默认停留时长不改。最终亮暗截图供用户逐项验收，不把实现裁决写成最终验收通过。
+
+DS-11 帮助文字补验：新增 `form-field-hint`，默认保持 `text-secondary-mid` 运行期 alias，Cindy 原色不变。One Dark Pro 的帮助角色为 #8b909a，Solarized Light 为 #686868，仅修说明文字，不调整原 secondary/tertiary 或用户主题文件。独立冻结预期只添加此 ID 和两项覆盖，不自动刷全部快照。

@@ -2117,9 +2117,9 @@
           "$value": {
             "colorSpace": "srgb",
             "components": [
-              0.756863,
-              0.756863,
-              0.756863
+              0.321569,
+              0.321569,
+              0.321569
             ]
           },
           "$extensions": {
@@ -5123,9 +5123,9 @@
           "$value": {
             "colorSpace": "srgb",
             "components": [
-              0.419608,
-              0.419608,
-              0.403922
+              0.768627,
+              0.768627,
+              0.768627
             ]
           },
           "$extensions": {
@@ -8867,6 +8867,24 @@
               ]
             }
           }
+        },
+        "palette-HINT_TEXT": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.545098,
+              0.564706,
+              0.603922
+            ]
+          },
+          "$extensions": {
+            "com.cindy.desktop": {
+              "format": "hex",
+              "uppercase": false,
+              "alpha": false
+            }
+          }
         }
       },
       "solarized-light": {
@@ -9593,6 +9611,24 @@
               0.933333,
               0.909804,
               0.835294
+            ]
+          },
+          "$extensions": {
+            "com.cindy.desktop": {
+              "format": "hex",
+              "uppercase": false,
+              "alpha": false
+            }
+          }
+        },
+        "palette-HINT_TEXT": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.407843,
+              0.407843,
+              0.407843
             ]
           },
           "$extensions": {

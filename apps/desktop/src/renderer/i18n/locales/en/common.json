@@ -680,6 +680,15 @@
       "wecomGroupClearFailed": "Could not remove the Webhook"
     },
     "windowBehavior": {
+      "loginItem": {
+        "label": "Start Cindy at Login",
+        "hint": "Open Cindy automatically when you sign in to your computer. Off by default.",
+        "requiresApproval": "Allow Cindy in Login Items in macOS System Settings to finish enabling startup.",
+        "loading": "Reading system settings…",
+        "loadFailed": "Could not read startup settings. Reopen this settings page to retry.",
+        "saveFailed": "Could not save startup settings. Retry or check your system startup items.",
+        "notApplied": "The system did not apply this setting. Check your system startup items and retry."
+      },
       "title": "App Behavior",
       "closeBehavior": {
         "label": "When closing the main window",
@@ -3760,6 +3769,12 @@
           "statusPendingSuffix_other": " ({{count}} pending)",
           "statusOffKept_one": "Off · {{count}} workspace binding kept",
           "statusOffKept_other": "Off · {{count}} workspace bindings kept",
+          "removeCommunicationsConfirmDescription": "Remove this device's communications access to this workspace. Other devices and Bot reception settings are not affected.",
+          "localCommunications": "Slack Communications on This Device",
+          "communicationsActive": "Slack Communications On",
+          "communicationsInactive": "Slack Communications Off",
+          "botNotReceiving": "Not Receiving Bot Chats",
+          "receiveBot": "Receive Bot Chats",
           "displaced": "Bound on another device",
           "rebind": "Rebind",
           "removeAria": "Unlink this workspace",
@@ -6157,6 +6172,7 @@
     "loadFailed": "Unable to load usage history. Reopen Settings to try again.",
     "range": {
       "label": "Time range",
+      "date": "Date",
       "ariaLabel": "Filter usage time range",
       "all": "All time",
       "30d": "Last 30 days",
@@ -8575,8 +8591,15 @@
       }
     },
     "runningStatus": {
+      "currentRate": "Latest speed",
+      "waitingSample": "Sampling",
+      "averageRate": "Turn average",
+      "rateHistory": "Generation speed history",
+      "outputTotal": "Output",
+      "observedPeak": "Peak",
       "tokenRate": "{{rate}} tok/s",
-      "tokenRateDescription": "The main Agent’s average generation speed for this turn, including thinking and excluding tool execution and approval waits. Updated with reported usage; the adjacent timer shows total turn time.",
+      "tokenRateUnit": "tok/s",
+      "tokenRateDescription": "Latest generation interval. Excludes tools and waits.",
       "tokenCount": "{{tokens}} tok"
     },
     "shareImage": {
@@ -8801,6 +8824,11 @@
       "closeHint": "or click backdrop to close"
     },
     "remoteFile": {
+      "previewFailed": "Could not prepare the web preview. Check the directory and connection, then try again.",
+      "previewNotFound": "The HTML file was not found. Check that it still exists.",
+      "previewFetching": "Preparing Web Preview…",
+      "previewTooLarge": "Too many previews are being prepared. Please try again shortly.",
+      "previewUnsupported": "Update Cindy on the remote device to preview this directory.",
       "fetching": "Fetching file from remote…",
       "fetchFailed": "Failed to fetch file from remote",
       "notFound": "File not found on remote",
@@ -10986,6 +11014,13 @@
       "descriptionRevealPath": "The path is returned to the current Agent only after you allow it and will enter the conversation record; paired devices may sync that record. This does not grant any plugin access to the file.",
       "descriptionFsWrite": "This plugin requests to write the files below into the current session's working directory. If you allow, further writes to the same directory in this session won't ask again.",
       "descriptionWorkspace": "This folder is outside this session's working directory. If you allow, Cindy creates an empty session for it in the sidebar (an existing session is reused) without reading any files inside.",
+      "descriptionForgeSource": "The directory below is outside this session's working directory. If you allow, Forge will pack or scaffold the plugin there (it writes a .cindy artifact or skeleton files).",
+      "descriptionForgeScaffold": "The directory below is outside this session's working directory. If you allow, Forge will create plugin source files there.",
+      "descriptionForgePack": "The directory below is outside this session's working directory. If you allow, Forge will pack the plugin there and write a .cindy artifact.",
+      "descriptionForgeInstall": "The directory below is outside this session's working directory. If you allow, Forge will pack this plugin and install and enable it on this computer.",
+      "descriptionOutsideWorkdir": "The path below is outside this session's working directory. If you allow, the current tool can read or write there.",
+      "descriptionOutsideRead": "The path below is outside this session's working directory. If you allow, the current tool can read there.",
+      "descriptionOutsideWrite": "The path below is outside this session's working directory. If you allow, the current tool can write there.",
       "dirMeta": "{{count}} files · {{size}}",
       "directory": "Directory",
       "allowDirs": "Also allow their folders (media files in the same folders won't ask again this session)",
