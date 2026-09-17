@@ -1810,7 +1810,17 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
     },
   );
 
-  it('cancels stopped input waiting for the send lock during a runtime refresh', async () => {
+  it.each(['rich-card', 'chunked-text', 'chunked-final-error'] as const)(
+    'cancels stopped input waiting for the send lock with %s output', async (outputKind) => {
+    const previousOutput = fakeAdapter.output;
+    const beginReply = vi.fn(async () => undefined);
+    const commitFinal = vi.fn(async () => undefined);
+    if (outputKind !== 'rich-card') {
+      fakeAdapter.output = {
+        kind: 'chunked-text', im: mocks.feishuIm as unknown as ChannelIM, beginReply, commitFinal,
+      };
+      if (outputKind === 'chunked-final-error') commitFinal.mockRejectedValueOnce(new Error('disconnected'));
+    }
     const oldSession = createSessionHarness(async () => ({ accepted: true }));
     const replacement = createSessionHarness(async () => ({ accepted: true }));
     let live: Session | undefined = oldSession.session;
@@ -1860,6 +1870,15 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       expect(mocks.persistUserMessage).not.toHaveBeenCalled();
       expect(complete).toHaveBeenCalledOnce();
       expect(releaseLock).toHaveBeenCalledOnce();
+      if (outputKind !== 'rich-card') {
+        expect(beginReply).toHaveBeenCalledOnce();
+        expect(commitFinal).toHaveBeenCalledExactlyOnceWith({
+          userId: 'ou_user', text: fakeAdapter.ui.agent.stopDone(0),
+          terminal: 'aborted', threadTs: undefined,
+        });
+      } else {
+        expect(commitFinal).not.toHaveBeenCalled();
+      }
       await localRunner.runAgentTurn({
         botContextId: 'cli_test_bot', userId: 'ou_user',
         userMessageId: 'after-stop', text: 'fresh input', attachments: [],
@@ -1868,7 +1887,18 @@ describe('turnRunner send outcome policy (feishu adapter characterization)', () 
       expect(replacement.send).toHaveBeenCalledWith(
         expect.objectContaining({ content: 'fresh input' }), expect.anything(),
       );
+      if (outputKind !== 'rich-card') {
+        expect(beginReply).toHaveBeenCalledTimes(2);
+        expect(commitFinal.mock.invocationCallOrder[0]).toBeLessThan(beginReply.mock.invocationCallOrder[1]!);
+        replacement.emit({ type: 'text', data: { text: 'fresh response', isFinal: true } });
+        replacement.emit({ type: 'done', data: {} });
+        await waitForAssertion(() => expect(commitFinal).toHaveBeenCalledTimes(2));
+        expect(commitFinal).toHaveBeenLastCalledWith(expect.objectContaining({
+          text: 'fresh response', terminal: 'done',
+        }));
+      }
     } finally {
+      fakeAdapter.output = previousOutput;
       releaseRefresh.resolve(undefined);
       await localRunner.disposeAllSessions();
     }

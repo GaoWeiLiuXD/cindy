@@ -1142,6 +1142,18 @@ export function createTurnRunner(
       if (item.turn.terminalKind === 'aborted') {
         const index = state.queue.indexOf(item.turn);
         if (index >= 0) state.queue.splice(index, 1);
+        if (output.kind === 'chunked-text' && item.turn.chunkedReplyBegun) {
+          try {
+            await output.commitFinal({
+              userId,
+              text: ui.agent.stopDone(0),
+              terminal: 'aborted',
+              threadTs: item.turn.scopeKey,
+            });
+          } catch (err) {
+            log.warn(`cancelled reply finalization failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
         await completeTurnCallbackAfterAck(item.turn);
         settleTurnTerminal(item.turn);
         if (!finishDeferredDetachIfIdle(state)) armDispatchRetry(state, userId);
