@@ -12144,7 +12144,7 @@
       "observedAt": "残高更新: {{date}}",
       "poolDetail": "使用済み {{used}} · 合計 {{total}}",
       "remaining": "残り",
-      "progressLabel": "{{label}}の使用量",
+      "progressLabel": "{{label}}の残りの割合",
       "noPlanCredits": "有効なサブスクリプションがないため、プラン残高はありません。",
       "historyUnavailable": "使用履歴が完全ではないため、残りの残高のみ表示しています。",
       "detailsUnavailable": "使用量の詳細を取得できないため、現在の残高のみ表示しています。",

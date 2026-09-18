@@ -12140,7 +12140,7 @@
       "observedAt": "餘額更新於 {{date}}",
       "poolDetail": "已用 {{used}} · 總額 {{total}}",
       "remaining": "剩餘",
-      "progressLabel": "{{label}}使用進度",
+      "progressLabel": "{{label}}剩餘比例",
       "noPlanCredits": "當前無生效訂閱，因此沒有訂閱餘額。",
       "historyUnavailable": "歷史記錄不完整，暫時僅顯示剩餘餘額。",
       "detailsUnavailable": "用量明細暫時不可用，當前僅顯示各類餘額。",

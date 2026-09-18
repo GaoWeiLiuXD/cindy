@@ -166,13 +166,13 @@ function ledgerUnits(value: string): bigint | null {
   return match[1] === '-' ? -units : units;
 }
 
-function usagePercent(pool: ModelAccessCreditPoolUsage): number | null {
+function remainingPercent(pool: ModelAccessCreditPoolUsage): number | null {
   if (pool.used === null || pool.total === null) return null;
-  const used = ledgerUnits(pool.used);
+  const remaining = ledgerUnits(pool.remaining);
   const total = ledgerUnits(pool.total);
-  if (used === null || total === null || used < 0n || total < 0n) return null;
-  if (total === 0n) return used === 0n ? 0 : null;
-  const tenths = (used * 1_000n) / total;
+  if (remaining === null || total === null || remaining < 0n || total < 0n) return null;
+  if (total === 0n) return remaining === 0n ? 0 : null;
+  const tenths = (remaining * 1_000n) / total;
   return Number(tenths > 1_000n ? 1_000n : tenths) / 10;
 }
 
@@ -1714,7 +1714,7 @@ function CreditPoolRow({
 }) {
   const { t, i18n } = useTranslation();
   const billingLocale = i18n.resolvedLanguage ?? i18n.language;
-  const percent = usagePercent(pool);
+  const percent = remainingPercent(pool);
   const detail =
     pool.used !== null && pool.total !== null
       ? t('billing.usage.poolDetail', {
@@ -1725,33 +1725,29 @@ function CreditPoolRow({
         ? t('billing.usage.noPlanCredits')
         : t('billing.usage.historyUnavailable');
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-5 py-3.5">
-      <div className="min-w-0">
-        <p className="truncate text-13 font-medium text-[var(--text-primary)]">{label}</p>
-        <p className="mt-1 text-11 leading-4 text-[var(--text-tertiary)]">{detail}</p>
-      </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <div
-          className="h-1 w-40 overflow-hidden rounded-full bg-[var(--surface-chip)]"
-          role={percent === null ? undefined : 'progressbar'}
-          aria-label={t('billing.usage.progressLabel', { label })}
-          aria-valuemin={percent === null ? undefined : 0}
-          aria-valuemax={percent === null ? undefined : 100}
-          aria-valuenow={percent ?? undefined}
-        >
-          {percent !== null && (
-            <div
-              className="h-full rounded-full bg-[var(--text-primary)]"
-              style={{ width: `${percent}%` }}
-            />
-          )}
-        </div>
-        <p className="text-11 text-[var(--text-tertiary)]">
-          {t('billing.usage.remaining')}
-          <span className="ml-1.5 text-13 font-medium tabular-nums text-[var(--text-primary)]">
-            {formatMoney(pool.remaining, BILLING_CURRENCY, billingLocale)}
-          </span>
-        </p>
+    <div className="grid grid-cols-[minmax(0,1fr)_minmax(160px,30%)] items-baseline gap-x-6 gap-y-1 px-5 py-3.5">
+      <p className="min-w-0 text-13 font-medium text-[var(--text-primary)]">{label}</p>
+      <p className="flex items-baseline justify-end gap-1.5 whitespace-nowrap text-11 text-[var(--text-tertiary)]">
+        {t('billing.usage.remaining')}
+        <span className="text-13 font-medium tabular-nums text-[var(--text-primary)]">
+          {formatMoney(pool.remaining, BILLING_CURRENCY, billingLocale)}
+        </span>
+      </p>
+      <p className="min-w-0 text-11 leading-4 text-[var(--text-tertiary)]">{detail}</p>
+      <div
+        className="h-1 w-full self-center overflow-hidden rounded-full bg-[var(--surface-chip)]"
+        role={percent === null ? undefined : 'progressbar'}
+        aria-label={t('billing.usage.progressLabel', { label })}
+        aria-valuemin={percent === null ? undefined : 0}
+        aria-valuemax={percent === null ? undefined : 100}
+        aria-valuenow={percent ?? undefined}
+      >
+        {percent !== null && (
+          <div
+            className="ml-auto h-full rounded-full bg-[var(--text-primary)]"
+            style={{ width: `${percent}%` }}
+          />
+        )}
       </div>
     </div>
   );
