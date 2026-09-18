@@ -2254,7 +2254,12 @@ function BillingOfferDialog({
             (primaryFocusRef.current ?? closeButtonRef.current)?.focus();
           }}
         >
-          <div className="flex items-center justify-between gap-4 p-4">
+          <div
+            className={cn(
+              'flex items-center justify-between gap-4 py-4',
+              comparingPlans ? 'px-6' : 'px-4',
+            )}
+          >
             <div className="flex min-w-0 items-center gap-2">
               {kind === 'SUBSCRIPTION' && !comparingPlans && (
                 <button

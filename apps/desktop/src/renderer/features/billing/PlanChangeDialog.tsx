@@ -189,7 +189,7 @@ export function PlanChangeTargetDialog({
             choosingOffer ? 'max-w-[600px]' : 'max-w-[1120px]',
           )}
         >
-          <div className="flex items-center justify-between gap-4 px-6 pb-4 pt-5">
+          <div className="flex items-center justify-between gap-4 px-6 py-4">
             <div className="flex min-w-0 items-center gap-2">
               {choosingOffer && (
                 <button
@@ -217,7 +217,7 @@ export function PlanChangeTargetDialog({
               </button>
             </Dialog.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-3">
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-[var(--border-default)] px-6 py-4 [scrollbar-gutter:stable]">
             {!candidates.some((candidate) => candidate.available !== false) && (
               <p role="status" className="mb-4 text-12 text-[var(--text-secondary)]">
                 {t('billing.planChange.emptyTitle')}

@@ -91,7 +91,7 @@ export function PlanComparison({
           <p className="mt-5 text-28 font-medium tabular-nums">
             {currency ? formatBillingAmount('0', currency, locale) : '0'}
           </p>
-          <p className="mt-1 text-12 text-[var(--text-secondary)]">
+          <p className="mt-1 min-h-5 text-12 text-[var(--text-secondary)]">
             {t('billing.comparison.freeUsage')}
           </p>
           <div className="mt-6 min-h-16">

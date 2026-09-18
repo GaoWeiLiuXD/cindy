@@ -2312,7 +2312,10 @@ describe('BillingPage plan change', () => {
     await waitFor(() => expect(billing.getCurrentSubscription).toHaveBeenCalledTimes(2));
     await selectSubscriptionManagementAction('billing.settings.subscriptionCard.changeAction');
     const alipayTarget = await screen.findByText('Alipay-only Max');
-    expect(alipayTarget.closest('section')!.querySelector('button')).toHaveProperty('disabled', false);
+    expect(alipayTarget.closest('section')!.querySelector('button')).toHaveProperty(
+      'disabled',
+      false,
+    );
     expect(screen.queryByText('Max plan')).toBeNull();
     expect(billing.quotePlanChange).not.toHaveBeenCalled();
   });
@@ -2697,9 +2700,11 @@ describe('BillingPage plan change', () => {
     expect(currentButton).toHaveProperty('disabled', true);
     fireEvent.click(currentButton);
     expect(billing.quotePlanChange).not.toHaveBeenCalled();
-    expect(within(dialog).queryByRole('button', {
-      name: 'billing.settings.subscriptionCard.changeAction',
-    })).toBeNull();
+    expect(
+      within(dialog).queryByRole('button', {
+        name: 'billing.settings.subscriptionCard.changeAction',
+      }),
+    ).toBeNull();
     expect(within(dialog).queryByRole('button', { name: /\$20\.00/ })).toBeNull();
   });
 
@@ -2765,8 +2770,9 @@ describe('BillingPage plan change', () => {
     await selectSubscriptionManagementAction('billing.settings.subscriptionCard.changeAction');
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByRole('button', { name: 'billing.catalog.currentPlan' }))
-      .toHaveProperty('disabled', true);
+    expect(
+      within(dialog).getByRole('button', { name: 'billing.catalog.currentPlan' }),
+    ).toHaveProperty('disabled', true);
     expect(within(dialog).getByText('$7.00')).toBeTruthy();
     expect(
       within(dialog).getByText('billing.comparison.credits.MONTH:{"amount":"$80.00"}'),
