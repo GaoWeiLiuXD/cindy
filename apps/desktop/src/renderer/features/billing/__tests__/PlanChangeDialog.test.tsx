@@ -271,7 +271,11 @@ describe('PlanChangeTargetDialog product-first selection', () => {
       true,
     );
     expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.queryByRole('link')).toBeNull();
+    const modelLinks = screen.getAllByRole('link', { name: 'billing.comparison.advancedModels' });
+    expect(modelLinks).toHaveLength(2);
+    for (const link of modelLinks) {
+      expect(link.getAttribute('href')).toBe('#/settings?tab=providers&connect=xd');
+    }
     fireEvent.click(screen.getByRole('button', { name: 'billing.catalog.currentPlan' }));
     expect(onSelect).not.toHaveBeenCalled();
   });

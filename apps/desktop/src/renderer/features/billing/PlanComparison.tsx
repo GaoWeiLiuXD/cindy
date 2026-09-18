@@ -75,7 +75,6 @@ export function PlanComparison({
     };
   });
   const currency = selected[0]?.entry?.offer.currency;
-  const hasCurrentPlan = plans.some((plan) => plan.offers.some((entry) => entry.current));
   const buttonClass =
     'flex min-h-9 w-full items-center justify-center rounded-full border border-[var(--border-default)] px-3 py-2 text-13 font-medium transition-colors enabled:hover:bg-[var(--surface-hover-soft)] enabled:active:bg-[var(--surface-chip)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50';
   const modelsLink = (
@@ -114,14 +113,9 @@ export function PlanComparison({
             {['agent', 'apiKey', 'existingSubscription', 'localModels', 'basicModels'].map(feature)}
           </ul>
           <div className="mt-auto">
-            {!hasCurrentPlan && (
-              <p className="mb-3 text-11 leading-relaxed text-[var(--text-secondary)]">
-                <Trans
-                  i18nKey="billing.comparison.topupUnlock"
-                  components={{ models: modelsLink }}
-                />
-              </p>
-            )}
+            <p className="mb-3 text-11 leading-relaxed text-[var(--text-secondary)]">
+              <Trans i18nKey="billing.comparison.topupUnlock" components={{ models: modelsLink }} />
+            </p>
             <button
               type="button"
               className={buttonClass}
@@ -213,8 +207,7 @@ export function PlanComparison({
                   {t('billing.comparison.includesFree')}
                 </p>
                 <ul className="space-y-3">
-                  {!hasCurrentPlan && feature('advancedModels')}
-                  {feature('managedService')}
+                  {['advancedModels', 'managedService'].map(feature)}
                   {multiple !== null && Number.isInteger(multiple) && multiple > 1 && (
                     <li className="flex items-start gap-2 text-13 leading-relaxed">
                       <Check
