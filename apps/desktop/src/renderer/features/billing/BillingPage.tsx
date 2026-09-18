@@ -1910,11 +1910,10 @@ function OrderHistoryCard({
                   : '—'}
               </p>
             )}
-            <div className="flex min-w-0 justify-end">
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
               <span
                 className={cn(
-                  'shrink-0 whitespace-nowrap rounded-full bg-[var(--surface-chip)] px-2.5 py-1',
-                  'text-10 font-medium leading-[1.2]',
+                  'shrink-0 whitespace-nowrap text-11',
                   isAwaitingPaymentOrder(order)
                     ? 'text-[var(--text-primary)]'
                     : 'text-[var(--text-secondary)]',
@@ -1923,13 +1922,13 @@ function OrderHistoryCard({
                 {t(orderStatusLabelKey(order))}
               </span>
               {phaseForOrder(order) === 'COMPLETED' && (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
                   onClick={() => setInvoiceOrder(order)}
-                  className="h-7 shrink-0 select-none rounded-full border border-[var(--border-default)] px-2.5 text-10 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover-soft)] hover:text-[var(--text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  className="whitespace-nowrap px-3"
                 >
                   {t('billing.orders.invoice.action')}
-                </button>
+                </Button>
               )}
             </div>
           </div>
