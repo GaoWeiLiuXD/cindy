@@ -10828,6 +10828,180 @@
             }
           }
         }
+      },
+      "segmented-track": {
+        "light": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0,
+              0,
+              0
+            ],
+            "alpha": 0.06
+          },
+          "$extensions": {
+            "com.cindy.desktop": {
+              "format": "rgb",
+              "alpha": true,
+              "precision": 2
+            }
+          }
+        },
+        "dark": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0,
+              0,
+              0
+            ],
+            "alpha": 0.25
+          },
+          "$extensions": {
+            "com.cindy.desktop": {
+              "format": "rgb",
+              "alpha": true,
+              "precision": 2
+            }
+          }
+        }
+      },
+      "segmented-selected-shadow": {
+        "light": {
+          "$type": "shadow",
+          "$value": [
+            {
+              "color": {
+                "colorSpace": "srgb",
+                "components": [
+                  0,
+                  0,
+                  0
+                ],
+                "alpha": 0.1
+              },
+              "offsetX": {
+                "value": 0,
+                "unit": "px"
+              },
+              "offsetY": {
+                "value": 1,
+                "unit": "px"
+              },
+              "blur": {
+                "value": 2,
+                "unit": "px"
+              },
+              "spread": {
+                "value": 0,
+                "unit": "px"
+              }
+            },
+            {
+              "color": {
+                "colorSpace": "srgb",
+                "components": [
+                  0,
+                  0,
+                  0
+                ],
+                "alpha": 0.06
+              },
+              "offsetX": {
+                "value": 0,
+                "unit": "px"
+              },
+              "offsetY": {
+                "value": 3,
+                "unit": "px"
+              },
+              "blur": {
+                "value": 8,
+                "unit": "px"
+              },
+              "spread": {
+                "value": 0,
+                "unit": "px"
+              }
+            }
+          ],
+          "$extensions": {
+            "com.cindy.desktop": {
+              "format": "shadow-rgba",
+              "omitZeroSpread": true,
+              "bareZeroX": true
+            }
+          }
+        },
+        "dark": {
+          "$type": "shadow",
+          "$value": [
+            {
+              "color": {
+                "colorSpace": "srgb",
+                "components": [
+                  0,
+                  0,
+                  0
+                ],
+                "alpha": 0.4
+              },
+              "offsetX": {
+                "value": 0,
+                "unit": "px"
+              },
+              "offsetY": {
+                "value": 1,
+                "unit": "px"
+              },
+              "blur": {
+                "value": 2,
+                "unit": "px"
+              },
+              "spread": {
+                "value": 0,
+                "unit": "px"
+              }
+            },
+            {
+              "color": {
+                "colorSpace": "srgb",
+                "components": [
+                  0,
+                  0,
+                  0
+                ],
+                "alpha": 0.24
+              },
+              "offsetX": {
+                "value": 0,
+                "unit": "px"
+              },
+              "offsetY": {
+                "value": 3,
+                "unit": "px"
+              },
+              "blur": {
+                "value": 8,
+                "unit": "px"
+              },
+              "spread": {
+                "value": 0,
+                "unit": "px"
+              }
+            }
+          ],
+          "$extensions": {
+            "com.cindy.desktop": {
+              "format": "shadow-rgba",
+              "omitZeroSpread": true,
+              "bareZeroX": true
+            }
+          }
+        }
       }
     }
   }

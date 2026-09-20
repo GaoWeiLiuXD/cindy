@@ -781,3 +781,7 @@ DS-11 帮助文字补验：新增 `form-field-hint`，默认保持 `text-seconda
 入口：外观的界面字号/代码字号，压缩阈值 Claude/Pi，Work Louder 键盘亮度；模型配置推理强度；
 音频卡、音效卡、插件音频插槽。键盘亮度原使用 Switch token，导致预览曾误用蓝色；现在与
 Switch 解耦。插件插槽挂载同一个媒体组件，不再维护单独拖动实现。规范见 DESIGN §15.18。
+
+## 2026-09-18 — Desktop Segmented v8
+
+用户确认将 Design Lab v8 落到 Desktop，全量复用共享 `SegmentedControl`；仅自审和 E2E，不做本地双审。轨道用浅色黑 6% / 暗色黑 25% 透明叠加，选中药丸用低对比描边和两层轻阴影。保留各场景密度、业务回调及独立分离式选项；Mobile / iOS 延后。规范见 DESIGN.md §4 Desktop segmented controls，精确颜色/阴影进入 DTCG。实施与实际验证另见本次证据，不把线上设计预览等同客户端验收。

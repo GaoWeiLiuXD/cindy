@@ -2120,6 +2120,30 @@ const GENERATED_DEFAULTS = {
   "slider-thumb-shadow": {
     "light": "0 1px 3px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08)",
     "dark": "0 1px 3px rgb(0 0 0 / 0.3), 0 2px 6px rgb(0 0 0 / 0.16)"
+  },
+  "segmented-track": {
+    "light": "rgba(0, 0, 0, 0.06)",
+    "dark": "rgba(0, 0, 0, 0.25)"
+  },
+  "segmented-selected-shadow": {
+    "light": "0 1px 2px rgba(0, 0, 0, 0.1), 0 3px 8px rgba(0, 0, 0, 0.06)",
+    "dark": "0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 8px rgba(0, 0, 0, 0.24)"
+  },
+  "segmented-selected-bg": {
+    "light": "var(--surface-elevated)",
+    "dark": "var(--surface-elevated)"
+  },
+  "segmented-selected-border": {
+    "light": "var(--border-default)",
+    "dark": "var(--border-default)"
+  },
+  "segmented-option-fg": {
+    "light": "var(--text-secondary)",
+    "dark": "var(--text-secondary)"
+  },
+  "segmented-hover-bg": {
+    "light": "var(--surface-hover)",
+    "dark": "var(--surface-hover)"
   }
 } as const;
 
@@ -3069,3 +3093,11 @@ registerColor('slider-fill', GENERATED_DEFAULTS["slider-fill"], '共享 Slider �
 registerColor('slider-thumb', GENERATED_DEFAULTS["slider-thumb"], '共享 Slider 组件颜色');
 
 registerColor('slider-thumb-shadow', GENERATED_DEFAULTS["slider-thumb-shadow"], 'Slider 滑块阴影:用户批准 2026-09-17');
+
+// Desktop Segmented v8, owner-approved 2026-09-18. Component-local roles.
+registerColor('segmented-track', GENERATED_DEFAULTS["segmented-track"], 'Desktop segmented control: adaptive black-alpha track');
+registerColor('segmented-selected-bg', GENERATED_DEFAULTS["segmented-selected-bg"], 'Desktop segmented control: raised selected pill');
+registerColor('segmented-selected-border', GENERATED_DEFAULTS["segmented-selected-border"], 'Desktop segmented control: low-contrast selected border');
+registerColor('segmented-selected-shadow', GENERATED_DEFAULTS["segmented-selected-shadow"], 'Desktop segmented control: selected pill elevation');
+registerColor('segmented-option-fg', GENERATED_DEFAULTS["segmented-option-fg"], 'Desktop segmented control: unselected label');
+registerColor('segmented-hover-bg', GENERATED_DEFAULTS["segmented-hover-bg"], 'Desktop segmented control: hover plate');
